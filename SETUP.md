@@ -97,8 +97,8 @@ The script will handle everything from here. It will print progress as it goes. 
 
 Once the install script completes, the Pi will reboot. After it comes back up:
 
-- Open a browser and go to **http://digipeater.local**
-- Or use the IP address: **http://\<ip-address\>**
+- Open a browser and go to **http://digipeater.local:8080**
+- Or use the IP address: **http://\<ip-address\>:8080**
 
 You will be taken through the network and system setup wizard.
 
@@ -121,3 +121,15 @@ You will be taken through the network and system setup wizard.
 - Double-check the SSID and password entered in Imager
 - Ensure the WiFi network is 2.4GHz — the Pi 3B does not support 5GHz
 - Use ethernet for the initial setup if WiFi is unreliable
+
+---
+
+## Starting Over (Fresh Install)
+
+To wipe the application, its config, and generated files and re-run the installer from scratch, run `reset.sh` on the Pi:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/pomtom44/digipeater/main/reset.sh -o reset.sh && bash reset.sh
+```
+
+It removes the systemd service, `/opt/digipeater`, `/var/digipeater`, and `/etc/direwolf`, and optionally removes the system packages installed for the digipeater. It leaves the Pi's own SSH/network/hostname setup untouched — after it finishes, run `install.sh` again (Step 6 above) as normal.

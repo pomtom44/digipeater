@@ -3,6 +3,9 @@
 # Copy this file to config.yaml and edit as needed.
 # ─────────────────────────────────────────────────────────────
 
+# Set to true automatically once the setup wizard is submitted — leave false here
+setup_complete: false
+
 # Station identity
 callsign: NOCALL
 ssid: 0

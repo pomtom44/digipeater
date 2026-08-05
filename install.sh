@@ -183,6 +183,8 @@ else
 fi
 
 # ── Done ──────────────────────────────────────
+IP_ADDR=$(hostname -I 2>/dev/null | awk '{print $1}')
+
 echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║        Installation Complete         ║"
@@ -191,7 +193,10 @@ echo ""
 echo -e "${GREEN}The system will now reboot.${NC}"
 echo -e "${GREEN}After reboot, open a browser and go to:${NC}"
 echo ""
-echo -e "    ${YELLOW}http://digipeater.local${NC}"
+echo -e "    ${YELLOW}http://digipeater.local:8080${NC}"
+if [ -n "$IP_ADDR" ]; then
+    echo -e "    ${YELLOW}http://$IP_ADDR:8080${NC}"
+fi
 echo ""
 echo -e "${YELLOW}Note: Group permission changes require the reboot to take effect.${NC}"
 echo ""

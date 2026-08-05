@@ -28,7 +28,7 @@ See [SETUP.md](SETUP.md) for the full installation guide.
 curl -sSL https://raw.githubusercontent.com/pomtom44/digipeater/main/install.sh | bash
 ```
 
-5. After reboot, open `http://digipeater.local` in a browser and follow the setup wizard
+5. After reboot, open `http://digipeater.local:8080` in a browser and follow the setup wizard
 
 ## Configuration
 

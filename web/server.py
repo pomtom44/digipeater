@@ -108,7 +108,7 @@ def create_app(state) -> FastAPI:
             "last_beacon_time": state.last_beacon_time,
             "last_heard_call": state.last_heard_call,
             "last_heard_time": state.last_heard_time,
-            "setup_complete": CONFIG_PATH.exists(),
+            "setup_complete": state.config.get("setup_complete", False),
             "security_mode": state.config.get("web", {}).get("security", {}).get("mode", "none"),
             "aprs_is": {
                 "connected": state.aprs_is_connected,
@@ -246,6 +246,7 @@ def create_app(state) -> FastAPI:
         errors = config_gen.validate(body)
         if errors:
             raise HTTPException(status_code=400, detail=errors)
+        body["setup_complete"] = True
         with open(CONFIG_PATH, "w") as f:
             yaml.dump(body, f, default_flow_style=False, allow_unicode=True)
         state.config = body
