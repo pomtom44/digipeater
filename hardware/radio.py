@@ -40,7 +40,7 @@ class RadioController:
             await asyncio.sleep(1.0)   # give rigctld time to bind the port
             logger.info("rigctld started (model=%s port=%s baud=%s)", self._model, self._rig_port, self._baud)
         except FileNotFoundError:
-            logger.warning("rigctld not found — install hamlib: sudo apt install hamlib")
+            logger.warning("rigctld not found — install hamlib: sudo apt install libhamlib-utils")
             self.enabled = False
         except Exception as e:
             logger.error("Failed to start rigctld: %s", e)

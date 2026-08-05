@@ -63,7 +63,7 @@ sudo apt-get install -y -qq \
     gpsd \
     gpsd-clients \
     alsa-utils \
-    hamlib \
+    libhamlib-utils \
     curl
 ok "System packages installed"
 
