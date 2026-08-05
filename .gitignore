@@ -1,0 +1,38 @@
+# ── Config (contains callsign, passwords — never commit) ──────
+config.yaml
+
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# ── Runtime data (stored outside repo on the Pi) ──────────────
+*.log
+*.json
+
+# ── Cached map tiles (can be gigabytes) ───────────────────────
+web/static/tiles/
+
+# ── Direwolf generated config ─────────────────────────────────
+direwolf.conf
+
+# ── Legacy ────────────────────────────────────────────────────
+digipeater_legacy-main/
+
+# ── Third-party vendor software (not ours to redistribute) ────
+# Alinco's official DR_X38.exe + Prolific PL-2303 driver installers, kept
+# locally only as a reference for reverse-engineering hardware/radio_programmer.py.
+alinco/
+
+# ── IDE / OS ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

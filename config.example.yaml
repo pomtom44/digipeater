@@ -1,0 +1,177 @@
+# ─────────────────────────────────────────────────────────────
+# APRS Digipeater — Example Config
+# Copy this file to config.yaml and edit as needed.
+# ─────────────────────────────────────────────────────────────
+
+# Station identity
+callsign: NOCALL
+ssid: 0
+aprs_passcode: ""         # auto-calculated from callsign — override only if needed
+
+# ── Operating Mode ────────────────────────────────────────────
+# Enable one or more modes. rx_only disables all TX.
+mode:
+  rx_only: true
+  igate: false
+  digipeater: false
+  beacon: false
+
+# ── RF Interface ──────────────────────────────────────────────
+interface:
+  type: audio             # "audio" or "serial"
+
+  # Audio TNC (soundcard / Pi onboard audio / USB audio)
+  audio_input: default    # ALSA device name for RX
+  audio_output: default   # ALSA device name for TX
+
+  # Serial TNC (hardware TNC over serial port)
+  device: /dev/ttyUSB0
+  baud: 9600
+
+# ── PTT (TX only) ─────────────────────────────────────────────
+ptt:
+  method: gpio            # "gpio", "serial_rts", "serial_dtr", "cm108", "vox"
+  pin: 17                 # BCM GPIO pin (gpio method only)
+  port: /dev/ttyUSB0      # serial port (serial_rts / serial_dtr only)
+
+# ── Digipeater ────────────────────────────────────────────────
+digipeater:
+  aliases:
+    - WIDE1-1
+    - WIDE2-1
+    - WIDE2-2
+
+# ── Igate ─────────────────────────────────────────────────────
+igate:
+  server: rotate.aprs2.net
+  port: 14580
+  username: NOCALL
+  filter: "r/0/0/200"     # server-side filter — radius in km from 0,0
+
+# ── RF Beacon (TX only) ───────────────────────────────────────
+rf_beacon:
+  enabled: false
+  type: PBEACON
+  delay: 1                # minutes before first beacon after start
+  every: 30               # minutes between beacons
+  overlay: S
+  symbol: "#"
+  comment: "Digipeater"
+  location:
+    source: gps           # "gps" or "fixed"
+    latitude: 0.0000      # used when source is "fixed"
+    longitude: 0.0000
+
+# ── Igate Beacon ─────────────────────────────────────────────
+igate_beacon:
+  enabled: false
+  type: PBEACON
+  delay: 1
+  every: 30
+  overlay: S
+  symbol: "#"
+  comment: "Digipeater"
+  location:
+    source: gps
+    latitude: 0.0000
+    longitude: 0.0000
+
+# ── Direwolf Process ──────────────────────────────────────────
+direwolf:
+  binary: /usr/bin/direwolf
+  config_path: /etc/direwolf/direwolf.conf
+  start_mode: manual      # "auto" or "manual"
+  restart_attempts: 3     # attempts before hard stop
+  restart_delays: [10, 30, 60]  # seconds between each attempt
+
+# ── Map ───────────────────────────────────────────────────────
+map:
+  mode: live              # "live" or "cached"
+  tile_server: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+  station_aging: 7200     # seconds before a heard station is removed (0 = never)
+  cache:
+    region:
+      north: 0.0
+      south: 0.0
+      east: 0.0
+      west: 0.0
+    zoom_min: 8
+    zoom_max: 14
+    tile_dir: /var/digipeater/tiles
+
+# ── E-Ink Display ─────────────────────────────────────────────
+display:
+  enabled: true
+  driver: waveshare       # "none" or "waveshare"
+  model: epd1in54_v2      # 1.54" 200x200 (SSD1681) — default HAT; see display/waveshare/__init__.py for other sizes
+  pages:
+    - id: status
+      enabled: true
+      duration: 10
+    - id: config_summary
+      enabled: true
+      duration: 10
+    - id: location
+      enabled: true
+      duration: 15
+    - id: last_beacon
+      enabled: true
+      duration: 10
+    - id: last_heard
+      enabled: true
+      duration: 10
+
+# ── Radio CAT control ─────────────────────────────────────────
+radio:
+  enabled: false          # set true when a CAT-capable radio is connected
+  model: 1                # Hamlib rig model number (1=dummy, 1020=FT-817/818, 1023=FT-857)
+  port: /dev/ttyUSB0      # CAT serial port
+  baud: 9600              # CAT baud rate
+
+# ── Radio Memory Programmer (Alinco DR-138T via ERW-4) ────────
+# Programs channel 1 (index 0) with the APRS frequency.
+# Requires: pyserial (pip install pyserial), ERW-4 cable (PL-2303 USB-serial).
+# Only frequency and channel name are implemented (confirmed from a real
+# serial capture — see hardware/radio_programmer.py). mode/power/ctcss_hz
+# are accepted here but not yet written to the radio; a warning is logged
+# if they're set to anything other than the defaults below.
+radio_programmer:
+  enabled: false
+  port: /dev/ttyUSB0      # ERW-4 cable device
+  channel: 0              # always 0 (first channel slot)
+  frequency_hz: 144575000 # 144.575 NZ | 144.800 EU | 144.390 NA | 145.175 AU
+  mode: FM_WIDE           # FM_WIDE or FM_NARROW — not yet implemented
+  power: HIGH             # HIGH or LOW — not yet implemented
+  ctcss_hz: 0.0           # 0.0 = none (APRS standard) — not yet implemented
+
+# ── Hardware ──────────────────────────────────────────────────
+hardware:
+  relay_pin: 27           # BCM GPIO pin for radio power relay
+  radio_boot_delay: 10    # seconds to wait after relay on before continuing
+  gps:
+    device: /dev/ttyAMA0  # serial device for GPS module
+    baud: 9600
+
+# ── Network ───────────────────────────────────────────────────
+network:
+  mode: hotspot           # "ethernet", "hotspot", "wifi_client"
+  hotspot:
+    ssid: Digipeater
+    password: Digipeater
+  wifi_client:
+    ssid: ""
+    password: ""
+
+# ── Web Interface ─────────────────────────────────────────────
+web:
+  host: 0.0.0.0
+  port: 8080
+  security:
+    mode: none            # "none", "config", "readonly", "full"
+    password: ""
+
+# ── Time Sync ─────────────────────────────────────────────────
+time:
+  ntp_servers:
+    - pool.ntp.org
+    - time.google.com

@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+websockets
+pyyaml
+pyserial
+httpx
+python-multipart
+aiofiles
+jinja2
+gpiozero
+aprslib
+pillow

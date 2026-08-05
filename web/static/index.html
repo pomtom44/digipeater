@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>APRS Digipeater</title>
+  <link rel="stylesheet" href="/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- ── Login Modal ────────────────────────────────────────── -->
+<div id="login-overlay" class="overlay hidden">
+  <div class="modal" style="max-width:340px">
+    <h2>Sign In</h2>
+    <p class="text-muted" style="margin-bottom:20px;font-size:13px">Enter the password to access this digipeater.</p>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+    </div>
+    <p id="login-error" class="text-danger hidden" style="font-size:12px;margin:-4px 0 12px"></p>
+    <button class="btn btn-primary" id="login-submit" style="width:100%">Sign In</button>
+  </div>
+</div>
+
+<!-- ── Setup Wizard ───────────────────────────────────────── -->
+<div id="wizard-page" class="hidden">
+  <div class="wizard-box">
+    <h2 id="wizard-title">Welcome</h2>
+    <p class="wizard-subtitle" id="wizard-subtitle"></p>
+    <div class="wizard-steps">
+      <div class="wizard-step" id="ws-1"></div>
+      <div class="wizard-step" id="ws-2"></div>
+    </div>
+    <div id="wizard-body"></div>
+    <div class="wizard-actions">
+      <button class="btn btn-secondary hidden" id="wizard-back">Back</button>
+      <button class="btn btn-primary" id="wizard-next">Next</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Main App ───────────────────────────────────────────── -->
+<div id="app" class="hidden">
+
+  <header>
+    <h1>APRS Digipeater</h1>
+    <span id="header-callsign" class="text-muted"></span>
+    <span id="auth-badge" class="hidden">SECURED</span>
+    <button class="btn btn-secondary btn-sm hidden" id="btn-logout">Log Out</button>
+    <button class="btn btn-secondary btn-sm" id="btn-reboot">Reboot</button>
+  </header>
+
+  <div class="main-area">
+
+    <!-- Map -->
+    <div id="map-container">
+      <div class="map-toolbar">
+        <button class="btn btn-secondary btn-sm" id="filter-all">All</button>
+        <button class="btn btn-secondary btn-sm" id="filter-direct">Direct</button>
+        <button class="btn btn-secondary btn-sm" id="filter-position">Position</button>
+        <button class="btn btn-secondary btn-sm" id="toggle-traces">Traces: ON</button>
+        <button class="btn btn-secondary btn-sm" id="btn-clear-map">Clear</button>
+      </div>
+      <div id="map"></div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+
+      <!-- Controls -->
+      <div class="sidebar-section">
+        <div class="status-row">
+          <div class="status-dot" id="status-dot"></div>
+          <span id="status-text">Stopped</span>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-success btn-sm" id="btn-start">Start</button>
+          <button class="btn btn-danger btn-sm" id="btn-stop" disabled>Stop</button>
+          <button class="btn btn-secondary btn-sm" id="btn-config">Configure</button>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="sidebar-section">
+        <h2>Stats</h2>
+        <div class="stats-grid">
+          <div class="stat"><span class="stat-label">Heard</span><span class="stat-value" id="stat-heard">0</span></div>
+          <div class="stat"><span class="stat-label">Digipeated</span><span class="stat-value" id="stat-digi">0</span></div>
+          <div class="stat"><span class="stat-label">Gated</span><span class="stat-value" id="stat-gated">0</span></div>
+          <div class="stat"><span class="stat-label">Uptime</span><span class="stat-value" id="stat-uptime">—</span></div>
+          <div class="stat" style="grid-column:1/-1">
+            <span class="stat-label">APRS-IS</span>
+            <span class="stat-value" id="stat-is">—</span>
+          </div>
+          <div class="stat" style="grid-column:1/-1">
+            <span class="stat-label">Version</span>
+            <span class="stat-value" id="stat-version">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Radio frequency -->
+      <div class="sidebar-section hidden" id="radio-section">
+        <h2>Radio</h2>
+        <div class="stats-grid" style="margin-bottom:8px">
+          <div class="stat" style="grid-column:1/-1">
+            <span class="stat-label">Frequency</span>
+            <span class="stat-value" id="stat-freq">—</span>
+          </div>
+        </div>
+        <div class="freq-presets">
+          <button class="btn btn-secondary btn-sm" onclick="applyPreset(144390000)">144.390</button>
+          <button class="btn btn-secondary btn-sm" onclick="applyPreset(144800000)">144.800</button>
+          <button class="btn btn-secondary btn-sm" onclick="applyPreset(144575000)">144.575</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+          <input type="number" id="freq-input" placeholder="144.390" step="0.001" min="1" max="1300" style="flex:1;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
+          <span class="text-muted" style="font-size:12px;white-space:nowrap">MHz</span>
+          <button class="btn btn-primary btn-sm" onclick="applyFreqInput()">Set</button>
+        </div>
+      </div>
+
+      <!-- Log -->
+      <div class="sidebar-section" style="flex:1;display:flex;flex-direction:column;overflow:hidden;padding-bottom:0">
+        <h2>Log</h2>
+      </div>
+      <div id="log-panel"></div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ── Config Page ─────────────────────────────────────────── -->
+<div id="config-page" class="hidden">
+  <div class="config-inner">
+    <h1>
+      <button class="btn btn-secondary btn-sm btn-icon" id="config-back">←</button>
+      Configuration
+      <span id="config-stop-warning" class="text-danger hidden" style="font-size:13px;font-weight:400">(Stop Direwolf before saving)</span>
+    </h1>
+
+    <!-- Interface -->
+    <div class="config-section">
+      <h3>Interface</h3>
+      <div class="field">
+        <label>Type</label>
+        <select id="cfg-interface-type">
+          <option value="audio">Audio TNC (soundcard / onboard)</option>
+          <option value="serial">Serial TNC (hardware TNC)</option>
+        </select>
+      </div>
+      <div id="cfg-audio-fields">
+        <div class="field-row">
+          <div class="field">
+            <label>Audio Input Device</label>
+            <select id="cfg-audio-in"></select>
+          </div>
+          <div class="field">
+            <label>Audio Output Device</label>
+            <select id="cfg-audio-out"></select>
+          </div>
+        </div>
+      </div>
+      <div id="cfg-serial-fields" class="hidden">
+        <div class="field-row">
+          <div class="field">
+            <label>Serial Device</label>
+            <select id="cfg-serial-device"></select>
+          </div>
+          <div class="field">
+            <label>Baud Rate</label>
+            <select id="cfg-baud">
+              <option value="9600">9600</option>
+              <option value="19200">19200</option>
+              <option value="38400">38400</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mode -->
+    <div class="config-section">
+      <h3>Operating Mode</h3>
+      <div class="toggle-row"><span class="toggle-label">Listen Only (RX)</span><label class="toggle"><input type="checkbox" id="cfg-mode-rx"><span class="toggle-slider"></span></label></div>
+      <div id="cfg-tx-fields">
+        <div class="field-row">
+          <div class="field"><label>Callsign</label><input type="text" id="cfg-callsign" placeholder="NOCALL" style="text-transform:uppercase"></div>
+          <div class="field"><label>SSID</label><input type="number" id="cfg-ssid" min="0" max="15" value="0" style="width:70px"></div>
+        </div>
+        <div class="field">
+          <label>PTT Method</label>
+          <select id="cfg-ptt-method">
+            <option value="gpio">GPIO Pin</option>
+            <option value="serial_rts">Serial RTS</option>
+            <option value="serial_dtr">Serial DTR</option>
+            <option value="cm108">CM108 USB</option>
+            <option value="vox">VOX</option>
+          </select>
+        </div>
+        <div id="cfg-ptt-gpio" class="field">
+          <label>GPIO Pin (BCM)</label>
+          <div style="display:flex;gap:8px">
+            <input type="number" id="cfg-ptt-pin" value="17" style="width:80px">
+            <button class="btn btn-secondary btn-sm" id="btn-ptt-test">Test PTT (1s)</button>
+          </div>
+        </div>
+        <div id="cfg-ptt-serial" class="field hidden">
+          <label>Serial Port</label>
+          <select id="cfg-ptt-port"></select>
+        </div>
+      </div>
+    </div>
+
+    <!-- APRS-IS passcode -->
+    <div class="config-section" id="cfg-passcode-section">
+      <h3>APRS-IS Passcode</h3>
+      <div class="field">
+        <label>Passcode</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" id="cfg-passcode" placeholder="Auto-calculated">
+          <button class="btn btn-secondary btn-sm" id="btn-gen-passcode">Generate</button>
+        </div>
+        <small class="text-muted">Auto-calculated from callsign. Only override if you have a reason to.</small>
+      </div>
+    </div>
+
+    <!-- Digipeater -->
+    <div class="config-section" id="cfg-digi-section">
+      <h3>Digipeater</h3>
+      <div class="toggle-row"><span class="toggle-label">Enable Digipeating</span><label class="toggle"><input type="checkbox" id="cfg-digi-enabled"><span class="toggle-slider"></span></label></div>
+      <div id="cfg-digi-fields" class="hidden">
+        <div class="field">
+          <label>Path Aliases</label>
+          <select id="cfg-digi-alias" multiple size="4" style="height:auto">
+            <option value="WIDE1-1" selected>WIDE1-1 (fill-in, 1 hop)</option>
+            <option value="WIDE2-1" selected>WIDE2-1 (wide, 1 of 2)</option>
+            <option value="WIDE2-2" selected>WIDE2-2 (wide, 2 of 2)</option>
+            <option value="RELAY">RELAY (legacy)</option>
+            <option value="TRACE3-3">TRACE3-3</option>
+          </select>
+          <small class="text-muted">Hold Ctrl/Cmd to select multiple</small>
+        </div>
+        <div class="field">
+          <label>Callsign Filter</label>
+          <input type="text" id="cfg-digi-source-filter" placeholder="e.g. ZL*, VK* (comma-separated, leave empty to digipeat all)">
+          <small class="text-muted">Only digipeat packets from matching callsigns. Use * as wildcard.</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Igate -->
+    <div class="config-section">
+      <h3>Igate (APRS-IS)</h3>
+      <div class="toggle-row"><span class="toggle-label">Enable Igate</span><label class="toggle"><input type="checkbox" id="cfg-igate-enabled"><span class="toggle-slider"></span></label></div>
+      <div id="cfg-igate-fields" class="hidden">
+        <div class="field-row">
+          <div class="field"><label>Server</label><input type="text" id="cfg-igate-server" value="rotate.aprs2.net"></div>
+          <div class="field"><label>Port</label><input type="number" id="cfg-igate-port" value="14580" style="width:90px"></div>
+        </div>
+        <div class="field">
+          <label>Filter</label>
+          <select id="cfg-igate-filter">
+            <option value="r/0/0/50">50km radius</option>
+            <option value="r/0/0/100" selected>100km radius</option>
+            <option value="r/0/0/200">200km radius</option>
+            <option value="r/0/0/500">500km radius</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- RF Beacon -->
+    <div class="config-section" id="cfg-rfbeacon-section">
+      <h3>RF Beacon</h3>
+      <div class="toggle-row"><span class="toggle-label">Enable RF Beacon</span><label class="toggle"><input type="checkbox" id="cfg-rfb-enabled"><span class="toggle-slider"></span></label></div>
+      <div id="cfg-rfb-fields" class="hidden">
+        <div class="field-row">
+          <div class="field"><label>Delay (min)</label><input type="number" id="cfg-rfb-delay" value="1" min="0"></div>
+          <div class="field"><label>Interval (min)</label><input type="number" id="cfg-rfb-every" value="30" min="1"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Symbol</label><input type="text" id="cfg-rfb-symbol" value="#" maxlength="1" style="width:50px"></div>
+          <div class="field"><label>Overlay</label><input type="text" id="cfg-rfb-overlay" value="S" maxlength="1" style="width:50px"></div>
+        </div>
+        <div class="field"><label>Comment</label><input type="text" id="cfg-rfb-comment" value="Digipeater"></div>
+        <div class="toggle-row"><span class="toggle-label">Live GPS (via gpsd)</span><label class="toggle"><input type="checkbox" id="cfg-rfb-gps" checked><span class="toggle-slider"></span></label></div>
+        <div id="cfg-rfb-fixed" class="hidden">
+          <div class="field-row">
+            <div class="field"><label>Latitude</label><input type="number" id="cfg-rfb-lat" placeholder="-36.848600" step="0.000001"></div>
+            <div class="field"><label>Longitude</label><input type="number" id="cfg-rfb-lon" placeholder="174.763300" step="0.000001"></div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btn-rfb-fetch-gps" style="margin-bottom:10px">Fetch from live GPS</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Igate Beacon -->
+    <div class="config-section" id="cfg-igbeacon-section">
+      <h3>Igate Beacon</h3>
+      <div class="toggle-row"><span class="toggle-label">Enable Igate Beacon</span><label class="toggle"><input type="checkbox" id="cfg-igb-enabled"><span class="toggle-slider"></span></label></div>
+      <div id="cfg-igb-fields" class="hidden">
+        <div class="field-row">
+          <div class="field"><label>Delay (min)</label><input type="number" id="cfg-igb-delay" value="1" min="0"></div>
+          <div class="field"><label>Interval (min)</label><input type="number" id="cfg-igb-every" value="30" min="1"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Symbol</label><input type="text" id="cfg-igb-symbol" value="#" maxlength="1" style="width:50px"></div>
+          <div class="field"><label>Overlay</label><input type="text" id="cfg-igb-overlay" value="S" maxlength="1" style="width:50px"></div>
+        </div>
+        <div class="field"><label>Comment</label><input type="text" id="cfg-igb-comment" value="Digipeater"></div>
+        <div class="toggle-row"><span class="toggle-label">Live GPS (via gpsd)</span><label class="toggle"><input type="checkbox" id="cfg-igb-gps" checked><span class="toggle-slider"></span></label></div>
+        <div id="cfg-igb-fixed" class="hidden">
+          <div class="field-row">
+            <div class="field"><label>Latitude</label><input type="number" id="cfg-igb-lat" placeholder="-36.848600" step="0.000001"></div>
+            <div class="field"><label>Longitude</label><input type="number" id="cfg-igb-lon" placeholder="174.763300" step="0.000001"></div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btn-igb-fetch-gps" style="margin-bottom:10px">Fetch from live GPS</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Startup -->
+    <div class="config-section">
+      <h3>Startup</h3>
+      <div class="field">
+        <label>Direwolf Start Mode</label>
+        <select id="cfg-start-mode">
+          <option value="manual">Manual — start from dashboard</option>
+          <option value="auto">Auto — start on boot</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Map -->
+    <div class="config-section">
+      <h3>Map</h3>
+      <div class="field">
+        <label>Tile Mode</label>
+        <select id="cfg-map-mode">
+          <option value="live">Live (online tile server)</option>
+          <option value="cached">Cached (offline)</option>
+        </select>
+      </div>
+      <div class="field"><label>Station Aging (seconds, 0 = never)</label><input type="number" id="cfg-aging" value="7200"></div>
+      <div id="cfg-cache-fields" class="hidden">
+        <div class="field-row">
+          <div class="field"><label>Zoom Min</label><input type="number" id="cfg-zoom-min" value="8" min="1" max="18"></div>
+          <div class="field"><label>Zoom Max</label><input type="number" id="cfg-zoom-max" value="14" min="1" max="18"></div>
+        </div>
+        <div id="tile-estimate" class="text-muted mt-8"></div>
+        <div id="tile-progress" class="hidden mt-8">
+          <div class="progress-bar-wrap"><div class="progress-bar" id="tile-bar" style="width:0%"></div></div>
+          <div id="tile-status" class="text-muted mt-8"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn btn-secondary btn-sm" id="btn-estimate">Estimate</button>
+          <button class="btn btn-primary btn-sm" id="btn-cache-start">Start Download</button>
+          <button class="btn btn-danger btn-sm hidden" id="btn-cache-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Display -->
+    <div class="config-section">
+      <h3>E-Ink Display</h3>
+      <div class="field-row">
+        <div class="field">
+          <label>Driver</label>
+          <select id="cfg-display-driver">
+            <option value="none">None (disabled)</option>
+            <option value="waveshare">Waveshare HAT</option>
+          </select>
+        </div>
+        <div class="field hidden" id="cfg-display-model-wrap">
+          <label>Model</label>
+          <!-- Options populated at runtime from GET /api/display/models (loadDisplayModels() in
+               app.js), discovered from display/waveshare/ — adding a driver module there is
+               enough for a new screen to appear here, no HTML/JS change needed. -->
+          <select id="cfg-display-model"></select>
+        </div>
+      </div>
+      <small class="text-muted hidden" id="cfg-display-pin-note" style="color:var(--warning,#f59e0b)">
+        Note: Waveshare HATs use GPIO 17 for RST. The default relay pin is GPIO 27, which is safe. Do not reassign relay_pin to 17.
+      </small>
+      <h4 style="margin:14px 0 4px">Pages</h4>
+      <small class="text-muted">Drag to reorder. Toggle to enable/disable.</small>
+      <div id="display-pages" class="mt-8"></div>
+    </div>
+
+    <!-- GPIO Pinout -->
+    <div class="config-section">
+      <h3>GPIO Pinout</h3>
+      <div id="pinout"></div>
+      <small class="text-muted">Highlighted pins are assigned by your current config.</small>
+    </div>
+
+    <!-- Network -->
+    <div class="config-section">
+      <h3>Network</h3>
+      <div class="field">
+        <label>Mode</label>
+        <select id="cfg-net-mode">
+          <option value="hotspot">WiFi Hotspot</option>
+          <option value="wifi_client">WiFi Client</option>
+          <option value="ethernet">Ethernet Only</option>
+        </select>
+      </div>
+      <div id="cfg-net-hotspot">
+        <div class="field-row">
+          <div class="field"><label>SSID</label><input type="text" id="cfg-hotspot-ssid" value="Digipeater"></div>
+          <div class="field"><label>Password</label><input type="password" id="cfg-hotspot-pass" value="Digipeater"></div>
+        </div>
+      </div>
+      <div id="cfg-net-wifi" class="hidden">
+        <div class="field">
+          <label>Network SSID</label>
+          <div style="display:flex;gap:8px">
+            <select id="cfg-wifi-ssid" style="flex:1"></select>
+            <button class="btn btn-secondary btn-sm" id="btn-wifi-scan">Scan</button>
+          </div>
+        </div>
+        <div class="field"><label>Password</label><input type="password" id="cfg-wifi-pass"></div>
+      </div>
+    </div>
+
+    <!-- Radio CAT Control -->
+    <div class="config-section">
+      <h3>Radio CAT Control</h3>
+      <div class="field">
+        <label class="toggle-label">
+          <input type="checkbox" id="cfg-radio-enabled">
+          Enable CAT via rigctld (Hamlib)
+        </label>
+      </div>
+      <div id="cfg-radio-fields" class="hidden">
+        <div class="field-row">
+          <div class="field">
+            <label>Hamlib Model Number</label>
+            <input type="number" id="cfg-radio-model" placeholder="e.g. 1020">
+            <small class="text-muted">1 = dummy · 1020 = FT-817/818 · 1023 = FT-857 · 1035 = IC-705</small>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>CAT Serial Port</label>
+            <input type="text" id="cfg-radio-port" placeholder="/dev/ttyUSB0">
+          </div>
+          <div class="field">
+            <label>CAT Baud Rate</label>
+            <select id="cfg-radio-baud">
+              <option value="1200">1200</option>
+              <option value="2400">2400</option>
+              <option value="4800">4800</option>
+              <option value="9600">9600</option>
+              <option value="19200">19200</option>
+              <option value="38400">38400</option>
+              <option value="57600">57600</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Radio Memory Programmer -->
+    <div class="config-section">
+      <h3>Radio Programmer</h3>
+
+      <div class="field">
+        <label>Radio Model</label>
+        <select id="cfg-prog-radio">
+          <option value="alinco_dr138t">Alinco DR-138T MK2</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Frequency</label>
+        <div class="freq-presets" style="margin-bottom:8px">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="setProgFreq(144390000)">144.390 NA</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="setProgFreq(144800000)">144.800 EU</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="setProgFreq(144575000)">144.575 NZ</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="setProgFreq(145175000)">145.175 AU</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="number" id="cfg-prog-freq-mhz" placeholder="144.575" step="0.001" min="1" max="1300" style="flex:1;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
+          <span class="text-muted" style="font-size:12px;white-space:nowrap">MHz</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Power</label>
+        <select id="cfg-prog-power"></select>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">CTCSS Tone</span>
+        <label class="toggle"><input type="checkbox" id="cfg-prog-ctcss-on"><span class="toggle-slider"></span></label>
+      </div>
+      <div id="cfg-prog-ctcss-fields" class="hidden" style="margin-top:8px">
+        <div class="field">
+          <label>Tone (Hz)</label>
+          <select id="cfg-prog-ctcss">
+            <option value="67.0">67.0</option>
+            <option value="71.9">71.9</option>
+            <option value="74.4">74.4</option>
+            <option value="77.0">77.0</option>
+            <option value="79.7">79.7</option>
+            <option value="82.5">82.5</option>
+            <option value="85.4">85.4</option>
+            <option value="88.5">88.5</option>
+            <option value="91.5">91.5</option>
+            <option value="94.8">94.8</option>
+            <option value="97.4">97.4</option>
+            <option value="100.0">100.0</option>
+            <option value="103.5">103.5</option>
+            <option value="107.2">107.2</option>
+            <option value="110.9">110.9</option>
+            <option value="114.8">114.8</option>
+            <option value="118.8">118.8</option>
+            <option value="123.0">123.0</option>
+            <option value="127.3">127.3</option>
+            <option value="131.8">131.8</option>
+            <option value="136.5">136.5</option>
+            <option value="141.3">141.3</option>
+            <option value="146.2">146.2</option>
+            <option value="151.4">151.4</option>
+            <option value="156.7">156.7</option>
+            <option value="162.2">162.2</option>
+            <option value="167.9">167.9</option>
+            <option value="173.8">173.8</option>
+            <option value="179.9">179.9</option>
+            <option value="186.2">186.2</option>
+            <option value="192.8">192.8</option>
+            <option value="203.5">203.5</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:12px;margin-top:12px">
+        <button type="button" class="btn btn-primary btn-sm" id="btn-prog-run">Write to Radio</button>
+        <span id="prog-status" class="text-muted" style="font-size:12px"></span>
+      </div>
+      <div id="prog-error" class="hidden" style="margin-top:6px;padding:8px;background:var(--danger-bg,rgba(239,68,68,0.1));border-radius:4px;font-size:12px;color:var(--danger,#ef4444)"></div>
+    </div>
+
+    <!-- Security -->
+    <div class="config-section">
+      <h3>Web Interface Security</h3>
+      <div class="field">
+        <label>Mode</label>
+        <select id="cfg-sec-mode">
+          <option value="none">None — open access</option>
+          <option value="config">Config password — start/stop free, config locked</option>
+          <option value="readonly">Read only — view only without password</option>
+          <option value="full">Full — everything behind login</option>
+        </select>
+      </div>
+      <div class="field" id="cfg-sec-pass-field">
+        <label>Password</label>
+        <input type="password" id="cfg-sec-pass">
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="config-actions">
+      <button class="btn btn-primary" id="btn-save-config">Save Config</button>
+      <button class="btn btn-secondary" id="btn-export-config">Export</button>
+      <label class="btn btn-secondary" style="cursor:pointer">
+        Import <input type="file" id="btn-import-config" accept=".yaml,.yml" class="hidden">
+      </label>
+      <button class="btn btn-danger btn-sm" id="btn-reset-packets">Clear Map Data</button>
+    </div>
+
+  </div>
+</div>
+
+<script src="/leaflet/leaflet.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
