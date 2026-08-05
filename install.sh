@@ -35,10 +35,10 @@ fi
 
 # ── Check OS ─────────────────────────────────
 info "Checking system..."
-if ! grep -q "Bookworm" /etc/os-release 2>/dev/null; then
+if ! grep -qi "bookworm" /etc/os-release 2>/dev/null; then
     echo -e "${YELLOW}  Warning: This script is tested on Raspberry Pi OS Bookworm.${NC}"
     echo -e "${YELLOW}  Other versions may work but are not guaranteed.${NC}"
-    read -p "  Continue anyway? [y/N] " confirm
+    read -p "  Continue anyway? [y/N] " confirm < /dev/tty
     [[ "$confirm" =~ ^[Yy]$ ]] || exit 1
 fi
 ok "OS check passed"
@@ -195,5 +195,5 @@ echo -e "    ${YELLOW}http://digipeater.local${NC}"
 echo ""
 echo -e "${YELLOW}Note: Group permission changes require the reboot to take effect.${NC}"
 echo ""
-read -p "Press Enter to reboot now, or Ctrl+C to cancel..."
+read -p "Press Enter to reboot now, or Ctrl+C to cancel..." < /dev/tty
 sudo reboot
