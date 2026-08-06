@@ -113,7 +113,7 @@ function bindAppEvents() {
   document.getElementById('cfg-callsign').addEventListener('blur', autoPasscode);
   document.getElementById('btn-gen-passcode').addEventListener('click', autoPasscode);
   document.getElementById('btn-ptt-test').addEventListener('click', () => api('POST', '/api/ptt-test'));
-  document.getElementById('btn-wifi-scan').addEventListener('click', scanWifi);
+  document.getElementById('btn-wifi-scan').addEventListener('click', () => scanWifi('cfg-wifi-list'));
   document.getElementById('btn-estimate').addEventListener('click', estimateTiles);
   document.getElementById('btn-cache-start').addEventListener('click', startTileCache);
   document.getElementById('btn-cache-cancel').addEventListener('click', () => api('POST', '/api/map/cache/cancel'));
@@ -900,11 +900,16 @@ async function programRadio() {
   }, 500);
 }
 
-async function scanWifi() {
+async function scanWifi(listId = 'cfg-wifi-list') {
   const res = await api('GET', '/api/network/scan');
-  const sel = document.getElementById('cfg-wifi-ssid');
-  sel.innerHTML = '';
-  (res?.networks || []).forEach(n => sel.appendChild(new Option(`${n.ssid} (${n.signal}%)`, n.ssid)));
+  const list = document.getElementById(listId);
+  list.innerHTML = '';
+  (res?.networks || []).forEach(n => {
+    const opt = document.createElement('option');
+    opt.value = n.ssid;
+    opt.label = `${n.ssid} (${n.signal}%)`;
+    list.appendChild(opt);
+  });
 }
 
 // ── Display pages drag-and-drop ───────────────────────────────
@@ -1093,7 +1098,14 @@ function renderWizardStep(step) {
         </div>
       </div>
       <div id="wiz-wifi-fields" class="hidden">
-        <div class="field"><label>SSID</label><input type="text" id="wiz-wifi-ssid"></div>
+        <div class="field">
+          <label>SSID</label>
+          <div style="display:flex;gap:8px">
+            <input type="text" id="wiz-wifi-ssid" list="wiz-wifi-list" placeholder="Scan or type SSID manually" style="flex:1">
+            <datalist id="wiz-wifi-list"></datalist>
+            <button class="btn btn-secondary btn-sm" id="btn-wiz-wifi-scan">Scan</button>
+          </div>
+        </div>
         <div class="field"><label>Password</label><input type="password" id="wiz-wifi-pass"></div>
       </div>
       <div id="wiz-net-status" class="mt-8"></div>
@@ -1103,6 +1115,7 @@ function renderWizardStep(step) {
       document.getElementById('wiz-hotspot-fields').classList.toggle('hidden', m !== 'hotspot');
       document.getElementById('wiz-wifi-fields').classList.toggle('hidden', m !== 'wifi_client');
     });
+    document.getElementById('btn-wiz-wifi-scan').addEventListener('click', () => scanWifi('wiz-wifi-list'));
   }
 
   if (step === 2) {

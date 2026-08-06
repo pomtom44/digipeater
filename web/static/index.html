@@ -417,7 +417,8 @@
         <div class="field">
           <label>Network SSID</label>
           <div style="display:flex;gap:8px">
-            <select id="cfg-wifi-ssid" style="flex:1"></select>
+            <input type="text" id="cfg-wifi-ssid" list="cfg-wifi-list" placeholder="Scan or type SSID manually" style="flex:1">
+            <datalist id="cfg-wifi-list"></datalist>
             <button class="btn btn-secondary btn-sm" id="btn-wifi-scan">Scan</button>
           </div>
         </div>
