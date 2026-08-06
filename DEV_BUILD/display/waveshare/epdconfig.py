@@ -47,7 +47,13 @@ def module_init() -> int:
     GPIO.setup(CS_PIN,  GPIO.OUT)
     GPIO.setup(BUSY_PIN, GPIO.IN)
     _SPI.open(0, 0)
-    _SPI.max_speed_hz = 4000000  # matches Waveshare's official reference for this board family
+    # Waveshare's reference (both the generic RPi driver and the Pico-specific
+    # one) uses 4MHz, but that assumes a HAT-style direct/short-trace connection.
+    # This board is being driven over breadboard jumper wires instead, which are
+    # far more prone to noise at higher clock rates — worth testing lower if
+    # communication is unreliable (e.g. busy-wait never releases) even though
+    # wiring positions and command sequence have both been verified correct.
+    _SPI.max_speed_hz = 1000000
     _SPI.mode = 0b00
     return 0
 

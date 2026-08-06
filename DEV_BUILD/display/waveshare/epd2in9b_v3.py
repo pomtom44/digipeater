@@ -34,11 +34,11 @@ class EPD:
 
     def _reset(self):
         epdconfig.digital_write(self.reset_pin, 1)
-        epdconfig.delay_ms(200)
+        epdconfig.delay_ms(50)
         epdconfig.digital_write(self.reset_pin, 0)
         epdconfig.delay_ms(2)
         epdconfig.digital_write(self.reset_pin, 1)
-        epdconfig.delay_ms(200)
+        epdconfig.delay_ms(50)
 
     def _cmd(self, cmd: int):
         epdconfig.digital_write(self.dc_pin, 0)
@@ -72,8 +72,8 @@ class EPD:
                 logger.error("e-Paper busy-wait timed out after %dms — BUSY pin stuck? Check wiring.", timeout_ms)
                 return
             self._cmd(0x71)
-            epdconfig.delay_ms(200)
-            waited += 200
+            epdconfig.delay_ms(10)
+            waited += 10
 
     def init(self):
         epdconfig.module_init()
