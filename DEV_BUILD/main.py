@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Hardcoded for now — becomes config-driven once the config system is built.
 DISPLAY_DRIVER = "waveshare"
-DISPLAY_MODEL = "epd2in9_v2"
+DISPLAY_MODEL = "epd2in9b_v3"
 CONFIG_PATH = Path("config.yaml")
 
 HOTSPOT_SSID = "Digipeater"

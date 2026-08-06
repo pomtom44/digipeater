@@ -35,7 +35,9 @@ Save, confirm, and write. Once flashing finishes:
 
 ## Part 2 — Wire the E-Ink Display
 
-Current dev build targets a Waveshare 2.9" e-Paper panel (296×128, SSD1680 controller) — this covers both the standard RPi-HAT 2.9" V2 module and the Pico-ePaper-2.9 board (same panel/controller; the Pico board just breaks the signals out for a Pico's header instead of an RPi HAT connector).
+Current dev build targets the **Waveshare Pico-ePaper-2.9-B** — a black/white/**red** 296×128 panel. It isn't a direct-plug RPi HAT (it's wired for a Pico's header), so it needs to be wired to the Pi by hand.
+
+> If you have the plain black/white 2.9" V2 module instead (no red), the driver for that (`epd2in9_v2.py`, SSD1680 controller) already exists in `display/waveshare/` too — just change `DISPLAY_MODEL` in `main.py` to `epd2in9_v2`. The two are electrically similar but use different controllers and are not interchangeable — using the wrong one produces static/garbage on screen, not just a wrong image.
 
 Since it isn't a direct-plug RPi HAT, wire it by hand to these BCM pins:
 
