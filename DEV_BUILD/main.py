@@ -47,12 +47,8 @@ def _load_display_driver(name: str, model: str):
     return NullDriver()
 
 
-def _render_lines(driver, lines: list[str]) -> None:
-    try:
-        from PIL import Image, ImageDraw
-    except ImportError:
-        logger.warning("Pillow not installed — skipping display render")
-        return
+def _draw_lines(driver, lines: list[str]):
+    from PIL import Image, ImageDraw
     image = Image.new("1", (driver.width, driver.height), 255)
     draw = ImageDraw.Draw(image)
     margin = driver.margin
@@ -60,17 +56,32 @@ def _render_lines(driver, lines: list[str]) -> None:
     for line in lines:
         draw.text((margin, y), line, fill=0)
         y += driver.line_height
-    driver.show(image)
+    return image
+
+
+async def _render_lines(driver, lines: list[str]) -> None:
+    """Render text to the display off the event loop thread — a hardware hang
+    here (e.g. a stuck BUSY pin) must not freeze the whole web server with it."""
+    try:
+        from PIL import Image, ImageDraw  # noqa: F401 — import check before threading
+    except ImportError:
+        logger.warning("Pillow not installed — skipping display render")
+        return
+    try:
+        image = await asyncio.to_thread(_draw_lines, driver, lines)
+        await asyncio.to_thread(driver.show, image)
+    except Exception as e:
+        logger.error("Display render failed: %s", e)
 
 
 async def _first_boot_sequence(driver) -> None:
     """Show first-boot status on the e-ink display and bring up the WiFi hotspot."""
-    _render_lines(driver, ["First boot config", "", "Starting network..."])
+    await _render_lines(driver, ["First boot config", "", "Starting network..."])
 
     await network.setup_hotspot(HOTSPOT_SSID, HOTSPOT_PASSWORD)
     eth_ip = await network.get_ethernet_ip()
 
-    _render_lines(driver, [
+    await _render_lines(driver, [
         "First boot config",
         "",
         f"Eth: {eth_ip or 'not connected'}",
@@ -85,7 +96,7 @@ async def main() -> None:
     driver_name, driver_model = _load_display_config()
     display_driver = _load_display_driver(driver_name, driver_model)
     try:
-        display_driver.init()
+        await asyncio.to_thread(display_driver.init)
         logger.info("Display initialised: %dx%d", display_driver.width, display_driver.height)
     except Exception as e:
         logger.error("Display init failed: %s", e)
@@ -94,7 +105,7 @@ async def main() -> None:
         logger.info("No config.yaml found — running first-boot sequence")
         await _first_boot_sequence(display_driver)
     else:
-        _render_lines(display_driver, ["Digipeater", "Running"])
+        await _render_lines(display_driver, ["Digipeater", "Running"])
 
     app = create_app(display_driver, first_boot)
 

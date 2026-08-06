@@ -8,7 +8,7 @@ LANDSCAPE_HEIGHT (LINE_HEIGHT/MARGIN optional, default 16/4). It will show
 up in the config-page model dropdown and be loadable by name automatically.
 Nothing else in the app needs to change — the config-page dropdown, the
 GPIO pinout note, and driver_waveshare.py all read this registry rather
-than naming models individually. See epd2in9_v2.py for the constants
+than naming models individually. See epd2in9b_v3.py for the constants
 this scan reads.
 """
 

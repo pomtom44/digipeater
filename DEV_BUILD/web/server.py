@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,27 @@ from display.base import DisplayDriver
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _build_test_image(display_driver: DisplayDriver):
+    from PIL import Image, ImageDraw
+    w, h = display_driver.width, display_driver.height
+    image = Image.new("1", (w, h), 255)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, w - 1, h - 1), outline=0)
+    margin = display_driver.margin
+    line_height = display_driver.line_height
+    lines = [
+        "APRS Digipeater",
+        "E-Ink test pattern",
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        f"{w} x {h}",
+    ]
+    y = margin
+    for line in lines:
+        draw.text((margin, y), line, fill=0)
+        y += line_height
+    return image
 
 
 def create_app(display_driver: DisplayDriver, first_boot: bool) -> FastAPI:
@@ -36,10 +58,14 @@ def create_app(display_driver: DisplayDriver, first_boot: bool) -> FastAPI:
             "height": display_driver.height,
         }
 
+    # Display calls run in a worker thread, not on the event loop — a hardware
+    # hang (e.g. a stuck BUSY pin) would otherwise freeze every other request
+    # the server is handling, not just the display endpoint.
+
     @app.post("/api/display/clear")
     async def display_clear():
         try:
-            display_driver.clear()
+            await asyncio.to_thread(display_driver.clear)
         except Exception as e:
             logger.error("Display clear failed: %s", e)
             raise HTTPException(status_code=500, detail=str(e))
@@ -48,27 +74,12 @@ def create_app(display_driver: DisplayDriver, first_boot: bool) -> FastAPI:
     @app.post("/api/display/test")
     async def display_test():
         try:
-            from PIL import Image, ImageDraw
+            from PIL import Image, ImageDraw  # noqa: F401 — import check before threading
         except ImportError:
             raise HTTPException(status_code=500, detail="Pillow not installed")
         try:
-            w, h = display_driver.width, display_driver.height
-            image = Image.new("1", (w, h), 255)
-            draw = ImageDraw.Draw(image)
-            draw.rectangle((0, 0, w - 1, h - 1), outline=0)
-            margin = display_driver.margin
-            line_height = display_driver.line_height
-            lines = [
-                "APRS Digipeater",
-                "E-Ink test pattern",
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                f"{w} x {h}",
-            ]
-            y = margin
-            for line in lines:
-                draw.text((margin, y), line, fill=0)
-                y += line_height
-            display_driver.show(image)
+            image = await asyncio.to_thread(_build_test_image, display_driver)
+            await asyncio.to_thread(display_driver.show, image)
         except Exception as e:
             logger.error("Display test render failed: %s", e)
             raise HTTPException(status_code=500, detail=str(e))
@@ -77,7 +88,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool) -> FastAPI:
     @app.post("/api/display/sleep")
     async def display_sleep():
         try:
-            display_driver.sleep()
+            await asyncio.to_thread(display_driver.sleep)
         except Exception as e:
             logger.error("Display sleep failed: %s", e)
             raise HTTPException(status_code=500, detail=str(e))

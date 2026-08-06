@@ -1,9 +1,6 @@
 """Waveshare 2.9" e-Paper (B) V3 — 296×128 pixels, black/white/red.
 
-Covers the Pico-ePaper-2.9-B board. Different controller family from the
-plain black/white 2.9" V2 module (epd2in9_v2.py) — different init sequence,
-different command set, and opposite BUSY pin polarity (busy while LOW here,
-vs busy while HIGH on the mono SSD1680 driver).
+Covers the Pico-ePaper-2.9-B board.
 
 This app doesn't generate colour content yet, so the red plane is always
 sent blank (all white) — display()/Clear() still refresh both planes, since
@@ -61,13 +58,22 @@ class EPD:
         epdconfig.spi_writebytes(data)
         epdconfig.digital_write(self.cs_pin, 1)
 
-    def _wait_busy(self):
+    def _wait_busy(self, timeout_ms: int = 10000):
         # This controller is polled via command 0x71 while waiting, and busy
         # is signalled LOW (idle is HIGH) — opposite polarity to the mono driver.
+        # Bounded so a wiring fault (BUSY stuck low) can't hang forever — a
+        # blocking hang here would freeze the whole asyncio event loop, not
+        # just the display (see driver_waveshare.py for how calls are isolated
+        # from that).
         self._cmd(0x71)
+        waited = 0
         while epdconfig.digital_read(self.busy_pin) == 0:
+            if waited >= timeout_ms:
+                logger.error("e-Paper busy-wait timed out after %dms — BUSY pin stuck? Check wiring.", timeout_ms)
+                return
             self._cmd(0x71)
             epdconfig.delay_ms(200)
+            waited += 200
 
     def init(self):
         epdconfig.module_init()
