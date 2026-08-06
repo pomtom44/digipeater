@@ -66,7 +66,11 @@ SSH into the Pi, then run:
 curl -sSL https://raw.githubusercontent.com/pomtom44/digipeater/main/DEV_BUILD/install.sh | bash
 ```
 
-This installs Python, the e-ink display libraries, sets up a systemd service (`digipeater`) so the tool starts automatically on every boot, and prompts you to reboot at the end (needed the first time SPI is enabled).
+This installs Python and the e-ink display libraries, then **asks which e-ink display is connected** (the list is read live from the drivers available in `display/waveshare/`, so it always matches what's actually in the code — pick `0` if you have no display wired up). That choice gets saved to `display_config.json` and is only asked once; delete that file and re-run the script to change it later.
+
+It then sets up a systemd service (`digipeater`) so the tool starts automatically on every boot, and prompts you to reboot at the end (needed the first time SPI is enabled).
+
+> Why ask this at install time instead of in the web setup wizard? The display needs to show status *during* first boot — before any wizard page could possibly run — so the choice has to be made before the tool ever starts.
 
 **What to expect after reboot:**
 - The e-ink display shows `First boot config`, then the ethernet IP (if connected) and the WiFi hotspot's SSID/password

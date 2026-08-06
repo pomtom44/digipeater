@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -11,13 +12,25 @@ from web.server import create_app
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-# Hardcoded for now — becomes config-driven once the config system is built.
-DISPLAY_DRIVER = "waveshare"
-DISPLAY_MODEL = "epd2in9b_v3"
 CONFIG_PATH = Path("config.yaml")
+# Written by install.sh's display-selection prompt (the display is needed during
+# first boot, before any web-based config wizard exists, so it can't wait for
+# the wizard — see DEV_BUILD/SETUP.md). Defaults to no display if absent.
+DISPLAY_CONFIG_PATH = Path("display_config.json")
 
 HOTSPOT_SSID = "Digipeater"
 HOTSPOT_PASSWORD = "Digipeater"
+
+
+def _load_display_config() -> tuple[str, str]:
+    if not DISPLAY_CONFIG_PATH.exists():
+        return "none", ""
+    try:
+        data = json.loads(DISPLAY_CONFIG_PATH.read_text())
+        return data.get("driver", "none"), data.get("model", "")
+    except Exception as e:
+        logger.error("Failed to read %s: %s — defaulting to no display", DISPLAY_CONFIG_PATH, e)
+        return "none", ""
 
 
 def _load_display_driver(name: str, model: str):
@@ -69,7 +82,8 @@ async def _first_boot_sequence(driver) -> None:
 async def main() -> None:
     first_boot = not CONFIG_PATH.exists()
 
-    display_driver = _load_display_driver(DISPLAY_DRIVER, DISPLAY_MODEL)
+    driver_name, driver_model = _load_display_config()
+    display_driver = _load_display_driver(driver_name, driver_model)
     try:
         display_driver.init()
         logger.info("Display initialised: %dx%d", display_driver.width, display_driver.height)

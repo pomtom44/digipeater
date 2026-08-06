@@ -103,6 +103,52 @@ info "Installing Python packages..."
 "$VENV_DIR/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
 ok "Python packages installed"
 
+# ── Select e-ink display ──────────────────────
+# The display is needed during first boot, before any web-based config wizard
+# exists to ask this question — so it has to be chosen here at install time.
+# Read live from the driver registry rather than a hardcoded list, so this
+# never goes stale as new display modules get added to display/waveshare/.
+DISPLAY_CONFIG="$APP_DIR/display_config.json"
+if [ -f "$DISPLAY_CONFIG" ]; then
+    info "Display already configured ($(cat "$DISPLAY_CONFIG")) — skipping."
+    echo "  Delete $DISPLAY_CONFIG and re-run this script to change it."
+else
+    info "Detecting available e-ink display drivers..."
+    mapfile -t MODEL_LINES < <(cd "$APP_DIR" && "$VENV_DIR/bin/python" -c '
+from display.waveshare import MODELS
+for k, v in MODELS.items():
+    print(k + "|" + v["desc"])
+')
+
+    echo ""
+    echo "  Which e-ink display is connected?"
+    echo "    0) None — no display connected"
+    declare -A MODEL_KEYS
+    i=1
+    for line in "${MODEL_LINES[@]}"; do
+        key="${line%%|*}"
+        desc="${line#*|}"
+        echo "    $i) $desc  [$key]"
+        MODEL_KEYS[$i]="$key"
+        i=$((i+1))
+    done
+    echo ""
+    read -p "  Enter a number [0]: " disp_choice < /dev/tty
+    disp_choice="${disp_choice:-0}"
+
+    if [ "$disp_choice" = "0" ]; then
+        DISPLAY_DRIVER="none"
+        DISPLAY_MODEL=""
+    else
+        DISPLAY_DRIVER="waveshare"
+        DISPLAY_MODEL="${MODEL_KEYS[$disp_choice]:-}"
+        [ -n "$DISPLAY_MODEL" ] || fail "Invalid selection"
+    fi
+
+    echo "{\"driver\": \"$DISPLAY_DRIVER\", \"model\": \"$DISPLAY_MODEL\"}" > "$DISPLAY_CONFIG"
+    ok "Display set to: ${DISPLAY_MODEL:-none}"
+fi
+
 # ── Install systemd service ───────────────────
 info "Installing systemd service..."
 sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null <<EOF
