@@ -10,7 +10,6 @@ SERVICE_NAME="digipeater"
 VENV_DIR="$INSTALL_DIR/venv"
 REPO_URL="https://github.com/pomtom44/digipeater.git"
 APP_DIR="$INSTALL_DIR/DEV_BUILD"
-PORT=8080
 
 # ── Colours ──────────────────────────────────
 GREEN='\033[0;32m'
@@ -61,17 +60,6 @@ sudo apt-get install -y -qq \
     curl
 ok "System packages installed"
 
-# ── Enable SPI (required for the e-ink display) ──
-info "Enabling SPI interface..."
-sudo raspi-config nonint do_spi 0
-ok "SPI enabled (reboot required the first time this is enabled)"
-
-# ── Ensure NetworkManager is running (required for the WiFi hotspot) ──
-info "Configuring NetworkManager..."
-sudo systemctl enable NetworkManager --quiet
-sudo systemctl start NetworkManager
-ok "NetworkManager configured"
-
 # ── Create directories ────────────────────────
 info "Creating application directories..."
 sudo mkdir -p "$INSTALL_DIR"
@@ -89,6 +77,17 @@ else
     ok "Application downloaded"
 fi
 
+# ── Enable SPI (required for the e-ink display) ──
+info "Enabling SPI interface..."
+sudo raspi-config nonint do_spi 0
+ok "SPI enabled (reboot required the first time this is enabled)"
+
+# ── Ensure NetworkManager is running (required for the WiFi hotspot) ──
+info "Configuring NetworkManager..."
+sudo systemctl enable NetworkManager --quiet
+sudo systemctl start NetworkManager
+ok "NetworkManager configured"
+
 # ── Python virtual environment ────────────────
 # --system-site-packages so the venv can see the apt-installed RPi.GPIO/spidev
 # (those build native extensions against the Pi's kernel headers — pip-installing
@@ -103,11 +102,39 @@ info "Installing Python packages..."
 "$VENV_DIR/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
 ok "Python packages installed"
 
+# ── Install systemd service ───────────────────
+info "Installing systemd service..."
+sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null <<EOF
+[Unit]
+Description=APRS Digipeater
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$APP_DIR
+ExecStart=$VENV_DIR/bin/python main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable ${SERVICE_NAME} --quiet
+ok "Systemd service installed and enabled — it will start automatically on boot"
+
 # ── Select e-ink display ──────────────────────
-# The display is needed during first boot, before any web-based config wizard
-# exists to ask this question — so it has to be chosen here at install time.
-# Read live from the driver registry rather than a hardcoded list, so this
-# never goes stale as new display modules get added to display/waveshare/.
+# Everything unattended is done by this point — this is the one thing that
+# needs a human, so it's asked last, right alongside the reboot confirmation
+# below. The display is needed during first boot, before any web-based config
+# wizard exists to ask this question, so it's a fixed pre-boot choice, not
+# something the wizard can ask instead. Read live from the driver registry
+# rather than a hardcoded list, so this never goes stale as new display
+# modules get added to display/waveshare/.
 DISPLAY_CONFIG="$APP_DIR/display_config.json"
 if [ -f "$DISPLAY_CONFIG" ]; then
     info "Display already configured ($(cat "$DISPLAY_CONFIG")) — skipping."
@@ -148,31 +175,6 @@ for k, v in MODELS.items():
     echo "{\"driver\": \"$DISPLAY_DRIVER\", \"model\": \"$DISPLAY_MODEL\"}" > "$DISPLAY_CONFIG"
     ok "Display set to: ${DISPLAY_MODEL:-none}"
 fi
-
-# ── Install systemd service ───────────────────
-info "Installing systemd service..."
-sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null <<EOF
-[Unit]
-Description=APRS Digipeater
-After=network.target
-
-[Service]
-Type=simple
-User=$USER
-WorkingDirectory=$APP_DIR
-ExecStart=$VENV_DIR/bin/python main.py
-Restart=on-failure
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable ${SERVICE_NAME} --quiet
-ok "Systemd service installed and enabled — it will start automatically on boot"
 
 # ── Done ──────────────────────────────────────
 echo ""
