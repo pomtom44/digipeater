@@ -47,7 +47,10 @@ def module_init() -> int:
     GPIO.setup(CS_PIN,  GPIO.OUT)
     GPIO.setup(BUSY_PIN, GPIO.IN)
     _SPI.open(0, 0)
-    _SPI.max_speed_hz = 4000000
+    # Kept conservative (2MHz) for reliability over breadboard jumper wires —
+    # loose/long jumpers at higher clock rates are a common source of noise
+    # on these panels. Can be raised once wiring is confirmed solid.
+    _SPI.max_speed_hz = 2000000
     _SPI.mode = 0b00
     return 0
 

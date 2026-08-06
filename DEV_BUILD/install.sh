@@ -141,5 +141,5 @@ echo ""
 echo "Logs after reboot: journalctl -u ${SERVICE_NAME} -f"
 echo "Re-run this script any time to pull the latest changes and redeploy."
 echo ""
-read -p "Press Enter to reboot now, or Ctrl+C to cancel..." < /dev/tty
+read -t 30 -p "Rebooting in 30 seconds — press Enter to reboot now, or Ctrl+C to cancel..." < /dev/tty || true
 sudo reboot
