@@ -72,6 +72,30 @@ async def get_wifi_client_ip() -> Optional[str]:
     return ips.get("wlan0")
 
 
+async def scan_wifi() -> list[dict]:
+    """Scan for nearby WiFi networks. Returns list of {ssid, signal, security}.
+
+    Works even while wlan0 is currently our own hotspot (AP mode) — scanning
+    is a passive listen, unlike actually connecting, which needs to leave AP
+    mode and would drop the hotspot the caller is likely using right now.
+    """
+    await _nmcli("device", "wifi", "rescan")
+    await asyncio.sleep(2)
+    code, out, _ = await _nmcli("-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list")
+    networks = []
+    seen = set()
+    for line in out.splitlines():
+        parts = line.split(":")
+        if len(parts) >= 2 and parts[0] and parts[0] not in seen:
+            seen.add(parts[0])
+            networks.append({
+                "ssid": parts[0],
+                "signal": parts[1] if len(parts) > 1 else "",
+                "security": parts[2] if len(parts) > 2 else "",
+            })
+    return networks
+
+
 async def setup_hotspot(ssid: str, password: str) -> bool:
     """Create or reconfigure the WiFi hotspot."""
     # Remove existing connection if present

@@ -50,12 +50,13 @@ SSH into the Pi, then run:
 curl -sSL https://raw.githubusercontent.com/pomtom44/digipeater/main/DEV_BUILD/install.sh | bash
 ```
 
-You'll be asked which e-ink display is connected (pick "None" if there isn't one). The installer then sets up the `digipeater` service to start on every boot and reboots when finished.
+Near the end you'll be asked for a WiFi country code (only if one isn't already set — needed for the hotspot to work at all) and which e-ink display is connected (pick "None" if there isn't one). The installer then sets up the `digipeater` service to start on every boot and reboots when finished.
 
 **After reboot:**
-- The e-ink display shows first-boot status, including the WiFi hotspot's SSID/password
-- Connect to the `Digipeater` hotspot (password `Digipeater`), or use ethernet
-- Open `http://digipeater.local:8080`, or `http://IP:8080` in a browser to continue the setup
+- The e-ink display shows first-boot status, including the IP and network method currently configured
+- Ethernet, Wifi, or Hotspot with SSID and Password
+- Either make sure you are connected to your network and getting an IP, or connect to the hotspot.
+- Open `http://digipeater.local`, or `http://IP` in a browser to continue the setup
 
 **Useful commands:**
 ```bash

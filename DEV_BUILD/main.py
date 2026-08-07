@@ -53,18 +53,6 @@ def _load_display_driver(name: str, model: str):
     return NullDriver()
 
 
-def _draw_lines(driver, lines: list[str]):
-    from PIL import Image, ImageDraw
-    image = Image.new("1", (driver.width, driver.height), 255)
-    draw = ImageDraw.Draw(image)
-    margin = driver.margin
-    y = margin
-    for line in lines:
-        draw.text((margin, y), line, fill=0)
-        y += driver.line_height
-    return image
-
-
 async def _render(driver, draw_fn, *args, fast: bool = False) -> None:
     """Render via draw_fn(driver, *args) off the event loop thread — a hardware
     hang here (e.g. a stuck BUSY pin) must not freeze the whole web server with it.
@@ -86,11 +74,11 @@ async def _render(driver, draw_fn, *args, fast: bool = False) -> None:
 
 
 async def _wait_for_existing_connection():
-    """Poll for an ethernet or WiFi-client IP for a short window after boot —
-    DHCP/association can take a few seconds, so checking once immediately
-    would too easily miss a connection that's about to come up on its own.
-    Must be called before the hotspot is started, so a wlan0 IP here can only
-    mean an existing client connection, not our own AP.
+    """Poll for an ethernet or WiFi-client IP for a short window — DHCP/
+    association can take a few seconds, so checking once immediately would
+    too easily miss a connection that's about to come up on its own. Must be
+    called before the hotspot is started, so a wlan0 IP here can only mean
+    an existing client connection, not our own AP.
 
     Returns ("ethernet"|"wifi", ip) or (None, None) if nothing came up in time.
     """
@@ -108,28 +96,32 @@ async def _wait_for_existing_connection():
         elapsed += CONNECTION_POLL_INTERVAL_S
 
 
-async def _first_boot_sequence(driver, template) -> None:
-    """Show first-boot status on the e-ink display, via the model's own page
-    template (see display/templates/). Only one state is ever shown, in
-    priority order: an existing ethernet connection, then an existing WiFi
-    client connection, then — only if neither is already connected — our
-    own hotspot."""
-    await _render(driver, template.draw_loading_page)
+async def _resolve_network() -> tuple[str, str]:
+    """Core network policy — runs on every boot, first-time or normal alike,
+    not just during initial setup. Checked in priority order: ethernet, then
+    an existing WiFi client connection, then — only if neither is already
+    connected — our own hotspot as a last resort. This is deliberate: the
+    device should never silently strand itself with no way to reach it, but
+    it also shouldn't start broadcasting a hotspot just because ethernet
+    dropped for a moment while a real connection was still coming up.
 
+    Returns ("ethernet"|"wifi"|"hotspot", ip_or_none).
+    """
     kind, ip = await _wait_for_existing_connection()
-
-    if kind == "ethernet":
-        await _render(driver, template.draw_status_page, "Initial config", [("Ethernet IP:", ip)], fast=True)
-        return
-    if kind == "wifi":
-        await _render(driver, template.draw_status_page, "Initial config", [("Wifi IP:", ip)], fast=True)
-        return
-
+    if kind:
+        return kind, ip
     await network.setup_hotspot(HOTSPOT_SSID, HOTSPOT_PASSWORD)
-    await _render(driver, template.draw_status_page, "Initial config", [
-        ("Hotspot:", HOTSPOT_SSID),
-        ("Password:", HOTSPOT_PASSWORD),
-    ], fast=True)
+    return "hotspot", None
+
+
+async def _show_network_status(driver, template, title: str, kind: str, ip: str, fast: bool) -> None:
+    if kind == "ethernet":
+        rows = [("Ethernet IP:", ip)]
+    elif kind == "wifi":
+        rows = [("Wifi IP:", ip)]
+    else:
+        rows = [("Hotspot:", HOTSPOT_SSID), ("Password:", HOTSPOT_PASSWORD)]
+    await _render(driver, template.draw_status_page, title, rows, fast=fast)
 
 
 async def main() -> None:
@@ -143,17 +135,22 @@ async def main() -> None:
     except Exception as e:
         logger.error("Display init failed: %s", e)
 
+    from display.templates import get_template
+    template = get_template(driver_model)
+
     if first_boot:
         logger.info("No config.yaml found — running first-boot sequence")
-        from display.templates import get_template
-        template = get_template(driver_model)
-        await _first_boot_sequence(display_driver, template)
+        await _render(display_driver, template.draw_loading_page)
+        kind, ip = await _resolve_network()
+        await _show_network_status(display_driver, template, "Initial config", kind, ip, fast=True)
     else:
-        await _render(display_driver, _draw_lines, ["Digipeater", "Running"])
+        kind, ip = await _resolve_network()
+        await _show_network_status(display_driver, template, "Digipeater", kind, ip, fast=False)
 
-    app = create_app(display_driver, first_boot)
+    network_status = {"kind": kind, "ip": ip, "hotspot_ssid": HOTSPOT_SSID}
+    app = create_app(display_driver, first_boot, network_status)
 
-    server_config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="warning")
+    server_config = uvicorn.Config(app, host="0.0.0.0", port=80, log_level="warning")
     server = uvicorn.Server(server_config)
     await server.serve()
 
