@@ -45,14 +45,13 @@ def module_init() -> int:
     GPIO.setup(RST_PIN, GPIO.OUT)
     GPIO.setup(DC_PIN,  GPIO.OUT)
     GPIO.setup(CS_PIN,  GPIO.OUT)
-    GPIO.setup(BUSY_PIN, GPIO.IN)
+    # Internal pull-up: BUSY floats and reads a constant LOW without one,
+    # regardless of the panel's real state — confirmed with a multimeter.
+    GPIO.setup(BUSY_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     _SPI.open(0, 0)
-    # Waveshare's reference (both the generic RPi driver and the Pico-specific
-    # one) uses 4MHz, but that assumes a HAT-style direct/short-trace connection.
-    # This board is being driven over breadboard jumper wires instead, which are
-    # far more prone to noise at higher clock rates — worth testing lower if
-    # communication is unreliable (e.g. busy-wait never releases) even though
-    # wiring positions and command sequence have both been verified correct.
+    # Kept at 1MHz (below Waveshare's 4MHz reference) since this board is
+    # driven over breadboard jumper wires rather than a direct HAT connection —
+    # confirmed working at this speed during testing.
     _SPI.max_speed_hz = 1000000
     _SPI.mode = 0b00
     return 0

@@ -12,7 +12,7 @@
 
 | Make / Model | Driver | Status |
 |---|---|---|
-| Waveshare Pico-ePaper-2.9-B (296×128, B/W/R) | `epd2in9b_v3` | ⚠️ Implemented, unverified |
+| Waveshare Pico-ePaper-2.9-B (296×128, B/W/R) | `epd2in9b_v4` | ⚠️ Implemented, unverified |
 
 ---
 

@@ -61,7 +61,6 @@ if [ "$EUID" -eq 0 ]; then
 fi
 
 # ── Check OS ─────────────────────────────────
-info "Checking system..."
 if ! grep -qi "bookworm" /etc/os-release 2>/dev/null; then
     echo -e "${YELLOW}  Warning: This script is tested on Raspberry Pi OS Bookworm.${NC}"
     echo -e "${YELLOW}  Other versions may work but are not guaranteed.${NC}"
@@ -126,7 +125,6 @@ ok "NetworkManager configured"
 # The digipeater service runs as a normal user (see the systemd unit below),
 # but creating/managing NetworkManager connections (e.g. the first-boot WiFi
 # hotspot) requires root. Scoped narrowly to nmcli only — not blanket sudo.
-info "Configuring nmcli permissions..."
 NMCLI_PATH="$(command -v nmcli)"
 SUDOERS_TMP="$(mktemp)"
 echo "$USER ALL=(root) NOPASSWD: $NMCLI_PATH" > "$SUDOERS_TMP"
