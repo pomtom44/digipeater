@@ -11,6 +11,14 @@ This app doesn't generate colour content yet, so the red plane is always
 sent blank. Waveshare's own Clear() sends 0x00 for "no red" on this wire
 format — note that's the opposite convention from the black plane's blank
 value (0xFF for white) — so that's what's used here too.
+
+No fast/partial refresh support — tested directly on real hardware (see
+test_display.py's `fast`/`partial`/`base` modes): fast refresh (0xC7)
+silently does nothing (screen never updates, no error), and partial refresh
+(0x1C) hangs forever waiting on BUSY. Full refresh (0xF7) is the only mode
+confirmed to actually work on this panel, so that's the only one implemented
+— driver_waveshare.py already falls back to full refresh automatically for
+any model without a display_fast() method.
 """
 
 import logging
@@ -64,27 +72,26 @@ class EPD:
         epdconfig.spi_writebytes(data)
         epdconfig.digital_write(self.cs_pin, 1)
 
-    def _wait_busy(self):
+    def _wait_busy(self, timeout_ms: int = 30000):
         # busy=1 means busy, 0=idle — same polarity as the mono SSD1680 driver.
+        # Bounded: confirmed on real hardware that BUSY can genuinely hang
+        # forever (the 0x1C partial-refresh command never releases it) — a
+        # hang here would freeze init() before the web server even starts.
         self._cmd(0x71)
+        waited = 0
         while epdconfig.digital_read(self.busy_pin) == 1:
+            if waited >= timeout_ms:
+                logger.error("e-Paper busy-wait timed out after %dms", timeout_ms)
+                return
             epdconfig.delay_ms(200)
+            waited += 200
 
     def _turn_on(self):
-        """Full refresh — the visible black/white flash. Clears ghosting
-        from prior updates; use for the first draw and periodically after
-        repeated fast refreshes."""
+        """Full refresh — the visible black/white flash. The only refresh
+        mode this driver uses — confirmed on real hardware that fast (0xC7)
+        silently does nothing and partial (0x1C) hangs forever on this panel."""
         self._cmd(0x22)   # Display update control
         self._data(0xF7)
-        self._cmd(0x20)   # Activate display update sequence
-        self._wait_busy()
-
-    def _turn_on_fast(self):
-        """Fast refresh — no full-screen flash, shorter waveform. Ghosting
-        accumulates slightly over repeated use; not a substitute for the
-        full refresh, just for routine updates in between."""
-        self._cmd(0x22)   # Display update control
-        self._data(0xC7)
         self._cmd(0x20)   # Activate display update sequence
         self._wait_busy()
 
@@ -159,14 +166,6 @@ class EPD:
         self._cmd(0x26)   # Red plane — left blank, no colour content yet
         self._data_block(blank_red)
         self._turn_on()
-
-    def display_fast(self, buf):
-        blank_red = [0x00] * (self.width // 8 * self.height)
-        self._cmd(0x24)
-        self._data_block(buf)
-        self._cmd(0x26)
-        self._data_block(blank_red)
-        self._turn_on_fast()
 
     def Clear(self):
         blank_black = [0xFF] * (self.width // 8 * self.height)

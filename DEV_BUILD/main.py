@@ -119,14 +119,14 @@ async def _first_boot_sequence(driver, template) -> None:
     kind, ip = await _wait_for_existing_connection()
 
     if kind == "ethernet":
-        await _render(driver, template.draw_status_page, "Connected — Ethernet", [("IP:", ip)], fast=True)
+        await _render(driver, template.draw_status_page, "Initial config", [("Ethernet IP:", ip)], fast=True)
         return
     if kind == "wifi":
-        await _render(driver, template.draw_status_page, "Connected — WiFi", [("IP:", ip)], fast=True)
+        await _render(driver, template.draw_status_page, "Initial config", [("Wifi IP:", ip)], fast=True)
         return
 
     await network.setup_hotspot(HOTSPOT_SSID, HOTSPOT_PASSWORD)
-    await _render(driver, template.draw_status_page, "Initial Setup", [
+    await _render(driver, template.draw_status_page, "Initial config", [
         ("Hotspot:", HOTSPOT_SSID),
         ("Password:", HOTSPOT_PASSWORD),
     ], fast=True)

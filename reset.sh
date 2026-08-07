@@ -39,6 +39,9 @@ echo "    - $INSTALL_DIR (application, venv, config.yaml)"
 echo "    - $VAR_DIR (tile cache, packet history)"
 echo "    - $DIREWOLF_CONF_DIR (generated direwolf.conf)"
 echo ""
+echo "System packages (direwolf, gpsd, python3-rpi.gpio, etc.) are left installed —"
+echo "see the note at the end if you want to remove those too."
+echo ""
 read -p "  Continue? [y/N] " confirm < /dev/tty
 [[ "$confirm" =~ ^[Yy]$ ]] || exit 1
 echo ""
@@ -85,29 +88,14 @@ if [ -f /etc/network/interfaces.bak ]; then
     ok "Restored /etc/network/interfaces"
 fi
 
-# ── Optionally remove installed system packages ─
-echo ""
-read -p "  Also remove system packages installed for the digipeater (direwolf, gpsd, libhamlib-utils, python3-rpi.gpio, python3-spidev)? [y/N] " purge < /dev/tty
-if [[ "$purge" =~ ^[Yy]$ ]]; then
-    info "Removing system packages..."
-    sudo apt-get purge -y -qq \
-        direwolf \
-        gpsd \
-        gpsd-clients \
-        libhamlib-utils \
-        python3-rpi.gpio \
-        python3-spidev \
-        2>/dev/null || true
-    sudo apt-get autoremove -y -qq
-    ok "System packages removed"
-else
-    info "Keeping system packages installed"
-fi
-
 echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║           Reset Complete             ║"
 echo "╚══════════════════════════════════════╝"
+echo ""
+echo "System packages were left installed. To remove them too:"
+echo "    sudo apt purge direwolf gpsd gpsd-clients libhamlib-utils python3-rpi.gpio python3-spidev"
+echo "    sudo apt autoremove"
 echo ""
 echo -e "${GREEN}You can now run install.sh for a fresh install.${NC}"
 echo ""
