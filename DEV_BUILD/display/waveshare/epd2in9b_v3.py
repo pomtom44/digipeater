@@ -58,13 +58,16 @@ class EPD:
         epdconfig.spi_writebytes(data)
         epdconfig.digital_write(self.cs_pin, 1)
 
-    def _wait_busy(self, timeout_ms: int = 10000):
+    def _wait_busy(self, timeout_ms: int = 30000):
         # This controller is polled via command 0x71 while waiting, and busy
         # is signalled LOW (idle is HIGH) — opposite polarity to the mono driver.
-        # Bounded so a wiring fault (BUSY stuck low) can't hang forever — a
-        # blocking hang here would freeze the whole asyncio event loop, not
-        # just the display (see driver_waveshare.py for how calls are isolated
-        # from that).
+        # Confirmed correct with a multimeter: BUSY reads 3.3V (idle) once the
+        # panel actually finishes — its first power-on cycle just takes longer
+        # than a refresh does, hence the generous timeout.
+        # Bounded so a genuine wiring fault (BUSY stuck low forever) still can't
+        # hang forever — a blocking hang here would freeze the whole asyncio
+        # event loop, not just the display (see driver_waveshare.py for how
+        # calls are isolated from that).
         self._cmd(0x71)
         waited = 0
         while epdconfig.digital_read(self.busy_pin) == 0:
