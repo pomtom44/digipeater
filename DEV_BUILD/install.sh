@@ -183,9 +183,11 @@ ok "Systemd service installed and enabled — it will start automatically on boo
 # can never come up — bites anyone who left WiFi blank in Raspberry Pi Imager
 # (e.g. ethernet-only setups). Only asked once; re-run raspi-config directly
 # to change it later.
-CURRENT_COUNTRY="$(raspi-config nonint get_wifi_country 2>/dev/null)"
-if [ -n "$CURRENT_COUNTRY" ]; then
-    info "WiFi country already set to $CURRENT_COUNTRY — skipping."
+# Checked via rfkill directly, not `raspi-config nonint get_wifi_country` —
+# that returns a non-empty sentinel ("00") even when no country is actually
+# set, which made the old version of this check skip the prompt incorrectly.
+if ! rfkill list wifi | grep -q "Soft blocked: yes"; then
+    info "WiFi radio already unblocked — skipping."
 else
     echo ""
     read -p "  WiFi country code not set (needed for the hotspot to work) — enter a 2-letter code (e.g. NZ, US, GB): " wifi_country < /dev/tty

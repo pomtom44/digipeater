@@ -27,20 +27,28 @@ async def _nmcli(*args) -> tuple[int, str, str]:
 
 
 async def get_ip() -> dict:
-    """Return current IP addresses. Returns dict of {interface: ip}."""
-    # DEVICE must be listed first — nmcli's terse output follows the requested
-    # field order per-device, and the parser below needs DEVICE before
-    # IP4.ADDRESS to know which device an address belongs to.
-    code, out, _ = await _nmcli("-t", "-f", "DEVICE,IP4.ADDRESS", "device", "show")
+    """Return current IP addresses. Returns dict of {interface: ip}.
+
+    Uses `ip addr` rather than `nmcli device show` — nmcli's device-name
+    field there is the dotted `GENERAL.DEVICE`, not bare `DEVICE`, which a
+    prior version of this function filtered for incorrectly (silently
+    matching nothing, so no address ever got attributed to a device). `ip`
+    has a flat, unambiguous format and doesn't need sudo either.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "ip", "-4", "-o", "addr", "show",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, _ = await proc.communicate()
     ips = {}
-    current_device = None
-    for line in out.splitlines():
-        if line.startswith("DEVICE:"):
-            current_device = line.split(":", 1)[1]
-        elif line.startswith("IP4.ADDRESS") and current_device:
-            addr = line.split(":", 1)[1].split("/")[0]
-            if addr:
-                ips[current_device] = addr
+    for line in out.decode().splitlines():
+        # e.g. "2: eth0    inet 192.168.1.42/24 brd ... scope global eth0"
+        parts = line.split()
+        if len(parts) >= 4 and parts[2] == "inet":
+            iface = parts[1]
+            addr = parts[3].split("/")[0]
+            ips[iface] = addr
     return ips
 
 
