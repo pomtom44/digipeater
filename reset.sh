@@ -3,14 +3,15 @@ set -e
 
 # ─────────────────────────────────────────────
 # APRS Digipeater — Reset Script
-# Removes everything install.sh sets up so a
-# fresh install can be run from a clean state.
+# Full uninstall — reverses everything install.sh
+# sets up, back to a clean state.
 # ─────────────────────────────────────────────
 
 INSTALL_DIR="/opt/digipeater"
 SERVICE_NAME="digipeater"
 VAR_DIR="/var/digipeater"
 DIREWOLF_CONF_DIR="/etc/direwolf"
+SUDOERS_FILE="/etc/sudoers.d/digipeater-nmcli"
 
 # ── Colours ──────────────────────────────────
 GREEN='\033[0;32m'
@@ -35,12 +36,21 @@ fi
 
 echo -e "${YELLOW}This will permanently remove:${NC}"
 echo "    - the digipeater systemd service"
-echo "    - $INSTALL_DIR (application, venv, config.yaml)"
+echo "    - $INSTALL_DIR (application, venv, config.yaml, saved WiFi credentials)"
 echo "    - $VAR_DIR (tile cache, packet history)"
 echo "    - $DIREWOLF_CONF_DIR (generated direwolf.conf)"
+echo "    - $SUDOERS_FILE (nmcli sudo permission)"
+echo "    - the SPI interface (disabled again)"
+echo "    - the WiFi country setting (radio re-blocked, same as before install)"
+echo "    - system packages: direwolf, gpsd, gpsd-clients, libhamlib-utils,"
+echo "      python3-rpi.gpio, python3-spidev, fonts-dejavu-core, python3-pip,"
+echo "      python3-venv, git, curl"
 echo ""
-echo "System packages (direwolf, gpsd, python3-rpi.gpio, etc.) are left installed —"
-echo "see the note at the end if you want to remove those too."
+echo -e "${YELLOW}Deliberately NOT touched (real risk of bricking the Pi or losing SSH access):${NC}"
+echo "    - python3 itself — a dependency root for much of the base OS; purging"
+echo "      it can cascade into removing core system tooling, needing a reflash"
+echo "    - NetworkManager — Bookworm's actual network stack; disabling it would"
+echo "      very likely cut off SSH access to the Pi entirely"
 echo ""
 read -p "  Continue? [y/N] " confirm < /dev/tty
 [[ "$confirm" =~ ^[Yy]$ ]] || exit 1
@@ -82,20 +92,56 @@ else
     info "$DIREWOLF_CONF_DIR not present — skipping"
 fi
 
+# ── Remove nmcli sudoers rule ────────────────
+if [ -f "$SUDOERS_FILE" ]; then
+    sudo rm -f "$SUDOERS_FILE"
+    ok "Removed $SUDOERS_FILE"
+else
+    info "$SUDOERS_FILE not present — skipping"
+fi
+
+# ── Disable SPI ───────────────────────────────
+info "Disabling SPI interface..."
+sudo raspi-config nonint do_spi 1
+ok "SPI disabled"
+
+# ── Re-block WiFi radio ───────────────────────
+# Restores the soft-blocked state install.sh's WiFi-country step lifted.
+# Doesn't touch NetworkManager or ethernet — only the WiFi radio itself.
+info "Re-blocking WiFi radio..."
+sudo rfkill block wifi
+ok "WiFi radio re-blocked"
+
 # ── Restore network interfaces backup ────────
 if [ -f /etc/network/interfaces.bak ]; then
     sudo mv /etc/network/interfaces.bak /etc/network/interfaces
     ok "Restored /etc/network/interfaces"
 fi
 
+# ── Remove system packages ───────────────────
+# python3 and network-manager are deliberately excluded — see the warning
+# shown before the confirmation prompt above.
+info "Removing system packages..."
+sudo apt-get purge -y -qq \
+    direwolf \
+    gpsd \
+    gpsd-clients \
+    libhamlib-utils \
+    python3-rpi.gpio \
+    python3-spidev \
+    fonts-dejavu-core \
+    python3-pip \
+    python3-venv \
+    git \
+    curl \
+    2>/dev/null || true
+sudo apt-get autoremove -y -qq
+ok "System packages removed"
+
 echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║           Reset Complete             ║"
 echo "╚══════════════════════════════════════╝"
-echo ""
-echo "System packages were left installed. To remove them too:"
-echo "    sudo apt purge direwolf gpsd gpsd-clients libhamlib-utils python3-rpi.gpio python3-spidev"
-echo "    sudo apt autoremove"
 echo ""
 echo -e "${GREEN}You can now run install.sh for a fresh install.${NC}"
 echo ""
