@@ -21,7 +21,11 @@ logger = logging.getLogger(__name__)
 
 def _discover() -> dict:
     models = {}
-    for info in pkgutil.iter_modules(__path__):
+    # Sorted for deterministic, predictable ordering in the install-time
+    # picker (pkgutil's own order isn't guaranteed) — this also happens to
+    # put epd1in54_v2 before epd2in9b_v4, i.e. the primary hardware choice
+    # before the dev/secondary one, alphabetically.
+    for info in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         name = info.name
         if name == "epdconfig" or name.startswith("_"):
             continue

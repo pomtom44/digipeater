@@ -27,13 +27,6 @@ HOTSPOT_PASSWORD = "Digi1234"
 CONNECTION_WAIT_TIMEOUT_S = 10.0
 CONNECTION_POLL_INTERVAL_S = 1.0
 
-# Installed via install.sh (fonts-dejavu-core) — standard, stable path on
-# Raspberry Pi OS / Debian. Falls back to PIL's tiny bitmap font if missing
-# (e.g. running this locally on a dev machine).
-FONT_DIR = "/usr/share/fonts/truetype/dejavu"
-FONT_BOLD = f"{FONT_DIR}/DejaVuSans-Bold.ttf"
-FONT_REGULAR = f"{FONT_DIR}/DejaVuSans.ttf"
-
 
 def _load_display_config() -> tuple[str, str]:
     if not DISPLAY_CONFIG_PATH.exists():
@@ -60,14 +53,6 @@ def _load_display_driver(name: str, model: str):
     return NullDriver()
 
 
-def _load_font(path: str, size: int):
-    from PIL import ImageFont
-    try:
-        return ImageFont.truetype(path, size)
-    except Exception:
-        return ImageFont.load_default()
-
-
 def _draw_lines(driver, lines: list[str]):
     from PIL import Image, ImageDraw
     image = Image.new("1", (driver.width, driver.height), 255)
@@ -77,53 +62,6 @@ def _draw_lines(driver, lines: list[str]):
     for line in lines:
         draw.text((margin, y), line, fill=0)
         y += driver.line_height
-    return image
-
-
-def _draw_loading_page(driver):
-    from PIL import Image, ImageDraw
-    w, h = driver.width, driver.height
-    image = Image.new("1", (w, h), 255)
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, w - 1, h - 1), outline=0)
-
-    font = _load_font(FONT_BOLD, 22)
-    text = "Loading..."
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((w - tw) / 2, (h - th) / 2 - bbox[1]), text, font=font, fill=0)
-    return image
-
-
-def _draw_status_page(driver, title: str, rows: list[tuple[str, str]]):
-    from PIL import Image, ImageDraw
-    w, h = driver.width, driver.height
-    image = Image.new("1", (w, h), 255)
-    draw = ImageDraw.Draw(image)
-    margin = 8
-    label_value_gap = 8
-
-    title_font = _load_font(FONT_BOLD, 16)
-    label_font = _load_font(FONT_BOLD, 13)
-    value_font = _load_font(FONT_REGULAR, 13)
-
-    tbbox = draw.textbbox((0, 0), title, font=title_font)
-    tw = tbbox[2] - tbbox[0]
-    draw.text(((w - tw) / 2, 4), title, font=title_font, fill=0)
-    draw.line((margin, 26, w - margin, 26), fill=0, width=1)
-
-    y = 34
-    for label, value in rows:
-        lbbox = draw.textbbox((0, 0), label, font=label_font)
-        lw = lbbox[2] - lbbox[0]
-        vbbox = draw.textbbox((0, 0), value, font=value_font)
-        vw = vbbox[2] - vbbox[0]
-        row_w = lw + label_value_gap + vw
-        x = (w - row_w) / 2
-        draw.text((x, y), label, font=label_font, fill=0)
-        draw.text((x + lw + label_value_gap, y), value, font=value_font, fill=0)
-        y += 22
-
     return image
 
 
@@ -170,24 +108,25 @@ async def _wait_for_existing_connection():
         elapsed += CONNECTION_POLL_INTERVAL_S
 
 
-async def _first_boot_sequence(driver) -> None:
-    """Show first-boot status on the e-ink display. Only one state is ever
-    shown, in priority order: an existing ethernet connection, then an
-    existing WiFi client connection, then — only if neither is already
-    connected — our own hotspot."""
-    await _render(driver, _draw_loading_page)
+async def _first_boot_sequence(driver, template) -> None:
+    """Show first-boot status on the e-ink display, via the model's own page
+    template (see display/templates/). Only one state is ever shown, in
+    priority order: an existing ethernet connection, then an existing WiFi
+    client connection, then — only if neither is already connected — our
+    own hotspot."""
+    await _render(driver, template.draw_loading_page)
 
     kind, ip = await _wait_for_existing_connection()
 
     if kind == "ethernet":
-        await _render(driver, _draw_status_page, "Connected — Ethernet", [("IP:", ip)], fast=True)
+        await _render(driver, template.draw_status_page, "Ethernet", [("IP:", ip)], fast=True)
         return
     if kind == "wifi":
-        await _render(driver, _draw_status_page, "Connected — WiFi", [("IP:", ip)], fast=True)
+        await _render(driver, template.draw_status_page, "WiFi", [("IP:", ip)], fast=True)
         return
 
     await network.setup_hotspot(HOTSPOT_SSID, HOTSPOT_PASSWORD)
-    await _render(driver, _draw_status_page, "First Boot — Connect", [
+    await _render(driver, template.draw_status_page, "Connect", [
         ("Hotspot:", HOTSPOT_SSID),
         ("Password:", HOTSPOT_PASSWORD),
     ], fast=True)
@@ -206,7 +145,9 @@ async def main() -> None:
 
     if first_boot:
         logger.info("No config.yaml found — running first-boot sequence")
-        await _first_boot_sequence(display_driver)
+        from display.templates import get_template
+        template = get_template(driver_model)
+        await _first_boot_sequence(display_driver, template)
     else:
         await _render(display_driver, _draw_lines, ["Digipeater", "Running"])
 

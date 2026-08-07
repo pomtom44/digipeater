@@ -12,7 +12,8 @@
 
 | Make / Model | Driver | Status |
 |---|---|---|
-| Waveshare Pico-ePaper-2.9-B (296×128, B/W/R) | `epd2in9b_v4` | ⚠️ Implemented, unverified |
+| Generic 1.54" SPI e-Paper (200×200, "LA-SPI" AliExpress module) | `epd1in54_v2` | ⚠️ Best guess — hardware not in hand |
+| Waveshare Pico-ePaper-2.9-B (296×128, B/W/R) | `epd2in9b_v4` | ✅ Confirmed (dev/secondary display) |
 
 ---
 
