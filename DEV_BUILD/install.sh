@@ -168,9 +168,13 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 # Binding port 80 needs root normally — grant just that one capability
-# instead of running the whole service as root.
+# instead of running the whole service as root. Deliberately no
+# CapabilityBoundingSet here: that directive caps the maximum capabilities
+# of every child process too, including the `sudo nmcli` calls this service
+# shells out to for hotspot management — restricting it broke sudo's own
+# privilege escalation ("unable to change to root gid: Operation not
+# permitted"), silently killing the hotspot feature.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
