@@ -14,7 +14,8 @@ This guide covers the dev build only. It grows as each part gets built — right
 **Steps:**
 1. Insert the MicroSD card into your computer and open Raspberry Pi Imager
 2. **Choose Device** → Raspberry Pi 3
-3. **Choose OS** → Raspberry Pi OS (other) → **Raspberry Pi OS Lite (64-bit)**
+3. **Choose OS** → Raspberry Pi OS (other) → **Raspberry Pi OS (Legacy, 64-bit) Lite**
+   - This project is built and tested against Bookworm specifically. The plain "Raspberry Pi OS Lite (64-bit)" option now installs Trixie (Debian 13) by default, which is untested here — use the Legacy option to get Bookworm.
 4. **Choose Storage** → select your SD card
 5. Click **Next**, then **Edit Settings** when asked about OS customisation
 

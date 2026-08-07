@@ -91,6 +91,7 @@ run_with_spinner "Installing system packages..." sudo apt-get install -y -qq \
     python3-venv \
     python3-rpi.gpio \
     python3-spidev \
+    fonts-dejavu-core \
     curl
 ok "System packages installed"
 
@@ -176,6 +177,28 @@ run_with_spinner "Installing systemd service..." bash -c "
     sudo systemctl enable ${SERVICE_NAME} --quiet
 "
 ok "Systemd service installed and enabled — it will start automatically on boot"
+
+# ── WiFi country ───────────────────────────────
+# Without this set, the WiFi radio is soft-blocked by rfkill and the hotspot
+# can never come up — bites anyone who left WiFi blank in Raspberry Pi Imager
+# (e.g. ethernet-only setups). Only asked once; re-run raspi-config directly
+# to change it later.
+CURRENT_COUNTRY="$(raspi-config nonint get_wifi_country 2>/dev/null)"
+if [ -n "$CURRENT_COUNTRY" ]; then
+    info "WiFi country already set to $CURRENT_COUNTRY — skipping."
+else
+    echo ""
+    read -p "  WiFi country code not set (needed for the hotspot to work) — enter a 2-letter code (e.g. NZ, US, GB): " wifi_country < /dev/tty
+    wifi_country="$(echo "$wifi_country" | tr '[:lower:]' '[:upper:]')"
+    if [[ "$wifi_country" =~ ^[A-Z]{2}$ ]]; then
+        sudo raspi-config nonint do_wifi_country "$wifi_country"
+        sudo rfkill unblock wifi
+        ok "WiFi country set to $wifi_country"
+    else
+        echo -e "${YELLOW}  Skipped (invalid or blank) — the WiFi hotspot won't work until this is set:${NC}"
+        echo -e "${YELLOW}  sudo raspi-config nonint do_wifi_country XX && sudo rfkill unblock wifi${NC}"
+    fi
+fi
 
 # ── Select e-ink display ──────────────────────
 # Everything unattended is done by this point — this is the one thing that

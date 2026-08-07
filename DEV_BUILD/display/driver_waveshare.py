@@ -42,6 +42,15 @@ class WaveshareDriver(DisplayDriver):
         buf = self._epd.getbuffer(image)
         self._epd.display(buf)
 
+    def show_fast(self, image) -> None:
+        """Fast/partial refresh if the underlying EPD class supports one
+        (display_fast), otherwise falls back to a full refresh."""
+        buf = self._epd.getbuffer(image)
+        if hasattr(self._epd, "display_fast"):
+            self._epd.display_fast(buf)
+        else:
+            self._epd.display(buf)
+
     def clear(self) -> None:
         self._epd.Clear()
 

@@ -71,8 +71,20 @@ class EPD:
             epdconfig.delay_ms(200)
 
     def _turn_on(self):
+        """Full refresh — the visible black/white flash. Clears ghosting
+        from prior updates; use for the first draw and periodically after
+        repeated fast refreshes."""
         self._cmd(0x22)   # Display update control
         self._data(0xF7)
+        self._cmd(0x20)   # Activate display update sequence
+        self._wait_busy()
+
+    def _turn_on_fast(self):
+        """Fast refresh — no full-screen flash, shorter waveform. Ghosting
+        accumulates slightly over repeated use; not a substitute for the
+        full refresh, just for routine updates in between."""
+        self._cmd(0x22)   # Display update control
+        self._data(0xC7)
         self._cmd(0x20)   # Activate display update sequence
         self._wait_busy()
 
@@ -147,6 +159,14 @@ class EPD:
         self._cmd(0x26)   # Red plane — left blank, no colour content yet
         self._data_block(blank_red)
         self._turn_on()
+
+    def display_fast(self, buf):
+        blank_red = [0x00] * (self.width // 8 * self.height)
+        self._cmd(0x24)
+        self._data_block(buf)
+        self._cmd(0x26)
+        self._data_block(blank_red)
+        self._turn_on_fast()
 
     def Clear(self):
         blank_black = [0xFF] * (self.width // 8 * self.height)

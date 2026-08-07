@@ -12,7 +12,16 @@ class DisplayDriver(ABC):
 
     @abstractmethod
     def show(self, image) -> None:
-        """Render a PIL Image to the display."""
+        """Render a PIL Image to the display using a full refresh (visible
+        flash). Clears ghosting from prior updates."""
+
+    def show_fast(self, image) -> None:
+        """Render a PIL Image using a fast/partial refresh if the driver
+        supports one (no full-screen flash), otherwise falls back to a full
+        refresh. Ghosting accumulates slightly over repeated fast refreshes —
+        not a substitute for occasional full refreshes, just for routine
+        updates in between."""
+        self.show(image)
 
     @abstractmethod
     def clear(self) -> None:
