@@ -58,7 +58,7 @@ class EPD:
         epdconfig.spi_writebytes(data)
         epdconfig.digital_write(self.cs_pin, 1)
 
-    def _wait_busy(self, timeout_ms: int = 30000):
+    def _wait_busy(self, timeout_ms: int = 90000):
         # This controller is polled via command 0x71 while waiting, and busy
         # is signalled LOW (idle is HIGH) — opposite polarity to the mono driver.
         # Confirmed correct with a multimeter: BUSY reads 3.3V (idle) once the

@@ -10,9 +10,15 @@ _HOTSPOT_CON = "digipeater-hotspot"
 
 
 async def _nmcli(*args) -> tuple[int, str, str]:
-    """Run an nmcli command and return (returncode, stdout, stderr)."""
+    """Run an nmcli command and return (returncode, stdout, stderr).
+
+    Runs via sudo — creating/modifying NetworkManager connections (e.g. the
+    hotspot) needs root, and this service runs as a normal user. install.sh
+    installs a sudoers rule scoping NOPASSWD access to nmcli specifically,
+    not blanket root access.
+    """
     proc = await asyncio.create_subprocess_exec(
-        "nmcli", *args,
+        "sudo", "-n", "nmcli", *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

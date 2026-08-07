@@ -21,6 +21,34 @@ ok()   { echo -e "${GREEN}  ✓ $1${NC}"; }
 info() { echo -e "${YELLOW}  → $1${NC}"; }
 fail() { echo -e "${RED}  ✗ $1${NC}"; exit 1; }
 
+# Runs a command with its output hidden behind a spinner, only showing that
+# output if the command actually fails (e.g. apt-get's per-package unpacking
+# noise, which -qq alone doesn't suppress since that's dpkg's own output).
+run_with_spinner() {
+    local msg="$1"; shift
+    local logfile
+    logfile=$(mktemp)
+    "$@" > "$logfile" 2>&1 &
+    local pid=$!
+    local spinstr='|/-\'
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$(( (i + 1) % 4 ))
+        printf "\r${YELLOW}  → %s %s${NC}" "$msg" "${spinstr:$i:1}"
+        sleep 0.1
+    done
+    wait "$pid"
+    local status=$?
+    printf "\r\033[K"
+    if [ $status -ne 0 ]; then
+        echo -e "${RED}  ✗ $msg failed:${NC}"
+        cat "$logfile"
+        rm -f "$logfile"
+        exit 1
+    fi
+    rm -f "$logfile"
+}
+
 echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║    APRS Digipeater — Installer       ║"
@@ -42,15 +70,22 @@ if ! grep -qi "bookworm" /etc/os-release 2>/dev/null; then
 fi
 ok "OS check passed"
 
+# ── Prime sudo ─────────────────────────────────
+# Ask for the sudo password up front, in the foreground, before any spinner
+# backgrounds a sudo call — an interactive password prompt doesn't mix well
+# with a backgrounded command. This also keeps the credential cached for the
+# rest of the script (sudo's default timeout comfortably covers the install).
+info "This installer needs sudo access..."
+sudo -v
+ok "Sudo access confirmed"
+
 # ── System update ─────────────────────────────
-info "Updating package lists..."
-sudo apt-get update -qq
+run_with_spinner "Updating package lists..." sudo apt-get update -qq
 ok "Package lists updated"
 
 # ── Install system packages ───────────────────
 # More packages get added here as later parts (direwolf, GPS, etc.) come online.
-info "Installing system packages..."
-sudo apt-get install -y -qq \
+run_with_spinner "Installing system packages..." sudo apt-get install -y -qq \
     git \
     python3 \
     python3-pip \
@@ -61,49 +96,64 @@ sudo apt-get install -y -qq \
 ok "System packages installed"
 
 # ── Create directories ────────────────────────
-info "Creating application directories..."
-sudo mkdir -p "$INSTALL_DIR"
-sudo chown -R "$USER:$USER" "$INSTALL_DIR"
+run_with_spinner "Creating application directories..." bash -c "
+    sudo mkdir -p '$INSTALL_DIR' &&
+    sudo chown -R '$USER:$USER' '$INSTALL_DIR'
+"
 ok "Directories created"
 
 # ── Clone or update repository ────────────────
-info "Downloading application..."
 if [ -d "$INSTALL_DIR/.git" ]; then
-    info "Existing install found — updating..."
-    git -C "$INSTALL_DIR" pull --quiet
+    run_with_spinner "Existing install found — updating..." git -C "$INSTALL_DIR" pull --quiet
     ok "Application updated"
 else
-    git clone --quiet "$REPO_URL" "$INSTALL_DIR"
+    run_with_spinner "Downloading application..." git clone --quiet "$REPO_URL" "$INSTALL_DIR"
     ok "Application downloaded"
 fi
 
 # ── Enable SPI (required for the e-ink display) ──
-info "Enabling SPI interface..."
-sudo raspi-config nonint do_spi 0
+run_with_spinner "Enabling SPI interface..." sudo raspi-config nonint do_spi 0
 ok "SPI enabled (reboot required the first time this is enabled)"
 
 # ── Ensure NetworkManager is running (required for the WiFi hotspot) ──
-info "Configuring NetworkManager..."
-sudo systemctl enable NetworkManager --quiet
-sudo systemctl start NetworkManager
+run_with_spinner "Configuring NetworkManager..." bash -c "
+    sudo systemctl enable NetworkManager --quiet &&
+    sudo systemctl start NetworkManager
+"
 ok "NetworkManager configured"
+
+# ── Grant nmcli access for the app's hotspot management ──────
+# The digipeater service runs as a normal user (see the systemd unit below),
+# but creating/managing NetworkManager connections (e.g. the first-boot WiFi
+# hotspot) requires root. Scoped narrowly to nmcli only — not blanket sudo.
+info "Configuring nmcli permissions..."
+NMCLI_PATH="$(command -v nmcli)"
+SUDOERS_TMP="$(mktemp)"
+echo "$USER ALL=(root) NOPASSWD: $NMCLI_PATH" > "$SUDOERS_TMP"
+if sudo visudo -c -f "$SUDOERS_TMP" > /dev/null 2>&1; then
+    sudo install -o root -g root -m 0440 "$SUDOERS_TMP" /etc/sudoers.d/digipeater-nmcli
+    rm -f "$SUDOERS_TMP"
+    ok "nmcli permissions configured"
+else
+    rm -f "$SUDOERS_TMP"
+    fail "Generated sudoers rule failed validation — aborting for safety"
+fi
 
 # ── Python virtual environment ────────────────
 # --system-site-packages so the venv can see the apt-installed RPi.GPIO/spidev
 # (those build native extensions against the Pi's kernel headers — pip-installing
 # them inside an isolated venv is unreliable, so apt is the source of truth).
-info "Setting up Python environment..."
-python3 -m venv "$VENV_DIR" --system-site-packages
-"$VENV_DIR/bin/pip" install --quiet --upgrade pip
+run_with_spinner "Setting up Python environment..." bash -c "
+    python3 -m venv '$VENV_DIR' --system-site-packages &&
+    '$VENV_DIR/bin/pip' install --quiet --upgrade pip
+"
 ok "Virtual environment created"
 
 # ── Install Python dependencies ───────────────
-info "Installing Python packages..."
-"$VENV_DIR/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
+run_with_spinner "Installing Python packages..." "$VENV_DIR/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
 ok "Python packages installed"
 
 # ── Install systemd service ───────────────────
-info "Installing systemd service..."
 sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null <<EOF
 [Unit]
 Description=APRS Digipeater
@@ -123,8 +173,10 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-sudo systemctl daemon-reload
-sudo systemctl enable ${SERVICE_NAME} --quiet
+run_with_spinner "Installing systemd service..." bash -c "
+    sudo systemctl daemon-reload &&
+    sudo systemctl enable ${SERVICE_NAME} --quiet
+"
 ok "Systemd service installed and enabled — it will start automatically on boot"
 
 # ── Select e-ink display ──────────────────────
