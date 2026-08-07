@@ -28,7 +28,10 @@ async def _nmcli(*args) -> tuple[int, str, str]:
 
 async def get_ip() -> dict:
     """Return current IP addresses. Returns dict of {interface: ip}."""
-    code, out, _ = await _nmcli("-t", "-f", "IP4.ADDRESS,DEVICE", "device", "show")
+    # DEVICE must be listed first — nmcli's terse output follows the requested
+    # field order per-device, and the parser below needs DEVICE before
+    # IP4.ADDRESS to know which device an address belongs to.
+    code, out, _ = await _nmcli("-t", "-f", "DEVICE,IP4.ADDRESS", "device", "show")
     ips = {}
     current_device = None
     for line in out.splitlines():
@@ -51,6 +54,14 @@ async def get_ethernet_ip() -> Optional[str]:
         if name.startswith("eth") or name.startswith("en"):
             return addr
     return None
+
+
+async def get_wifi_client_ip() -> Optional[str]:
+    """Return wlan0's IP if it already has one. Only meaningful when called
+    BEFORE our own hotspot is started — at that point an IP here can only
+    mean wlan0 is connected to some other network as a client, not our AP."""
+    ips = await get_ip()
+    return ips.get("wlan0")
 
 
 async def setup_hotspot(ssid: str, password: str) -> bool:

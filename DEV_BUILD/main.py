@@ -19,7 +19,13 @@ CONFIG_PATH = Path("config.yaml")
 DISPLAY_CONFIG_PATH = Path("display_config.json")
 
 HOTSPOT_SSID = "Digipeater"
-HOTSPOT_PASSWORD = "Digipeater"
+HOTSPOT_PASSWORD = "Digi1234"
+
+# How long to wait for an existing ethernet/WiFi connection to come up on its
+# own after boot (DHCP/association can take a few seconds) before concluding
+# neither is connected and starting the hotspot instead.
+CONNECTION_WAIT_TIMEOUT_S = 10.0
+CONNECTION_POLL_INTERVAL_S = 1.0
 
 # Installed via install.sh (fonts-dejavu-core) — standard, stable path on
 # Raspberry Pi OS / Debian. Falls back to PIL's tiny bitmap font if missing
@@ -89,29 +95,33 @@ def _draw_loading_page(driver):
     return image
 
 
-def _draw_network_page(driver, eth_ip: str, ssid: str, password: str):
+def _draw_status_page(driver, title: str, rows: list[tuple[str, str]]):
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)
     draw = ImageDraw.Draw(image)
     margin = 8
+    label_value_gap = 8
 
     title_font = _load_font(FONT_BOLD, 16)
     label_font = _load_font(FONT_BOLD, 13)
     value_font = _load_font(FONT_REGULAR, 13)
 
-    draw.text((margin, 4), "First Boot — Connect", font=title_font, fill=0)
+    tbbox = draw.textbbox((0, 0), title, font=title_font)
+    tw = tbbox[2] - tbbox[0]
+    draw.text(((w - tw) / 2, 4), title, font=title_font, fill=0)
     draw.line((margin, 26, w - margin, 26), fill=0, width=1)
 
-    rows = [
-        ("Ethernet:", eth_ip or "not connected"),
-        ("Hotspot:", ssid),
-        ("Password:", password),
-    ]
     y = 34
     for label, value in rows:
-        draw.text((margin, y), label, font=label_font, fill=0)
-        draw.text((margin + 70, y), value, font=value_font, fill=0)
+        lbbox = draw.textbbox((0, 0), label, font=label_font)
+        lw = lbbox[2] - lbbox[0]
+        vbbox = draw.textbbox((0, 0), value, font=value_font)
+        vw = vbbox[2] - vbbox[0]
+        row_w = lw + label_value_gap + vw
+        x = (w - row_w) / 2
+        draw.text((x, y), label, font=label_font, fill=0)
+        draw.text((x + lw + label_value_gap, y), value, font=value_font, fill=0)
         y += 22
 
     return image
@@ -137,14 +147,50 @@ async def _render(driver, draw_fn, *args, fast: bool = False) -> None:
         logger.error("Display render failed: %s", e)
 
 
+async def _wait_for_existing_connection():
+    """Poll for an ethernet or WiFi-client IP for a short window after boot —
+    DHCP/association can take a few seconds, so checking once immediately
+    would too easily miss a connection that's about to come up on its own.
+    Must be called before the hotspot is started, so a wlan0 IP here can only
+    mean an existing client connection, not our own AP.
+
+    Returns ("ethernet"|"wifi", ip) or (None, None) if nothing came up in time.
+    """
+    elapsed = 0.0
+    while True:
+        eth_ip = await network.get_ethernet_ip()
+        if eth_ip:
+            return "ethernet", eth_ip
+        wifi_ip = await network.get_wifi_client_ip()
+        if wifi_ip:
+            return "wifi", wifi_ip
+        if elapsed >= CONNECTION_WAIT_TIMEOUT_S:
+            return None, None
+        await asyncio.sleep(CONNECTION_POLL_INTERVAL_S)
+        elapsed += CONNECTION_POLL_INTERVAL_S
+
+
 async def _first_boot_sequence(driver) -> None:
-    """Show first-boot status on the e-ink display and bring up the WiFi hotspot."""
+    """Show first-boot status on the e-ink display. Only one state is ever
+    shown, in priority order: an existing ethernet connection, then an
+    existing WiFi client connection, then — only if neither is already
+    connected — our own hotspot."""
     await _render(driver, _draw_loading_page)
 
-    await network.setup_hotspot(HOTSPOT_SSID, HOTSPOT_PASSWORD)
-    eth_ip = await network.get_ethernet_ip()
+    kind, ip = await _wait_for_existing_connection()
 
-    await _render(driver, _draw_network_page, eth_ip, HOTSPOT_SSID, HOTSPOT_PASSWORD, fast=True)
+    if kind == "ethernet":
+        await _render(driver, _draw_status_page, "Connected — Ethernet", [("IP:", ip)], fast=True)
+        return
+    if kind == "wifi":
+        await _render(driver, _draw_status_page, "Connected — WiFi", [("IP:", ip)], fast=True)
+        return
+
+    await network.setup_hotspot(HOTSPOT_SSID, HOTSPOT_PASSWORD)
+    await _render(driver, _draw_status_page, "First Boot — Connect", [
+        ("Hotspot:", HOTSPOT_SSID),
+        ("Password:", HOTSPOT_PASSWORD),
+    ], fast=True)
 
 
 async def main() -> None:
