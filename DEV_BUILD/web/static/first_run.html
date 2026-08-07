@@ -42,53 +42,62 @@
       background: var(--bg);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      padding: 24px;
+      padding: 16px;
     }
 
     .card {
       width: 100%;
-      max-width: 480px;
+      max-width: 640px;
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 32px;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     }
+    @media (max-width: 480px) {
+      .card { padding: 20px; border-radius: 10px; }
+    }
 
-    .eyebrow {
-      font-size: 12px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--accent);
-      font-weight: 600;
-      margin: 0 0 6px;
+    header {
+      text-align: center;
+      margin-bottom: 20px;
     }
 
     h1 {
       font-size: 22px;
       margin: 0 0 8px;
-      font-weight: 600;
+      font-weight: 700;
+    }
+    @media (max-width: 480px) {
+      h1 { font-size: 17px; }
     }
 
-    h2 {
-      font-size: 13px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--muted);
-      font-weight: 600;
-      margin: 0 0 12px;
-    }
-
-    .lead {
+    .subheader {
       color: var(--muted);
       font-size: 14px;
       line-height: 1.5;
-      margin: 0 0 28px;
+      margin: 0;
+    }
+    @media (max-width: 480px) {
+      .subheader { font-size: 12.5px; }
     }
 
-    section {
-      margin-bottom: 24px;
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 20px 0 24px;
     }
+
+    .step-title {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+      font-weight: 700;
+      margin: 0 0 16px;
+    }
+
+    section { margin-bottom: 20px; }
 
     .status-box {
       background: var(--panel-2);
@@ -105,6 +114,7 @@
       border-radius: 50%;
       background: var(--accent);
       margin-right: 8px;
+      flex-shrink: 0;
     }
 
     label {
@@ -117,12 +127,13 @@
     input[type="text"],
     input[type="password"] {
       width: 100%;
-      padding: 9px 10px;
+      padding: 11px 12px;
       border: 1px solid var(--border);
       border-radius: 6px;
       background: var(--panel-2);
       color: var(--text);
-      font-size: 14px;
+      font-size: 16px; /* 16px avoids iOS Safari auto-zoom on focus */
+      min-width: 0;
     }
 
     input:focus {
@@ -133,29 +144,36 @@
     .row {
       display: flex;
       gap: 8px;
+      flex-wrap: wrap;
     }
-    .row input { flex: 1; }
+    .row input { flex: 1 1 160px; }
 
     button {
+      min-height: 40px;
       padding: 9px 14px;
       border: 1px solid var(--border);
       border-radius: 6px;
       background: var(--panel-2);
       color: var(--text);
-      font-size: 13px;
+      font-size: 14px;
       cursor: pointer;
     }
     button:hover { border-color: var(--accent); }
     button:disabled { opacity: 0.5; cursor: default; }
 
-    button.primary {
+    .pager {
+      display: flex;
+      gap: 10px;
+      margin-top: 28px;
+    }
+    .pager button {
+      flex: 1;
+      font-weight: 600;
+    }
+    .pager button.primary {
       background: var(--accent);
       border-color: var(--accent);
       color: #fff;
-      width: 100%;
-      margin-top: 14px;
-      padding: 10px;
-      font-weight: 600;
     }
 
     .msg {
@@ -166,10 +184,17 @@
     .msg.success { color: var(--success); }
     .msg.error { color: var(--error); }
 
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      margin: 10px 0 0;
+    }
+
     .hidden { display: none; }
 
     footer {
-      margin-top: 8px;
+      margin-top: 24px;
       text-align: center;
       font-size: 12px;
       color: var(--muted);
@@ -178,40 +203,74 @@
 </head>
 <body>
   <div class="card">
-    <p class="eyebrow">APRS Digipeater</p>
-    <h1>First boot config</h1>
-    <p class="lead">Set up your station before it goes live. This only needs to happen once.</p>
+    <header>
+      <h1>APRS DIGIPEATER - First Boot Config</h1>
+      <p class="subheader">Set up your station before it goes live, this only needs to happen once.</p>
+    </header>
 
-    <section>
-      <h2>Network Status</h2>
-      <div class="status-box"><span class="dot"></span><span id="network-status">Checking…</span></div>
-    </section>
+    <hr class="divider">
 
-    <section id="wifi-connect-section" class="hidden">
-      <h2>Connect to WiFi</h2>
-      <div class="row">
-        <input type="text" id="wifi-ssid" list="wifi-ssid-list" placeholder="Scan or type SSID manually">
-        <datalist id="wifi-ssid-list"></datalist>
-        <button id="btn-scan">Scan</button>
-      </div>
-      <label for="wifi-password">Password</label>
-      <input type="password" id="wifi-password" placeholder="At least 8 characters">
-      <button class="primary" id="btn-save-wifi">Save</button>
-      <p class="msg" id="wifi-save-msg"></p>
-      <p class="lead" style="margin:10px 0 0;font-size:12px;">
-        This won't connect right away — it'll be used the next time the device sets up its network connection, so you won't be disconnected from this hotspot mid-setup.
-      </p>
-    </section>
+    <h2 class="step-title" id="step-title">Network setup</h2>
+    <div id="step-content"></div>
+
+    <div class="pager">
+      <button id="btn-back" disabled>Back</button>
+      <button class="primary" id="btn-next">Save</button>
+    </div>
 
     <footer>digipeater.local</footer>
   </div>
 
   <script>
-    async function loadStatus() {
+    const steps = [
+      {
+        title: 'Network setup',
+        render: renderNetworkStep,
+        onNext: saveNetworkStep,
+      },
+    ];
+
+    let currentStep = 0;
+
+    function showStep() {
+      const step = steps[currentStep];
+      document.getElementById('step-title').textContent = step.title;
+      step.render();
+
+      const isFirst = currentStep === 0;
+      const isLast = currentStep === steps.length - 1;
+      document.getElementById('btn-back').disabled = isFirst;
+      document.getElementById('btn-next').textContent = isLast ? 'Save' : 'Next';
+    }
+
+    // ── Network setup step ────────────────────────────────────────────
+    function renderNetworkStep() {
+      document.getElementById('step-content').innerHTML = `
+        <section>
+          <div class="status-box"><span class="dot"></span><span id="network-status">Checking…</span></div>
+        </section>
+        <section id="wifi-connect-section" class="hidden">
+          <label>Connect to WiFi</label>
+          <div class="row">
+            <input type="text" id="wifi-ssid" list="wifi-ssid-list" placeholder="Scan or type SSID manually">
+            <datalist id="wifi-ssid-list"></datalist>
+            <button type="button" id="btn-scan">Scan</button>
+          </div>
+          <label for="wifi-password">Password</label>
+          <input type="password" id="wifi-password" placeholder="At least 8 characters">
+          <p class="hint">Leave this blank to skip. Saving won't connect right away — it'll be used the next time the device sets up its network connection, so this hotspot session won't drop mid-setup.</p>
+          <p class="msg" id="wifi-msg"></p>
+        </section>
+      `;
+      document.getElementById('btn-scan').addEventListener('click', scanWifi);
+      loadNetworkStatus();
+    }
+
+    async function loadNetworkStatus() {
+      const el = document.getElementById('network-status');
       try {
         const res = await fetch('/api/network/status');
         const data = await res.json();
-        const el = document.getElementById('network-status');
         if (data.kind === 'ethernet') {
           el.textContent = `Connected via Ethernet — ${data.ip}`;
         } else if (data.kind === 'wifi') {
@@ -221,7 +280,7 @@
           document.getElementById('wifi-connect-section').classList.remove('hidden');
         }
       } catch (e) {
-        document.getElementById('network-status').textContent = 'Could not reach the server.';
+        el.textContent = 'Could not reach the server.';
       }
     }
 
@@ -241,23 +300,25 @@
           list.appendChild(opt);
         });
       } catch (e) {
-        // leave the list empty — manual entry still works
+        // manual entry still works
       } finally {
         btn.disabled = false;
         btn.textContent = 'Scan';
       }
     }
 
-    async function saveWifi() {
-      const ssid = document.getElementById('wifi-ssid').value.trim();
-      const password = document.getElementById('wifi-password').value;
-      const msg = document.getElementById('wifi-save-msg');
-      msg.className = 'msg';
-      if (!ssid) {
-        msg.textContent = 'Enter an SSID first.';
-        msg.className = 'msg error';
-        return;
+    async function saveNetworkStep() {
+      const wifiSection = document.getElementById('wifi-connect-section');
+      if (wifiSection.classList.contains('hidden')) {
+        return true; // already connected — nothing on this page to save
       }
+      const ssid = document.getElementById('wifi-ssid').value.trim();
+      if (!ssid) {
+        return true; // left blank — skip
+      }
+      const password = document.getElementById('wifi-password').value;
+      const msg = document.getElementById('wifi-msg');
+      msg.className = 'msg';
       try {
         const res = await fetch('/api/network/wifi', {
           method: 'POST',
@@ -268,18 +329,37 @@
           const body = await res.json().catch(() => ({}));
           throw new Error(body.detail || res.statusText);
         }
-        msg.textContent = 'Saved.';
-        msg.className = 'msg success';
+        return true;
       } catch (e) {
         msg.textContent = `Error: ${e.message}`;
         msg.className = 'msg error';
+        return false;
       }
     }
 
-    document.getElementById('btn-scan').addEventListener('click', scanWifi);
-    document.getElementById('btn-save-wifi').addEventListener('click', saveWifi);
+    // ── Pager ──────────────────────────────────────────────────────────
+    document.getElementById('btn-back').addEventListener('click', () => {
+      if (currentStep > 0) {
+        currentStep--;
+        showStep();
+      }
+    });
 
-    loadStatus();
+    document.getElementById('btn-next').addEventListener('click', async () => {
+      const step = steps[currentStep];
+      const ok = await step.onNext();
+      if (!ok) return;
+      if (currentStep < steps.length - 1) {
+        currentStep++;
+        showStep();
+      } else {
+        const btn = document.getElementById('btn-next');
+        btn.textContent = 'Saved ✓';
+        btn.disabled = true;
+      }
+    });
+
+    showStep();
   </script>
 </body>
 </html>

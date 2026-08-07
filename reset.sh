@@ -40,11 +40,12 @@ echo "    - $INSTALL_DIR (application, venv, config.yaml, saved WiFi credentials
 echo "    - $VAR_DIR (tile cache, packet history)"
 echo "    - $DIREWOLF_CONF_DIR (generated direwolf.conf)"
 echo "    - $SUDOERS_FILE (nmcli sudo permission)"
+echo "    - the digipeater-hotspot NetworkManager connection profile"
 echo "    - the SPI interface (disabled again)"
 echo "    - the WiFi country setting (radio re-blocked, same as before install)"
 echo "    - system packages: direwolf, gpsd, gpsd-clients, libhamlib-utils,"
 echo "      python3-rpi.gpio, python3-spidev, fonts-dejavu-core, python3-pip,"
-echo "      python3-venv, git, curl"
+echo "      python3-venv, git"
 echo ""
 echo -e "${YELLOW}Deliberately NOT touched (real risk of bricking the Pi or losing SSH access):${NC}"
 echo "    - python3 itself — a dependency root for much of the base OS; purging"
@@ -100,6 +101,16 @@ else
     info "$SUDOERS_FILE not present — skipping"
 fi
 
+# ── Remove hotspot NetworkManager connection profile ─
+# Created by the app itself (services/network.py's setup_hotspot), stored
+# outside every other path this script already cleans up.
+if sudo nmcli -t -f NAME connection show 2>/dev/null | grep -qx "digipeater-hotspot"; then
+    sudo nmcli connection delete digipeater-hotspot
+    ok "Removed digipeater-hotspot connection profile"
+else
+    info "digipeater-hotspot connection profile not present — skipping"
+fi
+
 # ── Disable SPI ───────────────────────────────
 info "Disabling SPI interface..."
 sudo raspi-config nonint do_spi 1
@@ -119,8 +130,10 @@ if [ -f /etc/network/interfaces.bak ]; then
 fi
 
 # ── Remove system packages ───────────────────
-# python3 and network-manager are deliberately excluded — see the warning
-# shown before the confirmation prompt above.
+# python3, network-manager, and curl are deliberately excluded — curl is
+# needed to re-run install.sh/this script itself via the documented
+# `curl | bash` command; see the warning shown before the confirmation
+# prompt above for python3/NetworkManager.
 info "Removing system packages..."
 sudo apt-get purge -y -qq \
     direwolf \
@@ -133,7 +146,6 @@ sudo apt-get purge -y -qq \
     python3-pip \
     python3-venv \
     git \
-    curl \
     2>/dev/null || true
 sudo apt-get autoremove -y -qq
 ok "System packages removed"

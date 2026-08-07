@@ -106,7 +106,14 @@ async def setup_hotspot(ssid: str, password: str) -> bool:
         "type", "wifi",
         "ifname", "wlan0",
         "con-name", _HOTSPOT_CON,
-        "autoconnect", "yes",
+        # autoconnect=no is deliberate: NetworkManager must never bring this
+        # up on its own at boot. The app decides whether the hotspot is
+        # needed each boot (via _resolve_network's priority check) — if this
+        # were "yes", NetworkManager would reactivate the hotspot itself
+        # before that check runs, leaving wlan0 already holding the
+        # hotspot's own gateway IP (10.42.0.1) and making it indistinguishable
+        # from a real WiFi client connection to get_wifi_client_ip().
+        "autoconnect", "no",
         "ssid", ssid,
         "mode", "ap",
         "ipv4.method", "shared",
