@@ -161,6 +161,32 @@
     button:hover { border-color: var(--accent); }
     button:disabled { opacity: 0.5; cursor: default; }
 
+    .scan-results {
+      margin-top: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .scan-result {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      min-height: 40px;
+      background: var(--panel-2);
+      border: none;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      font-size: 14px;
+      text-align: left;
+      width: 100%;
+      cursor: pointer;
+    }
+    .scan-result:last-child { border-bottom: none; }
+    .scan-result:hover, .scan-result:active { background: var(--border); }
+    .scan-result .signal { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+
     .pager {
       display: flex;
       gap: 10px;
@@ -252,10 +278,10 @@
         <section id="wifi-connect-section" class="hidden">
           <label>Connect to WiFi</label>
           <div class="row">
-            <input type="text" id="wifi-ssid" list="wifi-ssid-list" placeholder="Scan or type SSID manually">
-            <datalist id="wifi-ssid-list"></datalist>
+            <input type="text" id="wifi-ssid" placeholder="Scan or type SSID manually">
             <button type="button" id="btn-scan">Scan</button>
           </div>
+          <div id="wifi-scan-results" class="scan-results hidden"></div>
           <label for="wifi-password">Password</label>
           <input type="password" id="wifi-password" placeholder="At least 8 characters">
           <p class="hint">Leave this blank to skip. Saving won't connect right away — it'll be used the next time the device sets up its network connection, so this hotspot session won't drop mid-setup.</p>
@@ -286,19 +312,30 @@
 
     async function scanWifi() {
       const btn = document.getElementById('btn-scan');
+      const results = document.getElementById('wifi-scan-results');
       btn.disabled = true;
       btn.textContent = 'Scanning…';
       try {
         const res = await fetch('/api/network/scan');
         const data = await res.json();
-        const list = document.getElementById('wifi-ssid-list');
-        list.innerHTML = '';
-        (data.networks || []).forEach(n => {
-          const opt = document.createElement('option');
-          opt.value = n.ssid;
-          opt.label = `${n.ssid} (${n.signal}%)`;
-          list.appendChild(opt);
+        results.innerHTML = '';
+        const networks = data.networks || [];
+        if (networks.length === 0) {
+          results.classList.add('hidden');
+          return;
+        }
+        networks.forEach(n => {
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = 'scan-result';
+          item.innerHTML = `<span>${n.ssid}</span><span class="signal">${n.signal}%</span>`;
+          item.addEventListener('click', () => {
+            document.getElementById('wifi-ssid').value = n.ssid;
+            results.classList.add('hidden');
+          });
+          results.appendChild(item);
         });
+        results.classList.remove('hidden');
       } catch (e) {
         // manual entry still works
       } finally {

@@ -137,23 +137,4 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             raise HTTPException(status_code=500, detail=str(e))
         return {"ok": True}
 
-    # Captive-portal catch-all — must be registered last so every other
-    # route above still takes priority. Phones/laptops probe a handful of
-    # known paths (Apple's /hotspot-detect.html, Android's /generate_204,
-    # Windows' /connecttest.txt, etc.) expecting an exact "everything's
-    # fine" response; when DNS resolves those probe hosts to us (see the
-    # NetworkManager dnsmasq-shared.d config installed alongside the
-    # hotspot) and we don't return what they expect, the OS concludes it's
-    # behind a captive portal and auto-opens a browser straight to
-    # whatever we serve here — which is how the setup page pops up on its
-    # own instead of requiring the user to know an IP or hostname to type.
-    # Only active while the hotspot itself is, so it can't shadow real
-    # routes during normal (ethernet/WiFi) operation.
-    @app.get("/{full_path:path}")
-    async def captive_portal_catch_all(full_path: str):
-        if network_status.get("kind") != "hotspot":
-            raise HTTPException(status_code=404)
-        page = "first_run.html" if first_boot else "test.html"
-        return FileResponse(STATIC_DIR / page)
-
     return app

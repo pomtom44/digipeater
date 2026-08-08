@@ -56,8 +56,7 @@ Near the end you'll be asked for a WiFi country code (only if one isn't already 
 - The e-ink display shows first-boot status, including the IP and network method currently configured
 - Ethernet, Wifi, or Hotspot with SSID, Password, and the address to browse to
 - Either make sure you are connected to your network and getting an IP, or connect to the hotspot
-- If you connected to the hotspot, your phone/laptop should prompt you to "sign in to network" on its own (a captive portal, same as public WiFi) — tap it to open the setup page
-- If it doesn't prompt automatically, open `http://digipeater.local`, or the IP address shown on the display, in a browser
+- Open `http://digipeater.local`, or the IP address shown on the display, in a browser to continue the setup
 
 **Useful commands:**
 ```bash

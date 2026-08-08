@@ -138,21 +138,6 @@ else
     fail "Generated sudoers rule failed validation — aborting for safety"
 fi
 
-# ── Captive portal DNS ────────────────────────
-# NetworkManager runs its own dnsmasq instance for any connection using
-# ipv4.method=shared (our hotspot) — this drop-in makes it resolve every
-# hostname to the hotspot's own IP, so phones/laptops connecting to the
-# hotspot get their captive-portal detection probes answered by us and
-# auto-pop the setup page, instead of needing the IP typed in manually.
-# Only takes effect while the hotspot connection is actually active, so it
-# has no effect on ethernet/WiFi-client operation.
-HOTSPOT_IP="$(cd "$APP_DIR" && python3 -c 'from services.network import HOTSPOT_IP; print(HOTSPOT_IP)')"
-run_with_spinner "Configuring captive portal DNS..." bash -c "
-    sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d &&
-    echo 'address=/#/$HOTSPOT_IP' | sudo tee /etc/NetworkManager/dnsmasq-shared.d/digipeater-captive-portal.conf > /dev/null
-"
-ok "Captive portal DNS configured"
-
 # ── Python virtual environment ────────────────
 # --system-site-packages so the venv can see the apt-installed RPi.GPIO/spidev
 # (those build native extensions against the Pi's kernel headers — pip-installing

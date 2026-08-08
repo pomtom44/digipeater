@@ -5,7 +5,7 @@ single centered "Label: value" line rather than stacking — see
 epd1in54_v2.py for the square-panel equivalent, which stacks instead.
 """
 
-from ._shared import load_font, fit_font, FONT_BOLD, FONT_REGULAR
+from ._shared import fit_font, FONT_BOLD, FONT_REGULAR
 
 MARGIN = 10
 LABEL_VALUE_GAP = 8
@@ -35,7 +35,6 @@ def draw_status_page(driver, title: str, rows: list[tuple[str, str]]):
     row_height = 24
 
     title_font = fit_font(draw, title, FONT_BOLD, content_width, 18)
-    label_font = load_font(FONT_BOLD, 14)
 
     tbbox = draw.textbbox((0, 0), title, font=title_font)
     tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
@@ -47,17 +46,23 @@ def draw_status_page(driver, title: str, rows: list[tuple[str, str]]):
     divider_y = top + th + 7
     draw.line((MARGIN, divider_y, w - MARGIN, divider_y), fill=0, width=1)
 
+    # Labels right-align and values left-align against a shared center
+    # column (split at the gap around the colon) instead of each row
+    # centering independently — otherwise the colon position drifts row to
+    # row depending on how wide that row's label+value happens to be.
+    center_x = w / 2
+    half_gap = LABEL_VALUE_GAP / 2
+    label_max_w = center_x - half_gap - MARGIN
+    value_max_w = w - MARGIN - (center_x + half_gap)
+
     y = divider_y + 11
     for label, value in rows:
-        lbbox = draw.textbbox((0, 0), label, font=label_font)
+        row_label_font = fit_font(draw, label, FONT_BOLD, label_max_w, 14, min_size=9)
+        lbbox = draw.textbbox((0, 0), label, font=row_label_font)
         lw = lbbox[2] - lbbox[0]
-        value_font = fit_font(draw, value, FONT_REGULAR, content_width - lw - LABEL_VALUE_GAP, 14, min_size=9)
-        vbbox = draw.textbbox((0, 0), value, font=value_font)
-        vw = vbbox[2] - vbbox[0]
-        row_w = lw + LABEL_VALUE_GAP + vw
-        x = (w - row_w) / 2
-        draw.text((x, y), label, font=label_font, fill=0)
-        draw.text((x + lw + LABEL_VALUE_GAP, y), value, font=value_font, fill=0)
+        value_font = fit_font(draw, value, FONT_REGULAR, value_max_w, 14, min_size=9)
+        draw.text((center_x - half_gap - lw, y), label, font=row_label_font, fill=0)
+        draw.text((center_x + half_gap, y), value, font=value_font, fill=0)
         y += row_height
 
     return image
