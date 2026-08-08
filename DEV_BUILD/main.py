@@ -17,6 +17,9 @@ CONFIG_PATH = Path("config.yaml")
 # first boot, before any web-based config wizard exists, so it can't wait for
 # the wizard — see DEV_BUILD/SETUP.md). Defaults to no display if absent.
 DISPLAY_CONFIG_PATH = Path("display_config.json")
+# Written by web/server.py's /api/network/wifi during first-boot setup.
+# Consumed once here — see _apply_pending_wifi — then deleted.
+WIFI_PENDING_PATH = Path("wifi_pending.json")
 
 HOTSPOT_SSID = "Digipeater"
 HOTSPOT_PASSWORD = "Digi1234"
@@ -96,20 +99,46 @@ async def _wait_for_existing_connection():
         elapsed += CONNECTION_POLL_INTERVAL_S
 
 
+async def _apply_pending_wifi() -> bool:
+    """Consume WiFi credentials saved by the first-boot wizard, if any.
+
+    One-time: the pending file is deleted after a successful connection so
+    it's never retried or left sitting on disk on future boots. Once
+    connected, NetworkManager's own autoconnect keeps this WiFi network
+    coming back on its own from here on — see network.connect_wifi.
+    """
+    if not WIFI_PENDING_PATH.exists():
+        return False
+    try:
+        data = json.loads(WIFI_PENDING_PATH.read_text())
+    except Exception as e:
+        logger.error("Failed to read %s: %s", WIFI_PENDING_PATH, e)
+        return False
+    ok = await network.connect_wifi(data.get("ssid", ""), data.get("password", ""))
+    if ok:
+        WIFI_PENDING_PATH.unlink(missing_ok=True)
+    return ok
+
+
 async def _resolve_network() -> tuple[str, str]:
     """Core network policy — runs on every boot, first-time or normal alike,
-    not just during initial setup. Checked in priority order: ethernet, then
-    an existing WiFi client connection, then — only if neither is already
-    connected — our own hotspot as a last resort. This is deliberate: the
-    device should never silently strand itself with no way to reach it, but
-    it also shouldn't start broadcasting a hotspot just because ethernet
-    dropped for a moment while a real connection was still coming up.
+    not just during initial setup. Checked in priority order: ethernet, an
+    existing WiFi client connection, WiFi credentials saved (but not yet
+    applied) by the setup wizard, then — only if none of those pan out —
+    our own hotspot as a last resort. This is deliberate: the device should
+    never silently strand itself with no way to reach it, but it also
+    shouldn't start broadcasting a hotspot just because ethernet dropped
+    for a moment while a real connection was still coming up.
 
     Returns ("ethernet"|"wifi"|"hotspot", ip_or_none).
     """
     kind, ip = await _wait_for_existing_connection()
     if kind:
         return kind, ip
+    if await _apply_pending_wifi():
+        kind, ip = await _wait_for_existing_connection()
+        if kind:
+            return kind, ip
     await network.setup_hotspot(HOTSPOT_SSID, HOTSPOT_PASSWORD)
     return "hotspot", None
 
@@ -142,14 +171,16 @@ async def main() -> None:
     from display.templates import get_template
     template = get_template(driver_model)
 
+    await _render(display_driver, template.draw_loading_page)
+    kind, ip = await _resolve_network()
+
     if first_boot:
         logger.info("No config.yaml found — running first-boot sequence")
-        await _render(display_driver, template.draw_loading_page)
-        kind, ip = await _resolve_network()
         await _show_network_status(display_driver, template, "Initial config", kind, ip, fast=True)
     else:
-        kind, ip = await _resolve_network()
-        await _show_network_status(display_driver, template, "Digipeater", kind, ip, fast=False)
+        # Normal boot has nothing left to confirm to the user beyond "it's
+        # up" — network detail lives on the web UI now, not the screen.
+        await _render(display_driver, template.draw_loading_page, "Digipeater", fast=True)
 
     network_status = {"kind": kind, "ip": ip, "hotspot_ssid": HOTSPOT_SSID}
     app = create_app(display_driver, first_boot, network_status)

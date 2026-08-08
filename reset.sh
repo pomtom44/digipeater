@@ -12,6 +12,7 @@ SERVICE_NAME="digipeater"
 VAR_DIR="/var/digipeater"
 DIREWOLF_CONF_DIR="/etc/direwolf"
 SUDOERS_FILE="/etc/sudoers.d/digipeater-nmcli"
+REBOOT_SUDOERS_FILE="/etc/sudoers.d/digipeater-reboot"
 
 # ── Colours ──────────────────────────────────
 GREEN='\033[0;32m'
@@ -40,6 +41,7 @@ echo "    - $INSTALL_DIR (application, venv, config.yaml, saved WiFi credentials
 echo "    - $VAR_DIR (tile cache, packet history)"
 echo "    - $DIREWOLF_CONF_DIR (generated direwolf.conf)"
 echo "    - $SUDOERS_FILE (nmcli sudo permission)"
+echo "    - $REBOOT_SUDOERS_FILE (reboot sudo permission)"
 echo "    - the digipeater-hotspot NetworkManager connection profile"
 echo "    - the SPI interface (disabled again)"
 echo "    - the WiFi country setting (radio re-blocked, same as before install)"
@@ -99,6 +101,14 @@ if [ -f "$SUDOERS_FILE" ]; then
     ok "Removed $SUDOERS_FILE"
 else
     info "$SUDOERS_FILE not present — skipping"
+fi
+
+# ── Remove reboot sudoers rule ───────────────
+if [ -f "$REBOOT_SUDOERS_FILE" ]; then
+    sudo rm -f "$REBOOT_SUDOERS_FILE"
+    ok "Removed $REBOOT_SUDOERS_FILE"
+else
+    info "$REBOOT_SUDOERS_FILE not present — skipping"
 fi
 
 # ── Remove hotspot NetworkManager connection profile ─

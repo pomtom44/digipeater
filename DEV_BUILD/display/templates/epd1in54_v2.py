@@ -12,14 +12,16 @@ LABEL_ROW_H = 18
 VALUE_ROW_H = 26
 
 
-def draw_loading_page(driver):
+def draw_loading_page(driver, text: str = "Loading..."):
+    """Full-screen bordered centered text — used both for the boot-time
+    loading indicator and, with a different string, the normal-boot
+    "Digipeater" idle screen."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)
     draw = ImageDraw.Draw(image)
     draw.rectangle((4, 4, w - 5, h - 5), outline=0)
 
-    text = "Loading..."
     font = fit_font(draw, text, FONT_BOLD, w - 2 * MARGIN, 20)
     bbox = draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]

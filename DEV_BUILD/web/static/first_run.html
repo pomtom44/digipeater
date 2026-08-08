@@ -254,6 +254,11 @@
         render: renderNetworkStep,
         onNext: saveNetworkStep,
       },
+      {
+        title: 'Finish',
+        render: renderFinishStep,
+        onNext: finishSetup,
+      },
     ];
 
     let currentStep = 0;
@@ -266,7 +271,7 @@
       const isFirst = currentStep === 0;
       const isLast = currentStep === steps.length - 1;
       document.getElementById('btn-back').disabled = isFirst;
-      document.getElementById('btn-next').textContent = isLast ? 'Save' : 'Next';
+      document.getElementById('btn-next').textContent = isLast ? 'Finish & Reboot' : 'Next';
     }
 
     // ── Network setup step ────────────────────────────────────────────
@@ -374,6 +379,43 @@
       }
     }
 
+    // ── Finish step ───────────────────────────────────────────────────
+    function renderFinishStep() {
+      document.getElementById('step-content').innerHTML = `
+        <section>
+          <p>That's everything needed for now. Press <strong>Finish &amp; Reboot</strong> to save your settings — the device will reboot and start up in standard mode.</p>
+          <p class="hint">This takes about a minute. Once it reboots this page will stop responding — it's safe to close it.</p>
+          <p class="msg" id="finish-msg"></p>
+        </section>
+      `;
+    }
+
+    async function finishSetup() {
+      const nextBtn = document.getElementById('btn-next');
+      const backBtn = document.getElementById('btn-back');
+      const msg = document.getElementById('finish-msg');
+      nextBtn.disabled = true;
+      backBtn.disabled = true;
+      nextBtn.textContent = 'Rebooting…';
+      msg.className = 'msg';
+      try {
+        const res = await fetch('/api/setup/complete', { method: 'POST' });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || res.statusText);
+        }
+        msg.textContent = 'Settings saved — rebooting now.';
+        msg.className = 'msg success';
+      } catch (e) {
+        msg.textContent = `Error: ${e.message}`;
+        msg.className = 'msg error';
+        nextBtn.disabled = false;
+        backBtn.disabled = false;
+        nextBtn.textContent = 'Finish & Reboot';
+      }
+      return false; // this step never advances further — it's terminal
+    }
+
     // ── Pager ──────────────────────────────────────────────────────────
     document.getElementById('btn-back').addEventListener('click', () => {
       if (currentStep > 0) {
@@ -389,10 +431,6 @@
       if (currentStep < steps.length - 1) {
         currentStep++;
         showStep();
-      } else {
-        const btn = document.getElementById('btn-next');
-        btn.textContent = 'Saved ✓';
-        btn.disabled = true;
       }
     });
 

@@ -7,6 +7,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _HOTSPOT_CON = "digipeater-hotspot"
+_WIFI_CLIENT_CON = "digipeater-wifi"
 
 # Pinned explicitly rather than relying on NetworkManager's default gateway
 # for ipv4.method=shared (which happens to also be 10.42.0.1, but that's an
@@ -100,6 +101,41 @@ async def scan_wifi() -> list[dict]:
                 "security": parts[2] if len(parts) > 2 else "",
             })
     return networks
+
+
+async def connect_wifi(ssid: str, password: str) -> bool:
+    """Create (or replace) a WiFi client connection profile and bring it up.
+
+    Unlike setup_hotspot's autoconnect=no, this is deliberately autoconnect=
+    yes — once connected here, NetworkManager should keep reconnecting this
+    on every future boot on its own, the same way its default ethernet
+    profile already does, without this function needing to run again.
+    """
+    await _nmcli("connection", "delete", _WIFI_CLIENT_CON)
+
+    args = [
+        "connection", "add",
+        "type", "wifi",
+        "ifname", "wlan0",
+        "con-name", _WIFI_CLIENT_CON,
+        "autoconnect", "yes",
+        "ssid", ssid,
+    ]
+    if password:
+        args += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+
+    code, out, err = await _nmcli(*args)
+    if code != 0:
+        logger.error("Failed to create WiFi client connection: %s", err)
+        return False
+
+    code, _, err = await _nmcli("connection", "up", _WIFI_CLIENT_CON)
+    if code != 0:
+        logger.error("Failed to connect to WiFi (SSID=%s): %s", ssid, err)
+        return False
+
+    logger.info("Connected to WiFi: SSID=%s", ssid)
+    return True
 
 
 async def setup_hotspot(ssid: str, password: str) -> bool:

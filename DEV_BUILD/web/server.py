@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from display.base import DisplayDriver
-from services import network
+from services import network, system
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,10 @@ STATIC_DIR = Path(__file__).parent / "static"
 # "normal boot" network flow, which is separate/later work. First boot only
 # ever stores the intent here.
 WIFI_PENDING_PATH = Path("wifi_pending.json")
+# Its mere existence is what main.py's first_boot check looks for — see
+# CONFIG_PATH there. Written only by the wizard's final "Finish & Reboot"
+# step, once all setup steps have been completed.
+CONFIG_PATH = Path("config.yaml")
 
 
 def _build_test_image(display_driver: DisplayDriver):
@@ -46,7 +50,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
 
     @app.get("/")
     async def root():
-        page = "first_run.html" if first_boot else "test.html"
+        page = "first_run.html" if first_boot else "normal.html"
         return FileResponse(STATIC_DIR / page)
 
     @app.get("/test")
@@ -87,6 +91,26 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         fd = os.open(WIFI_PENDING_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(json.dumps({"ssid": ssid, "password": password}))
+        return {"ok": True}
+
+    @app.post("/api/setup/complete")
+    async def setup_complete():
+        if not first_boot:
+            raise HTTPException(status_code=400, detail="Setup has already been completed")
+        CONFIG_PATH.write_text(
+            "# Written by the first-boot setup wizard.\n"
+            "# Its existence is what marks first-boot setup as complete.\n"
+            "setup_complete: true\n"
+        )
+        # Reboot is fired off in the background rather than awaited here —
+        # awaiting it would mean the process (and the connection carrying
+        # this response) gets killed by the reboot itself before the client
+        # ever sees a reply. The short delay gives the response time to
+        # actually reach the browser first.
+        async def _delayed_reboot():
+            await asyncio.sleep(1.5)
+            await system.reboot()
+        asyncio.create_task(_delayed_reboot())
         return {"ok": True}
 
     @app.get("/api/status")

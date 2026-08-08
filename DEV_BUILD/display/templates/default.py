@@ -7,7 +7,10 @@ look better since it can be designed for that exact aspect ratio."""
 from ._shared import load_font, fit_font, FONT_BOLD, FONT_REGULAR
 
 
-def draw_loading_page(driver):
+def draw_loading_page(driver, text: str = "Loading..."):
+    """Full-screen bordered centered text — used both for the boot-time
+    loading indicator and, with a different string, the normal-boot
+    "Digipeater" idle screen."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)
@@ -15,7 +18,6 @@ def draw_loading_page(driver):
     draw.rectangle((0, 0, w - 1, h - 1), outline=0)
 
     margin = 8
-    text = "Loading..."
     font = fit_font(draw, text, FONT_BOLD, w - 2 * margin, 22)
     bbox = draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]

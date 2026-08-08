@@ -57,6 +57,7 @@ Near the end you'll be asked for a WiFi country code (only if one isn't already 
 - Ethernet, Wifi, or Hotspot with SSID, Password, and the address to browse to
 - Either make sure you are connected to your network and getting an IP, or connect to the hotspot
 - Open `http://digipeater.local`, or the IP address shown on the display, in a browser to continue the setup
+- Work through the setup wizard, then press **Finish & Reboot** on the last step — this saves your settings and reboots the device into standard mode
 
 **Useful commands:**
 ```bash

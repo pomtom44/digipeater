@@ -138,6 +138,21 @@ else
     fail "Generated sudoers rule failed validation — aborting for safety"
 fi
 
+# ── Grant reboot access for the setup wizard's "Finish & Reboot" step ──
+# Separate sudoers file from nmcli's above — one rule per binary, so each
+# stays scoped to exactly what it needs and nothing more.
+REBOOT_PATH="$(command -v reboot)"
+SUDOERS_TMP2="$(mktemp)"
+echo "$USER ALL=(root) NOPASSWD: $REBOOT_PATH" > "$SUDOERS_TMP2"
+if sudo visudo -c -f "$SUDOERS_TMP2" > /dev/null 2>&1; then
+    sudo install -o root -g root -m 0440 "$SUDOERS_TMP2" /etc/sudoers.d/digipeater-reboot
+    rm -f "$SUDOERS_TMP2"
+    ok "reboot permissions configured"
+else
+    rm -f "$SUDOERS_TMP2"
+    fail "Generated sudoers rule failed validation — aborting for safety"
+fi
+
 # ── Python virtual environment ────────────────
 # --system-site-packages so the venv can see the apt-installed RPi.GPIO/spidev
 # (those build native extensions against the Pi's kernel headers — pip-installing
