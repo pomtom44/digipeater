@@ -8,6 +8,12 @@ logger = logging.getLogger(__name__)
 
 _HOTSPOT_CON = "digipeater-hotspot"
 
+# Pinned explicitly rather than relying on NetworkManager's default gateway
+# for ipv4.method=shared (which happens to also be 10.42.0.1, but that's an
+# undocumented implementation detail) — this value is shown to the user on
+# the e-ink screen and must be guaranteed correct, not "probably correct".
+HOTSPOT_IP = "10.42.0.1"
+
 
 async def _nmcli(*args) -> tuple[int, str, str]:
     """Run an nmcli command and return (returncode, stdout, stderr).
@@ -117,6 +123,7 @@ async def setup_hotspot(ssid: str, password: str) -> bool:
         "ssid", ssid,
         "mode", "ap",
         "ipv4.method", "shared",
+        "ipv4.addresses", f"{HOTSPOT_IP}/24",
         "wifi-sec.key-mgmt", "wpa-psk",
         "wifi-sec.psk", password,
     )

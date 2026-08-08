@@ -12,6 +12,7 @@ SERVICE_NAME="digipeater"
 VAR_DIR="/var/digipeater"
 DIREWOLF_CONF_DIR="/etc/direwolf"
 SUDOERS_FILE="/etc/sudoers.d/digipeater-nmcli"
+CAPTIVE_PORTAL_CONF="/etc/NetworkManager/dnsmasq-shared.d/digipeater-captive-portal.conf"
 
 # ── Colours ──────────────────────────────────
 GREEN='\033[0;32m'
@@ -41,6 +42,7 @@ echo "    - $VAR_DIR (tile cache, packet history)"
 echo "    - $DIREWOLF_CONF_DIR (generated direwolf.conf)"
 echo "    - $SUDOERS_FILE (nmcli sudo permission)"
 echo "    - the digipeater-hotspot NetworkManager connection profile"
+echo "    - the captive portal DNS config (dnsmasq-shared.d)"
 echo "    - the SPI interface (disabled again)"
 echo "    - the WiFi country setting (radio re-blocked, same as before install)"
 echo "    - system packages: direwolf, gpsd, gpsd-clients, libhamlib-utils,"
@@ -109,6 +111,14 @@ if sudo nmcli -t -f NAME connection show 2>/dev/null | grep -qx "digipeater-hots
     ok "Removed digipeater-hotspot connection profile"
 else
     info "digipeater-hotspot connection profile not present — skipping"
+fi
+
+# ── Remove captive portal DNS config ─────────
+if [ -f "$CAPTIVE_PORTAL_CONF" ]; then
+    sudo rm -f "$CAPTIVE_PORTAL_CONF"
+    ok "Removed captive portal DNS config"
+else
+    info "Captive portal DNS config not present — skipping"
 fi
 
 # ── Disable SPI ───────────────────────────────

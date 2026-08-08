@@ -120,7 +120,11 @@ async def _show_network_status(driver, template, title: str, kind: str, ip: str,
     elif kind == "wifi":
         rows = [("Wifi IP:", ip)]
     else:
-        rows = [("Hotspot:", HOTSPOT_SSID), ("Password:", HOTSPOT_PASSWORD)]
+        rows = [
+            ("Hotspot:", HOTSPOT_SSID),
+            ("Password:", HOTSPOT_PASSWORD),
+            ("Browse to:", network.HOTSPOT_IP),
+        ]
     await _render(driver, template.draw_status_page, title, rows, fast=fast)
 
 
