@@ -5,11 +5,12 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+import yaml
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from display.base import DisplayDriver
-from services import network, system
+from services import hardware, network, system
 
 logger = logging.getLogger(__name__)
 
@@ -93,14 +94,30 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             f.write(json.dumps({"ssid": ssid, "password": password}))
         return {"ok": True}
 
+    @app.get("/api/hardware/audio-devices")
+    async def audio_devices():
+        return {"devices": await hardware.list_audio_devices()}
+
+    @app.get("/api/hardware/serial-devices")
+    async def serial_devices():
+        return {"devices": await hardware.list_serial_devices()}
+
     @app.post("/api/setup/complete")
-    async def setup_complete():
+    async def setup_complete(request: Request):
         if not first_boot:
             raise HTTPException(status_code=400, detail="Setup has already been completed")
+        body = await request.json()
+        # Radio config has no dedicated backend yet (see services/hardware.py
+        # and the wizard's Radio step) — saved here as-is so it's not lost,
+        # ready for whatever actually consumes it once that lands.
+        config = {
+            "setup_complete": True,
+            "radio": body.get("radio", {}),
+        }
         CONFIG_PATH.write_text(
             "# Written by the first-boot setup wizard.\n"
             "# Its existence is what marks first-boot setup as complete.\n"
-            "setup_complete: true\n"
+            + yaml.safe_dump(config, sort_keys=False)
         )
         # Reboot is fired off in the background rather than awaited here —
         # awaiting it would mean the process (and the connection carrying

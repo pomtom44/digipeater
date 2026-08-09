@@ -125,7 +125,9 @@
     }
 
     input[type="text"],
-    input[type="password"] {
+    input[type="password"],
+    input[type="number"],
+    select {
       width: 100%;
       padding: 11px 12px;
       border: 1px solid var(--border);
@@ -136,10 +138,20 @@
       min-width: 0;
     }
 
-    input:focus {
+    input:focus,
+    select:focus {
       outline: none;
       border-color: var(--accent);
     }
+
+    .field { margin-bottom: 14px; }
+    .field-suffix {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .field-suffix input { flex: 1; }
+    .field-suffix span { color: var(--muted); font-size: 14px; flex-shrink: 0; }
 
     .row {
       display: flex;
@@ -248,11 +260,21 @@
   </div>
 
   <script>
+    // Accumulates values across steps as the wizard progresses — each
+    // step's content gets replaced in the DOM when you move on, so this is
+    // the only place data survives between steps until Finish sends it all.
+    const wizardData = {};
+
     const steps = [
       {
         title: 'Network setup',
         render: renderNetworkStep,
         onNext: saveNetworkStep,
+      },
+      {
+        title: 'Radio setup',
+        render: renderRadioStep,
+        onNext: saveRadioStep,
       },
       {
         title: 'Finish',
@@ -333,7 +355,14 @@
           const item = document.createElement('button');
           item.type = 'button';
           item.className = 'scan-result';
-          item.innerHTML = `<span>${n.ssid}</span><span class="signal">${n.signal}%</span>`;
+          // SSIDs are attacker-controllable broadcast strings — build with
+          // textContent, not innerHTML, so a hostile SSID can't inject markup.
+          const ssidSpan = document.createElement('span');
+          ssidSpan.textContent = n.ssid;
+          const signalSpan = document.createElement('span');
+          signalSpan.className = 'signal';
+          signalSpan.textContent = `${n.signal}%`;
+          item.append(ssidSpan, signalSpan);
           item.addEventListener('click', () => {
             document.getElementById('wifi-ssid').value = n.ssid;
             results.classList.add('hidden');
@@ -379,6 +408,123 @@
       }
     }
 
+    // ── Radio setup step ─────────────────────────────────────────────
+    // Radio model and TX power level are still placeholder dummy lists —
+    // no radio-control backend exists yet. Audio device and the serial
+    // entries in PTT method are read live from this device (see
+    // services/hardware.py), since those're just hardware enumeration and
+    // don't need that backend to exist first.
+    const PLACEHOLDER_RADIOS = [
+      'Baofeng UV-5R',
+      'Yaesu FT-2980R',
+      'Kenwood TM-D710G',
+      'Icom IC-2730A',
+    ];
+    const PLACEHOLDER_POWER_LEVELS = ['Low', 'Medium', 'High'];
+
+    function addOption(select, value, label) {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      select.appendChild(opt);
+      return opt;
+    }
+
+    function renderRadioStep() {
+      document.getElementById('step-content').innerHTML = `
+        <section>
+          <div class="field">
+            <label for="radio-model">Radio model</label>
+            <select id="radio-model"></select>
+          </div>
+          <div class="field">
+            <label for="radio-frequency">Initial frequency</label>
+            <div class="field-suffix">
+              <input type="number" id="radio-frequency" step="0.001" placeholder="e.g. 144.800">
+              <span>MHz</span>
+            </div>
+          </div>
+          <div class="field">
+            <label for="radio-ptt">PTT method</label>
+            <select id="radio-ptt">
+              <option value="vox">VOX</option>
+              <option value="gpio">GPIO pin</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="radio-audio">Audio device</label>
+            <select id="radio-audio"></select>
+          </div>
+          <div class="field">
+            <label for="radio-power">TX power level</label>
+            <select id="radio-power"></select>
+          </div>
+          <p class="hint">Radio model and power level are placeholders for now. Audio device and any connected radio's serial port are read live from this device.</p>
+        </section>
+      `;
+      const modelSelect = document.getElementById('radio-model');
+      PLACEHOLDER_RADIOS.forEach(r => addOption(modelSelect, r, r));
+      const powerSelect = document.getElementById('radio-power');
+      PLACEHOLDER_POWER_LEVELS.forEach(p => addOption(powerSelect, p, p));
+
+      // Restore any values already picked earlier in this session (e.g.
+      // Back then Next again) — renderRadioStep rebuilds the DOM from
+      // scratch each time, wiping whatever was previously selected.
+      if (wizardData.radio) {
+        modelSelect.value = wizardData.radio.model ?? modelSelect.value;
+        powerSelect.value = wizardData.radio.power_level ?? powerSelect.value;
+        document.getElementById('radio-frequency').value = wizardData.radio.frequency_mhz ?? '';
+      }
+
+      loadAudioDevices();
+      loadSerialPttOptions();
+    }
+
+    async function loadAudioDevices() {
+      const select = document.getElementById('radio-audio');
+      try {
+        const res = await fetch('/api/hardware/audio-devices');
+        const data = await res.json();
+        const devices = data.devices || [];
+        if (devices.length === 0) {
+          addOption(select, '', 'No audio devices found');
+          return;
+        }
+        devices.forEach(d => {
+          addOption(select, d.id, d.description ? `${d.name} — ${d.description}` : d.name);
+        });
+        if (wizardData.radio?.audio_device) select.value = wizardData.radio.audio_device;
+      } catch (e) {
+        addOption(select, '', 'Could not load audio devices');
+      }
+    }
+
+    async function loadSerialPttOptions() {
+      const select = document.getElementById('radio-ptt');
+      try {
+        const res = await fetch('/api/hardware/serial-devices');
+        const data = await res.json();
+        (data.devices || []).forEach(d => {
+          const label = d.description ? `Serial: ${d.device} — ${d.description}` : `Serial: ${d.device}`;
+          addOption(select, `serial:${d.device}`, label);
+        });
+        if (wizardData.radio?.ptt_method) select.value = wizardData.radio.ptt_method;
+      } catch (e) {
+        // VOX/GPIO options still work without this
+      }
+    }
+
+    function saveRadioStep() {
+      wizardData.radio = {
+        model: document.getElementById('radio-model').value,
+        frequency_mhz: document.getElementById('radio-frequency').value,
+        ptt_method: document.getElementById('radio-ptt').value,
+        audio_device: document.getElementById('radio-audio').value,
+        power_level: document.getElementById('radio-power').value,
+      };
+      return true;
+    }
+
     // ── Finish step ───────────────────────────────────────────────────
     function renderFinishStep() {
       document.getElementById('step-content').innerHTML = `
@@ -399,7 +545,11 @@
       nextBtn.textContent = 'Rebooting…';
       msg.className = 'msg';
       try {
-        const res = await fetch('/api/setup/complete', { method: 'POST' });
+        const res = await fetch('/api/setup/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(wizardData),
+        });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           throw new Error(body.detail || res.statusText);
