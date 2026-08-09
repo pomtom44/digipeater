@@ -66,3 +66,9 @@ sudo systemctl restart digipeater # restart after manual changes
 ```
 
 Re-running the install command pulls the latest code and redeploys.
+
+---
+
+## Credits
+
+- APRS symbol icons used in the setup wizard: [hessu/aprs-symbols](https://github.com/hessu/aprs-symbols) by Heikki Hannikainen, OH7LZB — CC BY-SA 4.0. See [`web/static/aprs-symbols/COPYRIGHT.md`](web/static/aprs-symbols/COPYRIGHT.md) for the full license and per-symbol attribution.

@@ -8,9 +8,10 @@ from pathlib import Path
 import yaml
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from display.base import DisplayDriver
-from services import hardware, network, system
+from services import aprs, hardware, network, system
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,11 @@ def _build_test_image(display_driver: DisplayDriver):
 
 def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: dict) -> FastAPI:
     app = FastAPI(title="APRS Digipeater")
+
+    # Static assets referenced by URL from within the served HTML (e.g. the
+    # APRS symbol sprite sheets) — separate from the explicit FileResponse
+    # routes below, which serve the HTML pages themselves at clean paths.
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")
     async def root():
@@ -102,17 +108,25 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     async def serial_devices():
         return {"devices": await hardware.list_serial_devices()}
 
+    @app.get("/api/aprs/passcode")
+    async def aprs_passcode(callsign: str = ""):
+        callsign = callsign.strip()
+        if not callsign:
+            raise HTTPException(status_code=400, detail="Callsign is required")
+        return {"passcode": aprs.calculate_passcode(callsign)}
+
     @app.post("/api/setup/complete")
     async def setup_complete(request: Request):
         if not first_boot:
             raise HTTPException(status_code=400, detail="Setup has already been completed")
         body = await request.json()
-        # Radio config has no dedicated backend yet (see services/hardware.py
-        # and the wizard's Radio step) — saved here as-is so it's not lost,
-        # ready for whatever actually consumes it once that lands.
+        # Radio/APRS config have no dedicated backend yet (nothing generates
+        # direwolf.conf from this in DEV_BUILD) — saved here as-is so it's
+        # not lost, ready for whatever actually consumes it once that lands.
         config = {
             "setup_complete": True,
             "radio": body.get("radio", {}),
+            "aprs": body.get("aprs", {}),
         }
         CONFIG_PATH.write_text(
             "# Written by the first-boot setup wizard.\n"

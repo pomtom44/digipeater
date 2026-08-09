@@ -231,12 +231,133 @@
 
     .hidden { display: none; }
 
+    .subsection {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-top: 14px;
+    }
+    .subsection-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .subsection-title input[type="checkbox"] {
+      width: 17px;
+      height: 17px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .subsection-body { margin-top: 12px; }
+    .subsection.disabled { opacity: 0.55; }
+    .subsection.disabled .subsection-body { display: none; }
+
+    details.advanced {
+      margin-top: 14px;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
+    details.advanced > summary {
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 600;
+      list-style: none;
+    }
+    details.advanced > summary::-webkit-details-marker { display: none; }
+    details.advanced > summary::before { content: '▸ '; }
+    details.advanced[open] > summary::before { content: '▾ '; }
+    details.advanced .field:first-of-type { margin-top: 12px; }
+
+    .field-row {
+      display: flex;
+      gap: 10px;
+    }
+    .field-row .field { flex: 1; margin-bottom: 0; }
+
+    .radio-row {
+      display: flex;
+      gap: 16px;
+      margin: 6px 0 4px;
+    }
+    .radio-row label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text);
+      font-size: 14px;
+      margin: 0;
+      cursor: pointer;
+    }
+    .radio-row input[type="radio"] { accent-color: var(--accent); cursor: pointer; }
+
+    .with-button {
+      display: flex;
+      gap: 8px;
+    }
+    .with-button input { flex: 1; }
+    .with-button button { flex-shrink: 0; white-space: nowrap; }
+
+    .symbol-picker { position: relative; }
+    .symbol-trigger {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      justify-content: flex-start;
+      text-align: left;
+    }
+    .symbol-glyph {
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .symbol-grid {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+      gap: 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px;
+      max-height: 220px;
+      overflow-y: auto;
+      background: var(--panel-2);
+    }
+    .symbol-option {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      min-height: 90px;
+      padding: 6px 4px;
+    }
+    .symbol-option:hover, .symbol-option:active { border-color: var(--accent); background: var(--border); }
+    .symbol-badge {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+      border-radius: 3px;
+      padding: 2px 3px;
+    }
+
     footer {
       margin-top: 24px;
       text-align: center;
       font-size: 12px;
       color: var(--muted);
+      line-height: 1.6;
     }
+    footer a { color: var(--accent); }
   </style>
 </head>
 <body>
@@ -256,7 +377,10 @@
       <button class="primary" id="btn-next">Save</button>
     </div>
 
-    <footer>digipeater.local</footer>
+    <footer>
+      digipeater.local<br>
+      APRS symbols by <a href="https://github.com/hessu/aprs-symbols" target="_blank" rel="noopener">hessu/aprs-symbols</a> (CC BY-SA 4.0)
+    </footer>
   </div>
 
   <script>
@@ -270,6 +394,11 @@
         title: 'Network setup',
         render: renderNetworkStep,
         onNext: saveNetworkStep,
+      },
+      {
+        title: 'APRS settings',
+        render: renderAprsStep,
+        onNext: saveAprsStep,
       },
       {
         title: 'Radio setup',
@@ -525,15 +654,440 @@
       return true;
     }
 
+    // ── APRS settings step ───────────────────────────────────────────
+    // Symbol table verified against aprs.org's official reference
+    // (aprs.org/symbols/symbolsX.txt) and the alternate-table overlay
+    // convention for igate capability signalling (symbols-new.txt):
+    // I=generic igate, R=RX-only, T=1-hop TX-capable, 2=2-hop TX-capable.
+    // Icons are hand-drawn inline SVG — no image files, no network
+    // fetch, so the picker works fully offline over the hotspot.
+    const APRS_SYMBOLS = [
+      { id: 'house',     label: 'House (fixed station)', table: '/',  symbol: '-', overlay: '' },
+      { id: 'car',       label: 'Car',                    table: '/',  symbol: '>', overlay: '' },
+      { id: 'truck',     label: 'Truck',                  table: '/',  symbol: 'k', overlay: '' },
+      { id: 'van',       label: 'Van',                    table: '/',  symbol: 'v', overlay: '' },
+      { id: 'rv',        label: 'RV',                     table: '/',  symbol: 'R', overlay: '' },
+      { id: 'bike',      label: 'Bike',                   table: '/',  symbol: 'b', overlay: '' },
+      { id: 'person',    label: 'Person',                 table: '/',  symbol: '[', overlay: '' },
+      { id: 'wx',        label: 'Weather station',        table: '/',  symbol: '_', overlay: '' },
+      { id: 'digi',      label: 'Digipeater',             table: '/',  symbol: '#', overlay: '' },
+      { id: 'hfgate',    label: 'HF Gateway',             table: '/',  symbol: '&', overlay: '' },
+      { id: 'igate',     label: 'IGate',                  table: '\\', symbol: '&', overlay: 'I' },
+      { id: 'igate-rx',  label: 'IGate (RX only)',        table: '\\', symbol: '&', overlay: 'R' },
+      { id: 'igate-tx1', label: 'IGate (TX, 1 hop)',      table: '\\', symbol: '&', overlay: 'T' },
+      { id: 'igate-tx2', label: 'IGate (TX, 2 hop)',      table: '\\', symbol: '&', overlay: '2' },
+    ];
+
+    // Real APRS symbol art from hessu/aprs-symbols (github.com/hessu/aprs-symbols,
+    // CC BY-SA 4.0 — see aprs-symbols/COPYRIGHT.md alongside these sprite sheets).
+    // Grid layout (rows=8, columns=16, sequential ASCII from '!') confirmed from
+    // that project's own export script and cross-checked against the separate
+    // hessu/aprs-symbol-index CSV. Cells are 64x48; extra vertical padding is
+    // added when rendering since some icons (vehicles needing heading-arrow
+    // room) run taller than their nominal cell and would otherwise get clipped.
+    const SPRITE_CELL_W = 64;
+    const SPRITE_CELL_H = 48;
+    const SPRITE_SHEET_W = 1024;
+    const SPRITE_SHEET_H = 384;
+    const SPRITE_PAD_Y = 20;
+    const SPRITE_BASE = '/static/aprs-symbols/';
+
+    function spriteCellFor(sym) {
+      const sheet = sym.table === '\\' ? 'sheet1.png' : 'sheet0.png';
+      const code = sym.symbol.charCodeAt(0) - 0x21;
+      return { sheet, col: code % 16, row: Math.floor(code / 16) };
+    }
+
+    function symbolGlyphHTML(sym, displayW) {
+      const { sheet, col, row } = spriteCellFor(sym);
+      const scale = displayW / SPRITE_CELL_W;
+      const displayH = Math.round((SPRITE_CELL_H + SPRITE_PAD_Y * 2) * scale);
+      const bgW = Math.round(SPRITE_SHEET_W * scale);
+      const bgH = Math.round(SPRITE_SHEET_H * scale);
+      const bgX = -Math.round(col * SPRITE_CELL_W * scale);
+      const bgY = -Math.round((row * SPRITE_CELL_H - SPRITE_PAD_Y) * scale);
+      const style = `width:${displayW}px;height:${displayH}px;background-image:url('${SPRITE_BASE}${sheet}');background-repeat:no-repeat;background-size:${bgW}px ${bgH}px;background-position:${bgX}px ${bgY}px;`;
+      return `<span class="symbol-glyph" style="${style}"></span>`;
+    }
+
+    function aprsSymbolById(id) {
+      return APRS_SYMBOLS.find(s => s.id === id) || APRS_SYMBOLS[0];
+    }
+
+    function symbolPickerHTML(pickerId, initialId) {
+      const sym = aprsSymbolById(initialId);
+      const options = APRS_SYMBOLS.map(s => `
+        <button type="button" class="symbol-option" data-symbol-id="${s.id}" title="${s.label}">
+          ${symbolGlyphHTML(s, 36)}
+          ${s.overlay ? `<span class="symbol-badge">${s.overlay}</span>` : ''}
+        </button>
+      `).join('');
+      return `
+        <div class="symbol-picker" id="${pickerId}" data-symbol-id="${sym.id}">
+          <button type="button" class="symbol-trigger">
+            ${symbolGlyphHTML(sym, 28)}
+            <span class="symbol-label">${sym.label}</span>
+          </button>
+          <div class="symbol-grid hidden">${options}</div>
+        </div>
+      `;
+    }
+
+    function wireSymbolPicker(pickerId, onChange) {
+      const picker = document.getElementById(pickerId);
+      const trigger = picker.querySelector('.symbol-trigger');
+      const grid = picker.querySelector('.symbol-grid');
+      trigger.addEventListener('click', () => grid.classList.toggle('hidden'));
+      grid.querySelectorAll('.symbol-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          setSymbolPicker(pickerId, btn.dataset.symbolId);
+          grid.classList.add('hidden');
+          if (onChange) onChange();
+        });
+      });
+    }
+
+    function setSymbolPicker(pickerId, symbolId) {
+      const picker = document.getElementById(pickerId);
+      const sym = aprsSymbolById(symbolId);
+      picker.dataset.symbolId = sym.id;
+      const trigger = picker.querySelector('.symbol-trigger');
+      trigger.querySelector('.symbol-glyph').outerHTML = symbolGlyphHTML(sym, 28);
+      trigger.querySelector('.symbol-label').textContent = sym.label;
+    }
+
+    function getSymbolPickerValue(pickerId) {
+      return aprsSymbolById(document.getElementById(pickerId).dataset.symbolId);
+    }
+
+    // Shared markup for the RF beacon / IGate beacon sections — identical
+    // fields apart from Path, which only makes sense for an RF beacon.
+    function beaconFieldsHTML(prefix, { includePath }) {
+      return `
+        <div class="field">
+          <label>Icon</label>
+          ${symbolPickerHTML(`${prefix}-symbol`, prefix === 'rf' ? 'digi' : 'igate-rx')}
+        </div>
+        <div class="field">
+          <label for="${prefix}-comment">Comment</label>
+          <input type="text" id="${prefix}-comment" maxlength="60" placeholder="e.g. Digipeater + IGate">
+        </div>
+        ${includePath ? `
+        <div class="field">
+          <label for="${prefix}-path">Path</label>
+          <input type="text" id="${prefix}-path" placeholder="e.g. WIDE2-2">
+        </div>` : ''}
+        <div class="field-row">
+          <div class="field">
+            <label for="${prefix}-delay">Initial delay</label>
+            <div class="field-suffix"><input type="number" id="${prefix}-delay" min="0" value="1"><span>min</span></div>
+          </div>
+          <div class="field">
+            <label for="${prefix}-interval">Interval</label>
+            <div class="field-suffix"><input type="number" id="${prefix}-interval" min="1" value="30"><span>min</span></div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Location</label>
+          <div class="radio-row">
+            <label><input type="radio" name="${prefix}-locsource" value="gps" checked> GPS</label>
+            <label><input type="radio" name="${prefix}-locsource" value="fixed"> Manual</label>
+          </div>
+          <p class="hint" id="${prefix}-gps-hint">GPS isn't set up yet — this will use the GPS reading once GPS setup is added later.</p>
+          <div class="field-row hidden" id="${prefix}-manual-loc">
+            <div class="field">
+              <label for="${prefix}-lat">Latitude</label>
+              <input type="number" id="${prefix}-lat" step="0.000001" placeholder="e.g. -36.848461">
+            </div>
+            <div class="field">
+              <label for="${prefix}-lon">Longitude</label>
+              <input type="number" id="${prefix}-lon" step="0.000001" placeholder="e.g. 174.763336">
+            </div>
+          </div>
+          <button type="button" class="hidden" id="${prefix}-current-pos" disabled>Use current position</button>
+          <p class="hint hidden" id="${prefix}-current-pos-hint">Needs GPS — not set up yet.</p>
+        </div>
+      `;
+    }
+
+    function wireBeaconFields(prefix) {
+      const radios = document.querySelectorAll(`input[name="${prefix}-locsource"]`);
+      const manualLoc = document.getElementById(`${prefix}-manual-loc`);
+      const currentPosBtn = document.getElementById(`${prefix}-current-pos`);
+      const currentPosHint = document.getElementById(`${prefix}-current-pos-hint`);
+      const gpsHint = document.getElementById(`${prefix}-gps-hint`);
+      function update() {
+        const isFixed = document.querySelector(`input[name="${prefix}-locsource"]:checked`).value === 'fixed';
+        manualLoc.classList.toggle('hidden', !isFixed);
+        currentPosBtn.classList.toggle('hidden', !isFixed);
+        currentPosHint.classList.toggle('hidden', !isFixed);
+        gpsHint.classList.toggle('hidden', isFixed);
+      }
+      radios.forEach(r => r.addEventListener('change', update));
+      update();
+    }
+
+    function restoreBeaconFields(prefix, saved) {
+      if (!saved) return;
+      document.getElementById(`${prefix}-comment`).value = saved.comment || '';
+      const pathEl = document.getElementById(`${prefix}-path`);
+      if (pathEl && saved.path !== undefined) pathEl.value = saved.path;
+      document.getElementById(`${prefix}-delay`).value = saved.delay ?? 1;
+      document.getElementById(`${prefix}-interval`).value = saved.interval ?? 30;
+      if (saved.location) {
+        const radio = document.querySelector(`input[name="${prefix}-locsource"][value="${saved.location.source || 'gps'}"]`);
+        if (radio) radio.checked = true;
+        if (saved.location.latitude !== undefined) document.getElementById(`${prefix}-lat`).value = saved.location.latitude;
+        if (saved.location.longitude !== undefined) document.getElementById(`${prefix}-lon`).value = saved.location.longitude;
+      }
+      if (saved.symbol_id) setSymbolPicker(`${prefix}-symbol`, saved.symbol_id);
+    }
+
+    function collectBeaconFields(prefix, { includePath }) {
+      const sym = getSymbolPickerValue(`${prefix}-symbol`);
+      const source = document.querySelector(`input[name="${prefix}-locsource"]:checked`).value;
+      const beacon = {
+        enabled: true,
+        symbol_id: sym.id,
+        table: sym.table,
+        symbol: sym.symbol,
+        overlay: sym.overlay,
+        comment: document.getElementById(`${prefix}-comment`).value,
+        delay: document.getElementById(`${prefix}-delay`).value,
+        interval: document.getElementById(`${prefix}-interval`).value,
+        location: { source },
+      };
+      if (includePath) beacon.path = document.getElementById(`${prefix}-path`).value;
+      if (source === 'fixed') {
+        beacon.location.latitude = document.getElementById(`${prefix}-lat`).value;
+        beacon.location.longitude = document.getElementById(`${prefix}-lon`).value;
+      }
+      return beacon;
+    }
+
+    function renderAprsStep() {
+      const d = wizardData.aprs || {};
+      document.getElementById('step-content').innerHTML = `
+        <section>
+          <div class="field-row">
+            <div class="field" style="flex: 3;">
+              <label for="aprs-callsign">Callsign</label>
+              <input type="text" id="aprs-callsign" placeholder="e.g. KJ4XYZ" style="text-transform: uppercase;">
+            </div>
+            <div class="field" style="flex: 1;">
+              <label for="aprs-ssid">SSID</label>
+              <input type="number" id="aprs-ssid" min="0" max="15" placeholder="0">
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="aprs-digipeat-mode">Digipeating</label>
+            <select id="aprs-digipeat-mode">
+              <option value="rxonly">RX only</option>
+              <option value="digipeater">RX &amp; TX</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="aprs-igate-mode">IGate</label>
+            <select id="aprs-igate-mode">
+              <option value="off">Off</option>
+              <option value="rxonly">RX only</option>
+              <option value="rxtx">RX &amp; TX</option>
+            </select>
+          </div>
+
+          <div class="subsection disabled" id="igate-section">
+            <div class="subsection-title">IGate settings</div>
+            <div class="subsection-body">
+              <div class="field">
+                <label for="aprs-igate-passcode">APRS-IS passcode</label>
+                <div class="with-button">
+                  <input type="text" id="aprs-igate-passcode" placeholder="Generated from callsign">
+                  <button type="button" id="btn-generate-passcode">Generate</button>
+                </div>
+                <p class="hint">Calculated from your callsign. Only needed if logging in as something else.</p>
+              </div>
+              <div class="field">
+                <label for="aprs-igate-server">Server address</label>
+                <input type="text" id="aprs-igate-server" placeholder="Automatic (recommended)">
+              </div>
+              <details class="advanced">
+                <summary>Advanced</summary>
+                <div class="field">
+                  <label for="aprs-igate-port">Server port</label>
+                  <input type="number" id="aprs-igate-port" placeholder="14580">
+                </div>
+                <div class="field">
+                  <label for="aprs-igate-filter">Server-side filter</label>
+                  <input type="text" id="aprs-igate-filter" placeholder="e.g. r/0/0/200 (optional)">
+                </div>
+                <div class="field-row">
+                  <div class="field">
+                    <label for="aprs-igate-ratelimit-1">TX limit (1 min)</label>
+                    <input type="number" id="aprs-igate-ratelimit-1" placeholder="6">
+                  </div>
+                  <div class="field">
+                    <label for="aprs-igate-ratelimit-5">TX limit (5 min)</label>
+                    <input type="number" id="aprs-igate-ratelimit-5" placeholder="10">
+                  </div>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="subsection disabled" id="rfbeacon-section">
+            <label class="subsection-title">
+              <input type="checkbox" id="rfbeacon-enabled">
+              RF Beacon
+            </label>
+            <div class="subsection-body">
+              ${beaconFieldsHTML('rf', { includePath: true })}
+            </div>
+          </div>
+
+          <div class="subsection disabled" id="igbeacon-section">
+            <label class="subsection-title">
+              <input type="checkbox" id="igbeacon-enabled">
+              IGate Beacon
+            </label>
+            <div class="subsection-body">
+              ${beaconFieldsHTML('ig', { includePath: false })}
+            </div>
+          </div>
+        </section>
+      `;
+
+      // Restore anything entered earlier this session before wiring events,
+      // so initial visibility/state below is computed from real values.
+      if (d.callsign) document.getElementById('aprs-callsign').value = d.callsign;
+      if (d.ssid) document.getElementById('aprs-ssid').value = d.ssid;
+      document.getElementById('aprs-digipeat-mode').value = d.digipeat_mode || 'rxonly';
+      document.getElementById('aprs-igate-mode').value = d.igate_mode || 'off';
+      if (d.igate) {
+        document.getElementById('aprs-igate-passcode').value = d.igate.passcode || '';
+        document.getElementById('aprs-igate-server').value = d.igate.server || '';
+        document.getElementById('aprs-igate-port').value = d.igate.port || '';
+        document.getElementById('aprs-igate-filter').value = d.igate.filter || '';
+        document.getElementById('aprs-igate-ratelimit-1').value = d.igate.rate_limit_1min || '';
+        document.getElementById('aprs-igate-ratelimit-5').value = d.igate.rate_limit_5min || '';
+      }
+      document.getElementById('rfbeacon-enabled').checked = !!(d.rf_beacon && d.rf_beacon.enabled);
+      document.getElementById('igbeacon-enabled').checked = !!(d.igate_beacon && d.igate_beacon.enabled);
+      restoreBeaconFields('rf', d.rf_beacon);
+      restoreBeaconFields('ig', d.igate_beacon);
+
+      const digipeatMode = document.getElementById('aprs-digipeat-mode');
+      const igateMode = document.getElementById('aprs-igate-mode');
+      const igateSection = document.getElementById('igate-section');
+      const rfSection = document.getElementById('rfbeacon-section');
+      const igSection = document.getElementById('igbeacon-section');
+      const rfEnabled = document.getElementById('rfbeacon-enabled');
+      const igEnabled = document.getElementById('igbeacon-enabled');
+
+      function updateModeVisibility() {
+        const isDigi = digipeatMode.value === 'digipeater';
+        const igateOn = igateMode.value !== 'off';
+
+        rfEnabled.disabled = !isDigi;
+        if (!isDigi) rfEnabled.checked = false;
+        rfSection.classList.toggle('disabled', !isDigi || !rfEnabled.checked);
+
+        igEnabled.disabled = !igateOn;
+        if (!igateOn) igEnabled.checked = false;
+        igateSection.classList.toggle('disabled', !igateOn);
+        igSection.classList.toggle('disabled', !igateOn || !igEnabled.checked);
+      }
+
+      wireSymbolPicker('rf-symbol');
+      wireSymbolPicker('ig-symbol');
+      wireBeaconFields('rf');
+      wireBeaconFields('ig');
+
+      digipeatMode.addEventListener('change', updateModeVisibility);
+      igateMode.addEventListener('change', updateModeVisibility);
+      rfEnabled.addEventListener('change', () => {
+        rfSection.classList.toggle('disabled', !rfEnabled.checked);
+      });
+      igEnabled.addEventListener('change', () => {
+        igSection.classList.toggle('disabled', !igEnabled.checked);
+      });
+
+      document.getElementById('btn-generate-passcode').addEventListener('click', async () => {
+        const callsign = document.getElementById('aprs-callsign').value.trim();
+        if (!callsign) return;
+        try {
+          const res = await fetch(`/api/aprs/passcode?callsign=${encodeURIComponent(callsign)}`);
+          const data = await res.json();
+          document.getElementById('aprs-igate-passcode').value = data.passcode;
+        } catch (e) {
+          // leave field as-is — manual entry still works
+        }
+      });
+
+      updateModeVisibility();
+    }
+
+    function saveAprsStep() {
+      const digipeatMode = document.getElementById('aprs-digipeat-mode').value;
+      const igateMode = document.getElementById('aprs-igate-mode').value;
+
+      const aprsConfig = {
+        callsign: document.getElementById('aprs-callsign').value.trim().toUpperCase(),
+        ssid: document.getElementById('aprs-ssid').value,
+        digipeat_mode: digipeatMode,
+        igate_mode: igateMode,
+      };
+
+      if (igateMode !== 'off') {
+        aprsConfig.igate = {
+          passcode: document.getElementById('aprs-igate-passcode').value,
+          server: document.getElementById('aprs-igate-server').value,
+          port: document.getElementById('aprs-igate-port').value,
+          filter: document.getElementById('aprs-igate-filter').value,
+          rate_limit_1min: document.getElementById('aprs-igate-ratelimit-1').value,
+          rate_limit_5min: document.getElementById('aprs-igate-ratelimit-5').value,
+        };
+      }
+
+      if (document.getElementById('rfbeacon-enabled').checked) {
+        aprsConfig.rf_beacon = collectBeaconFields('rf', { includePath: true });
+      }
+      if (document.getElementById('igbeacon-enabled').checked) {
+        aprsConfig.igate_beacon = collectBeaconFields('ig', { includePath: false });
+      }
+
+      wizardData.aprs = aprsConfig;
+      return true;
+    }
+
     // ── Finish step ───────────────────────────────────────────────────
+    const REBOOT_WAIT_S = 30;
+
     function renderFinishStep() {
       document.getElementById('step-content').innerHTML = `
         <section>
           <p>That's everything needed for now. Press <strong>Finish &amp; Reboot</strong> to save your settings — the device will reboot and start up in standard mode.</p>
-          <p class="hint">This takes about a minute. Once it reboots this page will stop responding — it's safe to close it.</p>
+          <p class="hint">This page will automatically reload into the dashboard once it's back up.</p>
           <p class="msg" id="finish-msg"></p>
         </section>
       `;
+    }
+
+    function startRebootCountdown() {
+      const msg = document.getElementById('finish-msg');
+      let remaining = REBOOT_WAIT_S;
+      const tick = () => {
+        if (remaining <= 0) {
+          msg.textContent = 'Reconnecting…';
+          window.location.reload();
+          return;
+        }
+        msg.textContent = `Settings saved — rebooting. Reloading in ${remaining}s…`;
+        remaining--;
+        setTimeout(tick, 1000);
+      };
+      tick();
     }
 
     async function finishSetup() {
@@ -554,8 +1108,8 @@
           const body = await res.json().catch(() => ({}));
           throw new Error(body.detail || res.statusText);
         }
-        msg.textContent = 'Settings saved — rebooting now.';
         msg.className = 'msg success';
+        startRebootCountdown();
       } catch (e) {
         msg.textContent = `Error: ${e.message}`;
         msg.className = 'msg error';
