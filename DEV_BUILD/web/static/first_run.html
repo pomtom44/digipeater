@@ -618,6 +618,10 @@
     // together if the physical wiring convention ever changes; it's not
     // meant to vary per install.
     const RADIO_DEFAULT_PTT_GPIO_PIN = 22;
+    // Physical header pin for RADIO_DEFAULT_PTT_GPIO_PIN above — shown in
+    // the dropdown label only (BCM 22 = physical pin 15 on every 40-pin Pi
+    // header). Update both together if the pin ever changes.
+    const RADIO_DEFAULT_PTT_GPIO_PHYSICAL_PIN = 15;
 
     function addOption(select, value, label) {
       const opt = document.createElement('option');
@@ -645,7 +649,7 @@
             <label for="radio-ptt">PTT method</label>
             <select id="radio-ptt">
               <option value="vox">VOX</option>
-              <option value="gpio">GPIO pin</option>
+              <option value="gpio">GPIO pin (BCM ${RADIO_DEFAULT_PTT_GPIO_PIN}, physical pin ${RADIO_DEFAULT_PTT_GPIO_PHYSICAL_PIN})</option>
               <option value="cm108">CM108 (USB sound card PTT, auto-detect)</option>
             </select>
           </div>
