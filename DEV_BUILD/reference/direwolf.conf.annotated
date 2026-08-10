@@ -1,0 +1,342 @@
+#############################################################
+#                                                           #
+#        Sample configuration file for Dire Wolf            #
+#                                                           #
+#                   Linux version                           #
+#                                                           #
+#############################################################
+#
+# Extensive documentation can be found here:
+# Stable release -       https://github.com/wb2osz/direwolf/tree/master/doc
+# Latest development -   https://github.com/wb2osz/direwolf/tree/dev/doc
+# Additional topics -    https://github.com/wb2osz/direwolf-doc
+#
+# The basic documentation set can also be found in
+# /usr/local/share/doc/direwolf/ or /usr/share/doc/direwolf/
+# Concise "man" pages are also available for Linux.
+#
+#########################################################################
+#                                                                       #
+# Recommended Reading for everyone:                                     #
+# "Understanding APRS Packets"  in https://github.com/wb2osz/aprsspec   #
+#                                                                       #
+#########################################################################
+#
+#
+# Questions???  Join the discussion forum:  https://groups.io/g/direwolf
+#
+#
+# This sample file does not have examples for all of the possibilities.
+# Consult the User Guide for more details on configuration options
+# and other documents for more details for different uses.
+#
+# These are the most likely settings you might change:
+#
+#	(1)   	MYCALL 	-  call sign and SSID for your station.
+#
+#			Look for lines starting with MYCALL and
+#			change NOCALL to your own callsign and optional SSID.
+#
+#	(2)	PBEACON	-  enable position beaconing.
+#
+#			Look for lines starting with PBEACON and
+#			modify for your location, symbol, comment, etc.
+#
+#	(3)	DIGIPEATER  -  configure digipeating rules.
+#
+#			Look for lines starting with DIGIPEATER.
+#			Most people will probably use of of the two examples.
+#
+#	(4)	IGSERVER, IGLOGIN  - IGate server and login
+#
+#			Configure an IGate client to relay messages between
+#			radio and internet servers.
+#
+#
+# The default location is "direwolf.conf" in the current working directory.
+# On Linux, the user's home directory will also be searched.
+# An alternate configuration file location can be specified with the "-c" command line option.
+#
+# As you probably guessed by now, # indicates a comment line.
+#
+# Remove the # at the beginning of a line if you want to use a sample
+# configuration that is currently commented out.
+#
+# Commands are a keyword followed by parameters.
+#
+# Command key words are case insensitive.  i.e. upper and lower case are equivalent.
+#
+# Command parameters are generally case sensitive.  i.e. upper and lower case are different.
+#
+
+
+#############################################################
+#                                                           #
+#               FIRST AUDIO DEVICE PROPERTIES               #
+#               (Channel 0 or 0 + 1 if in stereo)           #
+#                                                           #
+#############################################################
+
+#
+# Many people will simply use the default sound device.
+# Some might want to use an alternative device by choosing it here.
+#
+#
+# Many examples of radio interfaces and PTT options can be found in:
+# https://raw.githubusercontent.com/wb2osz/direwolf-doc/main/Radio-Interface-Guide.pdf
+#
+#
+# Linux ALSA is complicated.  See User Guide for discussion.
+# To use something other than the default, generally use plughw
+# and a card number reported by "arecord -l" command.  Example:
+
+# ADEVICE  plughw:1,0
+# >>> OUR CONFIG: DEV_BUILD wizard step "Radio setup" > "Audio device" dropdown.
+# >>> Populated live from /proc/asound/cards via services/hardware.py
+# >>> (list_audio_devices) — not a manual plughw string like this example,
+# >>> the wizard picks the card and we'd generate the ADEVICE line from that.
+
+# Many more details and examples can be found in:
+# https://raw.githubusercontent.com/wb2osz/direwolf-doc/main/Radio-Interface-Guide.pdf
+
+#############################################################
+#                                                           #
+#               CHANNEL 0 PROPERTIES                        #
+#                                                           #
+#############################################################
+
+CHANNEL 0
+# >>> OUR CONFIG: not exposed — hardcoded to channel 0. This project only
+# >>> supports a single radio/channel, so there's nothing to configure here.
+
+#
+# Station identifier for this channel.
+# Multiple channels can have the same or different names.
+#
+# It can be up to 6 letters and digits with an optional ssid in range of 1 to 15.
+# The APRS specification requires that it be upper case.
+#
+# Example (don't use this unless you are me):  MYCALL WB2OSZ-5
+#
+
+MYCALL N0CALL
+# >>> OUR CONFIG: DEV_BUILD wizard step "APRS settings" > "Callsign" + "SSID"
+# >>> fields, combined as CALL-SSID (e.g. N0CALL-9). Also the basis for the
+# >>> auto-generated APRS-IS passcode.
+
+#
+# Pick a suitable modem speed based on your situation.
+#	1200 	Most common for VHF/UHF.  This is the default if not specified.
+#	2400	QPSK compatible with MFJ-2400, and probably PK232-2400 & KPC-2400.
+#	300	Low speed for HF SSB.  Default tones 1600 & 1800.
+#	EAS	Emergency Alert System (EAS) Specific Area Message Encoding (SAME).
+#	9600	G3RUH style - Can't use Microphone and Speaker connections.
+#	AIS	International system for tracking ships on VHF.
+#			Also uses 9600 bps so Speaker connection won't work.
+#
+# In most cases you can just specify the speed.  Examples:
+#
+
+#MODEM 300
+#MODEM 9600
+# >>> OUR CONFIG: not exposed — always 1200 baud (the VHF/UHF default,
+# >>> and the only speed that makes sense for standard APRS on a repeater
+# >>> frequency). Matches the original prototype's approach too.
+
+#
+# Many options are available for great flexibility.
+# See User Guide for details.
+#
+
+# Push to Talk (PTT) can be confusing because there are so many different cases.
+# https://raw.githubusercontent.com/wb2osz/direwolf-doc/main/Radio-Interface-Guide.pdf
+# goes into detail about the various options.
+
+# If using a C-Media CM108/CM119 or similar USB Audio Adapter,
+# you can use a GPIO pin for PTT control. This is very convenient
+# because a single USB connection is used for both audio and PTT.
+# Example:
+
+#PTT CM108
+# >>> OUR CONFIG: DEV_BUILD wizard step "Radio setup" > "PTT method"
+# >>> dropdown — VOX, GPIO pin, CM108 (auto-detect), plus any detected
+# >>> serial port or CM108-family USB adapter. CM108 detection (services/
+# >>> hardware.py: list_cm108_devices) matches the same VID/PID list as
+# >>> Direwolf's own cm108.c, so a device we list is one Direwolf can
+# >>> actually drive via /dev/hidrawN.
+
+
+# There are other possibilities such as serial port RTS, Raspberry Pi GPIO pins,
+# and hamlib for CAT control.   For more details see:
+# https://raw.githubusercontent.com/wb2osz/direwolf-doc/main/Radio-Interface-Guide.pdf
+
+
+#############################################################
+#                                                           #
+#               VIRTUAL TNC SERVER PROPERTIES               #
+#                                                           #
+#############################################################
+
+#
+# Dire Wolf acts as a virtual TNC and can communicate with
+# client applications by different protocols:
+#
+#	- the "AGW TCPIP Socket Interface" - default port 8000
+#	- KISS protocol over TCP socket - default port 8001
+#	- KISS TNC via pseudo terminal   (-p command line option)
+#
+# >>> OUR CONFIG: not exposed — AGWPORT/KISSPORT (letting third-party APRS
+# >>> client software like Xastir/YAAC use this station as a remote TNC)
+# >>> was flagged earlier as a real but low-priority/optional feature.
+# >>> Not built — this project's own web dashboard is the primary
+# >>> interface, not a third-party APRS client.
+#
+#############################################################
+#                                                           #
+#           FIXED POSIION BEACONING PROPERTIES              #
+#                                                           #
+#############################################################
+
+
+#
+# Beaconing is configured with these two commands:
+#
+#	PBEACON		- for a position report (usually yourself)
+#	OBEACON		- for an object report (usually some other entity)
+#
+# Each has a series of keywords and values for options.
+# See User Guide for details.
+#
+# Example:  Change the latitude and longitude or your location
+#           will show you about to go over Niagara Falls.
+
+#PBEACON lat=43.077104 long=-79.075674 symbol="canoe" comment="Niagara Falls"
+# >>> OUR CONFIG: DEV_BUILD wizard step "APRS settings":
+# >>>   lat/long   -> RF Beacon / IGate Beacon > Location > Manual (lat/lon
+# >>>                 fields) — GPS source is a placeholder until GPS setup
+# >>>                 is built.
+# >>>   symbol     -> shared "Station icon" field (code + dropdown), used
+# >>>                 for both beacons — not per-beacon like this example.
+# >>>   comment    -> shared "Station comment" field, same "one station"
+# >>>                 reasoning as the icon.
+# >>> OBEACON (object/third-party reports) is not built — out of scope,
+# >>> this project only beacons its own station, not other entities.
+
+# Run "direwolf -S" (upper case S) to get a list of symbols that can
+# be used rather than "canoe."  Specify a unique substring of description.
+#
+# Did you know that APRS comments and messages can contain UTF-8 characters, not only plain ASCII?
+#
+#PBEACON delay=1  every=30 overlay=S symbol="digi" lat=43.077104 long=-79.075674 comment="..."
+#PBEACON delay=11 every=30 overlay=S symbol="digi" lat=43.077104 long=-79.075674 comment="..."
+#PBEACON delay=21 every=30 overlay=S symbol="digi" lat=43.077104 long=-79.075674 comment="..."
+# >>> OUR CONFIG: delay -> RF/IGate Beacon > "Initial delay" (minutes).
+# >>>              every -> RF/IGate Beacon > "Interval" (minutes).
+# >>> (Multiple staggered PBEACON lines like this, for multi-language
+# >>> comments, aren't something our wizard supports — one beacon per type.)
+#
+
+#############################################################
+#                                                           #
+#             APRS DIGIPEATER PROPERTIES                    #
+#                                                           #
+#############################################################
+
+#
+# Remove the "#" from the beginning of the first digipeat below for short range fill-in digi
+# or remove the "#" from the beginning of the second digipeat below for wide area digi.
+
+#DIGIPEAT 0 0 ^TEST$ ^WIDE1-1$
+#DIGIPEAT 0 0 ^WIDE[3-7]-[1-7]$|^TEST$ ^WIDE[12]-[12]$
+# >>> OUR CONFIG: Digipeater settings > "Digipeat rules" dropdown — the
+# >>> exact two presets above, verbatim, plus "Custom" which unlocks the
+# >>> Alias/Wide pattern fields for hand-written regex. Fill-in digi maps
+# >>> to the first DIGIPEAT line, wide-area digi to the second — matches
+# >>> this file's own "most people will probably use one of the two
+# >>> examples" guidance. Channel is hardcoded 0 0, same as CHANNEL above.
+
+# See https://raw.githubusercontent.com/wb2osz/direwolf-doc/main/APRS-Digipeaters.pdf
+# and User Guide for more explanation of what this means and
+# how it can be customized for your particular needs.
+
+
+# Traditional connected mode packet radio uses a different
+# type of digipeating.  See User Guide for details.
+
+#############################################################
+#                                                           #
+#               INTERNET GATEWAY                            #
+#                                                           #
+#############################################################
+
+# First you need to specify the name of a Tier 2 server.
+# The current preferred way is to use one of these regional rotate addresses:
+
+#	noam.aprs2.net 		- for North America
+#	soam.aprs2.net		- for South America
+#	euro.aprs2.net		- for Europe and Africa
+#	asia.aprs2.net 		- for Asia
+#	aunz.aprs2.net		- for Oceania
+
+#IGSERVER noam.aprs2.net
+# >>> OUR CONFIG: DEV_BUILD wizard step "APRS settings" > "IGate region"
+# >>> dropdown (visible above the collapsed IGate settings panel) — exactly
+# >>> these five regions (noam/soam/euro/asia/aunz) plus "Automatic" (the
+# >>> global rotate.aprs2.net) and "Custom". Picking a region fills in and
+# >>> locks the "Server address" field below; Custom unlocks it for manual
+# >>> entry. Defaults to Automatic, since the wizard doesn't know the
+# >>> operator's continent — matches Direwolf's own "current preferred way"
+# >>> guidance once a region is actually picked.
+
+# You also need to specify your login name and passcode.
+# Contact the author if you can't figure out how to generate the passcode.
+
+#IGLOGIN WB2OSZ-5 123456
+# >>> OUR CONFIG: IGate settings > "APRS-IS passcode" — auto-filled from
+# >>> the callsign (services/aprs.py calculate_passcode), Generate button
+# >>> to re-fill after clearing. Username is always the callsign, matching
+# >>> this example (WB2OSZ-5 = their own MYCALL).
+
+# That's all you need for a receive only IGate which relays
+# messages from the local radio channel to the global servers.
+
+# To relay APRS "messages" from the Internet to radio, you need to add
+# one more option with the transmit channel number and a VIA path.
+
+#IGTXVIA 0 WIDE1-1,WIDE2-1
+# >>> OUR CONFIG: IGate settings > "TX via path" — defaults to exactly
+# >>> this value, "WIDE1-1,WIDE2-1". Only takes effect in "RX & TX" igate
+# >>> mode, matches this file's own note that it's only needed to relay
+# >>> messages from the internet back onto RF.
+
+# For more information see
+# https://raw.githubusercontent.com/wb2osz/direwolf-doc/main/Successful-APRS-IGate-Operation.pdf
+
+
+#############################################################
+#                                                           #
+#               APRStt GATEWAY                              #
+#                                                           #
+#############################################################
+
+#
+# Dire Wolf can receive DTMF (commonly known as Touch Tone)
+# messages and convert them to packet objects.  Details in:
+#
+# https://raw.githubusercontent.com/wb2osz/direwolf/master/doc/APRStt-Implementation-Notes.pdf
+#
+# >>> OUR CONFIG: not exposed — DTMF-to-APRS gateway is a niche feature
+# >>> unrelated to core digipeater/igate operation. Out of scope.
+
+# >>> ─────────────────────────────────────────────────────────────────
+# >>> Settings we support that AREN'T in this basic sample file at all
+# >>> (found via separate documentation research, not shown above):
+# >>>   IGFILTER   -> IGate settings > "APRS-IS filter (server → you)"
+# >>>   FILTER IG  -> IGate settings > "Packet types to gate (you → server)"
+# >>>   IGTXLIMIT  -> IGate settings > "TX limit (1 min)" / "TX limit (5 min)"
+# >>>   DEDUPE     -> Digipeater settings > "Dedupe window"
+# >>>   FILTER (digipeat-side) -> Digipeater settings > "RF filter"
+# >>> None of these appear in Direwolf's own "getting started" sample above
+# >>> since it only covers the essentials — they're documented separately
+# >>> (User Guide / IGate Operation PDF) and cross-checked earlier this
+# >>> session against practical example configs, not this file.

@@ -144,6 +144,12 @@
       border-color: var(--accent);
     }
 
+    input[readonly] {
+      color: var(--muted);
+      cursor: default;
+    }
+    input[readonly]:focus { border-color: var(--border); }
+
     .field { margin-bottom: 14px; }
     .field-suffix {
       display: flex;
@@ -237,6 +243,13 @@
       padding: 14px 16px;
       margin-top: 14px;
     }
+    /* .active = enabled and switched on — needs to be unmistakable at a
+       glance in dark mode, where a subtle border-only difference is easy
+       to miss entirely. */
+    .subsection.active {
+      border-color: var(--accent);
+      background: rgba(79, 179, 169, 0.08);
+    }
     .subsection-title {
       display: flex;
       align-items: center;
@@ -247,13 +260,28 @@
       user-select: none;
     }
     .subsection-title input[type="checkbox"] {
-      width: 17px;
-      height: 17px;
+      width: 18px;
+      height: 18px;
       accent-color: var(--accent);
+      outline: 1px solid var(--muted);
+      outline-offset: 2px;
+      border-radius: 3px;
       cursor: pointer;
     }
     .subsection-body { margin-top: 12px; }
-    .subsection.disabled { opacity: 0.55; }
+    /* .disabled = unavailable (prerequisite mode not selected), distinct
+       from merely being switched off — dashed border + dimmed text makes
+       "can't use this yet" visually different from "off but available". */
+    .subsection.disabled {
+      opacity: 0.5;
+      border-style: dashed;
+      pointer-events: none;
+    }
+    .subsection.disabled .subsection-title { cursor: default; }
+    .subsection.disabled .subsection-title input[type="checkbox"] {
+      cursor: not-allowed;
+      outline-color: var(--border);
+    }
     .subsection.disabled .subsection-body { display: none; }
 
     details.advanced {
@@ -271,7 +299,7 @@
     details.advanced > summary::-webkit-details-marker { display: none; }
     details.advanced > summary::before { content: '▸ '; }
     details.advanced[open] > summary::before { content: '▾ '; }
-    details.advanced .field:first-of-type { margin-top: 12px; }
+    details.advanced > .field:first-of-type { margin-top: 12px; }
 
     .field-row {
       display: flex;
@@ -302,62 +330,42 @@
     .with-button input { flex: 1; }
     .with-button button { flex-shrink: 0; white-space: nowrap; }
 
-    .symbol-picker { position: relative; }
-    .symbol-trigger {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      width: 100%;
-      justify-content: flex-start;
-      text-align: left;
-    }
     .symbol-glyph {
       display: inline-block;
       flex-shrink: 0;
+      background-color: var(--panel-2);
+      border-radius: 4px;
     }
-    .symbol-grid {
-      margin-top: 8px;
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
-      gap: 6px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 8px;
-      max-height: 220px;
-      overflow-y: auto;
-      background: var(--panel-2);
-    }
-    .symbol-option {
-      position: relative;
+    .symbol-input-row {
       display: flex;
-      flex-direction: column;
       align-items: center;
-      gap: 4px;
-      min-height: 90px;
-      padding: 6px 4px;
+      gap: 10px;
     }
-    .symbol-option:hover, .symbol-option:active { border-color: var(--accent); background: var(--border); }
-    .symbol-badge {
-      position: absolute;
-      top: 2px;
-      right: 2px;
+    .symbol-code-input {
+      width: 70px;
+      flex: none;
+      text-align: center;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-transform: none;
+    }
+    .symbol-badge-inline {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 22px;
+      height: 22px;
+      padding: 0 4px;
       background: var(--accent);
       color: #fff;
-      font-size: 9px;
+      font-size: 12px;
       font-weight: 700;
-      line-height: 1;
-      border-radius: 3px;
-      padding: 2px 3px;
+      border-radius: 4px;
+    }
+    .symbol-select {
+      margin-top: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
 
-    footer {
-      margin-top: 24px;
-      text-align: center;
-      font-size: 12px;
-      color: var(--muted);
-      line-height: 1.6;
-    }
-    footer a { color: var(--accent); }
   </style>
 </head>
 <body>
@@ -377,10 +385,6 @@
       <button class="primary" id="btn-next">Save</button>
     </div>
 
-    <footer>
-      digipeater.local<br>
-      APRS symbols by <a href="https://github.com/hessu/aprs-symbols" target="_blank" rel="noopener">hessu/aprs-symbols</a> (CC BY-SA 4.0)
-    </footer>
   </div>
 
   <script>
@@ -578,6 +582,7 @@
             <select id="radio-ptt">
               <option value="vox">VOX</option>
               <option value="gpio">GPIO pin</option>
+              <option value="cm108">CM108 (USB sound card PTT, auto-detect)</option>
             </select>
           </div>
           <div class="field">
@@ -588,7 +593,7 @@
             <label for="radio-power">TX power level</label>
             <select id="radio-power"></select>
           </div>
-          <p class="hint">Radio model and power level are placeholders for now. Audio device and any connected radio's serial port are read live from this device.</p>
+          <p class="hint">Radio model and power level are placeholders for now. Audio device, connected CM108-type USB PTT adapters, and any connected radio's serial port are read live from this device.</p>
         </section>
       `;
       const modelSelect = document.getElementById('radio-model');
@@ -606,6 +611,7 @@
       }
 
       loadAudioDevices();
+      loadCm108PttOptions();
       loadSerialPttOptions();
     }
 
@@ -625,6 +631,20 @@
         if (wizardData.radio?.audio_device) select.value = wizardData.radio.audio_device;
       } catch (e) {
         addOption(select, '', 'Could not load audio devices');
+      }
+    }
+
+    async function loadCm108PttOptions() {
+      const select = document.getElementById('radio-ptt');
+      try {
+        const res = await fetch('/api/hardware/cm108-devices');
+        const data = await res.json();
+        (data.devices || []).forEach(d => {
+          addOption(select, `cm108:${d.device}`, `CM108: ${d.device} — ${d.description}`);
+        });
+        if (wizardData.radio?.ptt_method) select.value = wizardData.radio.ptt_method;
+      } catch (e) {
+        // generic "cm108" auto-detect option still works without this
       }
     }
 
@@ -659,37 +679,215 @@
     // (aprs.org/symbols/symbolsX.txt) and the alternate-table overlay
     // convention for igate capability signalling (symbols-new.txt):
     // I=generic igate, R=RX-only, T=1-hop TX-capable, 2=2-hop TX-capable.
-    // Icons are hand-drawn inline SVG — no image files, no network
+    // Icon art is bundled locally (web/static/aprs-symbols/) — no network
     // fetch, so the picker works fully offline over the hotspot.
+    const APRS_DEFAULT_SERVER = 'rotate.aprs2.net';
+    // Regional Tier 2 rotate addresses, straight from Direwolf's own sample
+    // config — its own comment there calls these "the current preferred
+    // way" over the single global rotate.
+    const APRS_IGATE_REGIONS = {
+      automatic: APRS_DEFAULT_SERVER,
+      noam: 'noam.aprs2.net',
+      soam: 'soam.aprs2.net',
+      euro: 'euro.aprs2.net',
+      asia: 'asia.aprs2.net',
+      aunz: 'aunz.aprs2.net',
+    };
+    const APRS_DEFAULT_PORT = '14580';
+    const APRS_DEFAULT_TXVIA = 'WIDE1-1,WIDE2-1';
+    const APRS_DEFAULT_RATE_1MIN = '6';
+    const APRS_DEFAULT_RATE_5MIN = '10';
+    const APRS_DEFAULT_DEDUPE = '60';
+
+    // Straight from Direwolf's own official sample config (conf/generic.conf)
+    // — "Most people will probably use one of the two examples" is their
+    // own guidance, so these are presented as presets rather than asking
+    // people to write digipeat regex from scratch.
+    const DIGIPEAT_PRESETS = {
+      fillin: { alias: '^TEST$', wide: '^WIDE1-1$' },
+      widearea: { alias: '^WIDE[3-7]-[1-7]$|^TEST$', wide: '^WIDE[12]-[12]$' },
+    };
+
+    // Full base symbol set (no overlay variants — overlay is a separate,
+    // free-form character typed directly into the code field on top of
+    // whichever base symbol is picked here) — table+symbol+label sourced
+    // from hessu/aprs-symbol-index's symbols.csv (same author/project as
+    // the icon art itself), filtered to the 159 assigned/labeled entries.
     const APRS_SYMBOLS = [
-      { id: 'house',     label: 'House (fixed station)', table: '/',  symbol: '-', overlay: '' },
-      { id: 'car',       label: 'Car',                    table: '/',  symbol: '>', overlay: '' },
-      { id: 'truck',     label: 'Truck',                  table: '/',  symbol: 'k', overlay: '' },
-      { id: 'van',       label: 'Van',                    table: '/',  symbol: 'v', overlay: '' },
-      { id: 'rv',        label: 'RV',                     table: '/',  symbol: 'R', overlay: '' },
-      { id: 'bike',      label: 'Bike',                   table: '/',  symbol: 'b', overlay: '' },
-      { id: 'person',    label: 'Person',                 table: '/',  symbol: '[', overlay: '' },
-      { id: 'wx',        label: 'Weather station',        table: '/',  symbol: '_', overlay: '' },
-      { id: 'digi',      label: 'Digipeater',             table: '/',  symbol: '#', overlay: '' },
-      { id: 'hfgate',    label: 'HF Gateway',             table: '/',  symbol: '&', overlay: '' },
-      { id: 'igate',     label: 'IGate',                  table: '\\', symbol: '&', overlay: 'I' },
-      { id: 'igate-rx',  label: 'IGate (RX only)',        table: '\\', symbol: '&', overlay: 'R' },
-      { id: 'igate-tx1', label: 'IGate (TX, 1 hop)',      table: '\\', symbol: '&', overlay: 'T' },
-      { id: 'igate-tx2', label: 'IGate (TX, 2 hop)',      table: '\\', symbol: '&', overlay: '2' },
+      { table: '/', symbol: '!', label: 'Police station' },
+      { table: '/', symbol: '#', label: 'Digipeater' },
+      { table: '/', symbol: '$', label: 'Telephone' },
+      { table: '/', symbol: '%', label: 'DX cluster' },
+      { table: '/', symbol: '&', label: 'HF gateway' },
+      { table: '/', symbol: '\'', label: 'Small aircraft' },
+      { table: '/', symbol: '(', label: 'Mobile satellite station' },
+      { table: '/', symbol: ')', label: 'Wheelchair, handicapped' },
+      { table: '/', symbol: '*', label: 'Snowmobile' },
+      { table: '/', symbol: '+', label: 'Red Cross' },
+      { table: '/', symbol: ',', label: 'Boy Scouts' },
+      { table: '/', symbol: '-', label: 'House' },
+      { table: '/', symbol: '.', label: 'Red X' },
+      { table: '/', symbol: '/', label: 'Red dot' },
+      { table: '/', symbol: '0', label: 'Numbered circle: 0' },
+      { table: '/', symbol: '1', label: 'Numbered circle: 1' },
+      { table: '/', symbol: '2', label: 'Numbered circle: 2' },
+      { table: '/', symbol: '3', label: 'Numbered circle: 3' },
+      { table: '/', symbol: '4', label: 'Numbered circle: 4' },
+      { table: '/', symbol: '5', label: 'Numbered circle: 5' },
+      { table: '/', symbol: '6', label: 'Numbered circle: 6' },
+      { table: '/', symbol: '7', label: 'Numbered circle: 7' },
+      { table: '/', symbol: '8', label: 'Numbered circle: 8' },
+      { table: '/', symbol: '9', label: 'Numbered circle: 9' },
+      { table: '/', symbol: ':', label: 'Fire' },
+      { table: '/', symbol: ';', label: 'Campground, tent' },
+      { table: '/', symbol: '<', label: 'Motorcycle' },
+      { table: '/', symbol: '=', label: 'Railroad engine' },
+      { table: '/', symbol: '>', label: 'Car' },
+      { table: '/', symbol: '?', label: 'File server' },
+      { table: '/', symbol: '@', label: 'Hurricane predicted path' },
+      { table: '/', symbol: 'A', label: 'Aid station' },
+      { table: '/', symbol: 'B', label: 'BBS' },
+      { table: '/', symbol: 'C', label: 'Canoe' },
+      { table: '/', symbol: 'E', label: 'Eyeball' },
+      { table: '/', symbol: 'F', label: 'Farm vehicle, tractor' },
+      { table: '/', symbol: 'G', label: 'Grid square, 3 by 3' },
+      { table: '/', symbol: 'H', label: 'Hotel' },
+      { table: '/', symbol: 'I', label: 'TCP/IP network station' },
+      { table: '/', symbol: 'K', label: 'School' },
+      { table: '/', symbol: 'L', label: 'PC user' },
+      { table: '/', symbol: 'M', label: 'Mac apple' },
+      { table: '/', symbol: 'N', label: 'NTS station' },
+      { table: '/', symbol: 'O', label: 'Balloon' },
+      { table: '/', symbol: 'P', label: 'Police car' },
+      { table: '/', symbol: 'R', label: 'Recreational vehicle' },
+      { table: '/', symbol: 'S', label: 'Space Shuttle' },
+      { table: '/', symbol: 'T', label: 'SSTV' },
+      { table: '/', symbol: 'U', label: 'Bus' },
+      { table: '/', symbol: 'V', label: 'ATV, Amateur Television' },
+      { table: '/', symbol: 'W', label: 'Weather service site' },
+      { table: '/', symbol: 'X', label: 'Helicopter' },
+      { table: '/', symbol: 'Y', label: 'Sailboat' },
+      { table: '/', symbol: 'Z', label: 'Windows flag' },
+      { table: '/', symbol: '[', label: 'Human' },
+      { table: '/', symbol: '\\', label: 'DF triangle' },
+      { table: '/', symbol: ']', label: 'Mailbox, post office' },
+      { table: '/', symbol: '^', label: 'Large aircraft' },
+      { table: '/', symbol: '_', label: 'Weather station' },
+      { table: '/', symbol: '`', label: 'Satellite dish antenna' },
+      { table: '/', symbol: 'a', label: 'Ambulance' },
+      { table: '/', symbol: 'b', label: 'Bicycle' },
+      { table: '/', symbol: 'c', label: 'Incident command post' },
+      { table: '/', symbol: 'd', label: 'Fire station' },
+      { table: '/', symbol: 'e', label: 'Horse, equestrian' },
+      { table: '/', symbol: 'f', label: 'Fire truck' },
+      { table: '/', symbol: 'g', label: 'Glider' },
+      { table: '/', symbol: 'h', label: 'Hospital' },
+      { table: '/', symbol: 'i', label: 'IOTA, islands on the air' },
+      { table: '/', symbol: 'j', label: 'Jeep' },
+      { table: '/', symbol: 'k', label: 'Truck' },
+      { table: '/', symbol: 'l', label: 'Laptop' },
+      { table: '/', symbol: 'm', label: 'Mic-E repeater' },
+      { table: '/', symbol: 'n', label: 'Node, black bulls-eye' },
+      { table: '/', symbol: 'o', label: 'Emergency operations center' },
+      { table: '/', symbol: 'p', label: 'Dog' },
+      { table: '/', symbol: 'q', label: 'Grid square, 2 by 2' },
+      { table: '/', symbol: 'r', label: 'Repeater tower' },
+      { table: '/', symbol: 's', label: 'Ship, power boat' },
+      { table: '/', symbol: 't', label: 'Truck stop' },
+      { table: '/', symbol: 'u', label: 'Semi-trailer truck, 18-wheeler' },
+      { table: '/', symbol: 'v', label: 'Van' },
+      { table: '/', symbol: 'w', label: 'Water station' },
+      { table: '/', symbol: 'x', label: 'X / Unix' },
+      { table: '/', symbol: 'y', label: 'House, yagi antenna' },
+      { table: '/', symbol: 'z', label: 'Shelter' },
+      { table: '\\', symbol: '!', label: 'Emergency' },
+      { table: '\\', symbol: '#', label: 'Digipeater, green star' },
+      { table: '\\', symbol: '$', label: 'Bank or ATM' },
+      { table: '\\', symbol: '&', label: 'Gateway station' },
+      { table: '\\', symbol: '\'', label: 'Crash / incident site' },
+      { table: '\\', symbol: '(', label: 'Cloudy' },
+      { table: '\\', symbol: ')', label: 'Firenet MEO, MODIS Earth Observation' },
+      { table: '\\', symbol: '*', label: 'Snow' },
+      { table: '\\', symbol: '+', label: 'Church' },
+      { table: '\\', symbol: ',', label: 'Girl Scouts' },
+      { table: '\\', symbol: '-', label: 'House, HF antenna' },
+      { table: '\\', symbol: '.', label: 'Ambiguous, question mark inside circle' },
+      { table: '\\', symbol: '/', label: 'Waypoint destination' },
+      { table: '\\', symbol: '0', label: 'Circle, IRLP / Echolink/WIRES' },
+      { table: '\\', symbol: '8', label: '802.11 WiFi or other network node' },
+      { table: '\\', symbol: '9', label: 'Gas station' },
+      { table: '\\', symbol: ':', label: 'Hail' },
+      { table: '\\', symbol: ';', label: 'Park, picnic area' },
+      { table: '\\', symbol: '<', label: 'Advisory, single red flag' },
+      { table: '\\', symbol: '>', label: 'Red car' },
+      { table: '\\', symbol: '?', label: 'Info kiosk' },
+      { table: '\\', symbol: '@', label: 'Hurricane, Tropical storm' },
+      { table: '\\', symbol: 'A', label: 'White box' },
+      { table: '\\', symbol: 'B', label: 'Blowing snow' },
+      { table: '\\', symbol: 'C', label: 'Coast Guard' },
+      { table: '\\', symbol: 'D', label: 'Drizzling rain' },
+      { table: '\\', symbol: 'E', label: 'Smoke, Chimney' },
+      { table: '\\', symbol: 'F', label: 'Freezing rain' },
+      { table: '\\', symbol: 'G', label: 'Snow shower' },
+      { table: '\\', symbol: 'H', label: 'Haze' },
+      { table: '\\', symbol: 'I', label: 'Rain shower' },
+      { table: '\\', symbol: 'J', label: 'Lightning' },
+      { table: '\\', symbol: 'K', label: 'Kenwood HT' },
+      { table: '\\', symbol: 'L', label: 'Lighthouse' },
+      { table: '\\', symbol: 'N', label: 'Navigation buoy' },
+      { table: '\\', symbol: 'O', label: 'Rocket' },
+      { table: '\\', symbol: 'P', label: 'Parking' },
+      { table: '\\', symbol: 'Q', label: 'Earthquake' },
+      { table: '\\', symbol: 'R', label: 'Restaurant' },
+      { table: '\\', symbol: 'S', label: 'Satellite' },
+      { table: '\\', symbol: 'T', label: 'Thunderstorm' },
+      { table: '\\', symbol: 'U', label: 'Sunny' },
+      { table: '\\', symbol: 'V', label: 'VORTAC, Navigational aid' },
+      { table: '\\', symbol: 'W', label: 'NWS site' },
+      { table: '\\', symbol: 'X', label: 'Pharmacy' },
+      { table: '\\', symbol: '[', label: 'Wall Cloud' },
+      { table: '\\', symbol: '^', label: 'Aircraft' },
+      { table: '\\', symbol: '_', label: 'Weather site' },
+      { table: '\\', symbol: '`', label: 'Rain' },
+      { table: '\\', symbol: 'a', label: 'Red diamond' },
+      { table: '\\', symbol: 'b', label: 'Blowing dust, sand' },
+      { table: '\\', symbol: 'c', label: 'CD triangle, RACES, CERTS, SATERN' },
+      { table: '\\', symbol: 'd', label: 'DX spot' },
+      { table: '\\', symbol: 'e', label: 'Sleet' },
+      { table: '\\', symbol: 'f', label: 'Funnel cloud' },
+      { table: '\\', symbol: 'g', label: 'Gale, two red flags' },
+      { table: '\\', symbol: 'h', label: 'Store' },
+      { table: '\\', symbol: 'i', label: 'Black box, point of interest' },
+      { table: '\\', symbol: 'j', label: 'Work zone, excavating machine' },
+      { table: '\\', symbol: 'k', label: 'SUV, ATV' },
+      { table: '\\', symbol: 'm', label: 'Value sign, 3 digit display' },
+      { table: '\\', symbol: 'n', label: 'Red triangle' },
+      { table: '\\', symbol: 'o', label: 'Small circle' },
+      { table: '\\', symbol: 'p', label: 'Partly cloudy' },
+      { table: '\\', symbol: 'r', label: 'Restrooms' },
+      { table: '\\', symbol: 's', label: 'Ship, boat' },
+      { table: '\\', symbol: 't', label: 'Tornado' },
+      { table: '\\', symbol: 'u', label: 'Truck' },
+      { table: '\\', symbol: 'v', label: 'Van' },
+      { table: '\\', symbol: 'w', label: 'Flooding' },
+      { table: '\\', symbol: 'y', label: 'Skywarn' },
+      { table: '\\', symbol: 'z', label: 'Shelter' },
+      { table: '\\', symbol: '{', label: 'Fog' },
     ];
 
     // Real APRS symbol art from hessu/aprs-symbols (github.com/hessu/aprs-symbols,
     // CC BY-SA 4.0 — see aprs-symbols/COPYRIGHT.md alongside these sprite sheets).
-    // Grid layout (rows=8, columns=16, sequential ASCII from '!') confirmed from
-    // that project's own export script and cross-checked against the separate
-    // hessu/aprs-symbol-index CSV. Cells are 64x48; extra vertical padding is
-    // added when rendering since some icons (vehicles needing heading-arrow
-    // room) run taller than their nominal cell and would otherwise get clipped.
+    // Grid is 16 columns x 6 rows of SQUARE 64x64 cells, sequential ASCII from
+    // '!' (94 printable chars fit exactly in 16x6=96 cells) — confirmed by
+    // overlaying a 16x6 grid on the unscaled 128px sheet, where every icon
+    // lines up exactly. (An earlier 16x8/64x48 assumption, based on a stray
+    // "rows=8" in the asset's own export script, happened to also divide the
+    // sheet height evenly, which is what let it go undetected until visual
+    // inspection caught the resulting clipping/misalignment.)
     const SPRITE_CELL_W = 64;
-    const SPRITE_CELL_H = 48;
+    const SPRITE_CELL_H = 64;
     const SPRITE_SHEET_W = 1024;
     const SPRITE_SHEET_H = 384;
-    const SPRITE_PAD_Y = 20;
     const SPRITE_BASE = '/static/aprs-symbols/';
 
     function spriteCellFor(sym) {
@@ -701,77 +899,103 @@
     function symbolGlyphHTML(sym, displayW) {
       const { sheet, col, row } = spriteCellFor(sym);
       const scale = displayW / SPRITE_CELL_W;
-      const displayH = Math.round((SPRITE_CELL_H + SPRITE_PAD_Y * 2) * scale);
+      const displayH = Math.round(SPRITE_CELL_H * scale);
       const bgW = Math.round(SPRITE_SHEET_W * scale);
       const bgH = Math.round(SPRITE_SHEET_H * scale);
       const bgX = -Math.round(col * SPRITE_CELL_W * scale);
-      const bgY = -Math.round((row * SPRITE_CELL_H - SPRITE_PAD_Y) * scale);
+      const bgY = -Math.round(row * SPRITE_CELL_H * scale);
       const style = `width:${displayW}px;height:${displayH}px;background-image:url('${SPRITE_BASE}${sheet}');background-repeat:no-repeat;background-size:${bgW}px ${bgH}px;background-position:${bgX}px ${bgY}px;`;
       return `<span class="symbol-glyph" style="${style}"></span>`;
     }
 
-    function aprsSymbolById(id) {
-      return APRS_SYMBOLS.find(s => s.id === id) || APRS_SYMBOLS[0];
+    function findSymbol(table, symbol) {
+      return APRS_SYMBOLS.find(s => s.table === table && s.symbol === symbol) || APRS_SYMBOLS[0];
     }
 
-    function symbolPickerHTML(pickerId, initialId) {
-      const sym = aprsSymbolById(initialId);
-      const options = APRS_SYMBOLS.map(s => `
-        <button type="button" class="symbol-option" data-symbol-id="${s.id}" title="${s.label}">
-          ${symbolGlyphHTML(s, 36)}
-          ${s.overlay ? `<span class="symbol-badge">${s.overlay}</span>` : ''}
-        </button>
-      `).join('');
+    // The code is just the raw APRS symbol reference: table char + symbol
+    // char, plus an overlay char for alternate-table icons — e.g. "/#" or
+    // "\&T". Typing one directly reaches every symbol in both tables, not
+    // just the ones listed in the dropdown (which only covers base symbols
+    // — overlay is a free-form extra character on top of that).
+    function symbolCodeFromSymbol(sym) {
+      return sym.table + sym.symbol + (sym.overlay || '');
+    }
+
+    function parseSymbolCode(code) {
+      code = (code || '').trim();
+      if (!code) return null;
+      if (code.length === 1) return { table: '/', symbol: code[0], overlay: '' };
+      const table = code[0] === '\\' ? '\\' : '/';
+      const symbol = code[1];
+      const overlay = table === '\\' ? (code[2] || '') : '';
+      return { table, symbol, overlay };
+    }
+
+    function symbolPickerHTML(pickerId, initialSym) {
+      const code = symbolCodeFromSymbol(initialSym);
+      const primaryOptions = APRS_SYMBOLS.filter(s => s.table === '/')
+        .map(s => `<option value="${s.table}${s.symbol}">${s.table}${s.symbol} — ${s.label}</option>`).join('');
+      const altOptions = APRS_SYMBOLS.filter(s => s.table === '\\')
+        .map(s => `<option value="${s.table}${s.symbol}">\\${s.symbol} — ${s.label}</option>`).join('');
       return `
-        <div class="symbol-picker" id="${pickerId}" data-symbol-id="${sym.id}">
-          <button type="button" class="symbol-trigger">
-            ${symbolGlyphHTML(sym, 28)}
-            <span class="symbol-label">${sym.label}</span>
-          </button>
-          <div class="symbol-grid hidden">${options}</div>
+        <div class="symbol-picker" id="${pickerId}">
+          <div class="symbol-input-row">
+            ${symbolGlyphHTML(initialSym, 48)}
+            <input type="text" class="symbol-code-input" maxlength="3" value="${code}" placeholder="/#">
+            <span class="symbol-badge-inline${initialSym.overlay ? '' : ' hidden'}">${initialSym.overlay || ''}</span>
+          </div>
+          <select class="symbol-select">
+            <option value="">— pick from list —</option>
+            <optgroup label="Primary table (/)">${primaryOptions}</optgroup>
+            <optgroup label="Alternate table (\\)">${altOptions}</optgroup>
+          </select>
         </div>
       `;
     }
 
-    function wireSymbolPicker(pickerId, onChange) {
+    function wireSymbolPicker(pickerId) {
       const picker = document.getElementById(pickerId);
-      const trigger = picker.querySelector('.symbol-trigger');
-      const grid = picker.querySelector('.symbol-grid');
-      trigger.addEventListener('click', () => grid.classList.toggle('hidden'));
-      grid.querySelectorAll('.symbol-option').forEach(btn => {
-        btn.addEventListener('click', () => {
-          setSymbolPicker(pickerId, btn.dataset.symbolId);
-          grid.classList.add('hidden');
-          if (onChange) onChange();
-        });
-      });
-    }
+      const input = picker.querySelector('.symbol-code-input');
+      const select = picker.querySelector('.symbol-select');
 
-    function setSymbolPicker(pickerId, symbolId) {
-      const picker = document.getElementById(pickerId);
-      const sym = aprsSymbolById(symbolId);
-      picker.dataset.symbolId = sym.id;
-      const trigger = picker.querySelector('.symbol-trigger');
-      trigger.querySelector('.symbol-glyph').outerHTML = symbolGlyphHTML(sym, 28);
-      trigger.querySelector('.symbol-label').textContent = sym.label;
+      function updatePreview() {
+        const sym = parseSymbolCode(input.value) || { table: '/', symbol: '#', overlay: '' };
+        const row = picker.querySelector('.symbol-input-row');
+        row.querySelector('.symbol-glyph').outerHTML = symbolGlyphHTML(sym, 48);
+        row.querySelector('.symbol-badge-inline').textContent = sym.overlay || '';
+        row.querySelector('.symbol-badge-inline').classList.toggle('hidden', !sym.overlay);
+      }
+
+      function syncSelectFromInput() {
+        const sym = parseSymbolCode(input.value);
+        const baseCode = sym ? sym.table + sym.symbol : '';
+        const hasOption = [...select.options].some(o => o.value === baseCode);
+        select.value = hasOption ? baseCode : '';
+      }
+
+      input.addEventListener('input', () => {
+        updatePreview();
+        syncSelectFromInput();
+      });
+
+      select.addEventListener('change', () => {
+        if (!select.value) return;
+        input.value = select.value;
+        updatePreview();
+      });
+
+      syncSelectFromInput();
     }
 
     function getSymbolPickerValue(pickerId) {
-      return aprsSymbolById(document.getElementById(pickerId).dataset.symbolId);
+      const input = document.getElementById(pickerId).querySelector('.symbol-code-input');
+      return parseSymbolCode(input.value) || { table: '/', symbol: '#', overlay: '' };
     }
 
     // Shared markup for the RF beacon / IGate beacon sections — identical
     // fields apart from Path, which only makes sense for an RF beacon.
     function beaconFieldsHTML(prefix, { includePath }) {
       return `
-        <div class="field">
-          <label>Icon</label>
-          ${symbolPickerHTML(`${prefix}-symbol`, prefix === 'rf' ? 'digi' : 'igate-rx')}
-        </div>
-        <div class="field">
-          <label for="${prefix}-comment">Comment</label>
-          <input type="text" id="${prefix}-comment" maxlength="60" placeholder="e.g. Digipeater + IGate">
-        </div>
         ${includePath ? `
         <div class="field">
           <label for="${prefix}-path">Path</label>
@@ -829,7 +1053,6 @@
 
     function restoreBeaconFields(prefix, saved) {
       if (!saved) return;
-      document.getElementById(`${prefix}-comment`).value = saved.comment || '';
       const pathEl = document.getElementById(`${prefix}-path`);
       if (pathEl && saved.path !== undefined) pathEl.value = saved.path;
       document.getElementById(`${prefix}-delay`).value = saved.delay ?? 1;
@@ -840,19 +1063,12 @@
         if (saved.location.latitude !== undefined) document.getElementById(`${prefix}-lat`).value = saved.location.latitude;
         if (saved.location.longitude !== undefined) document.getElementById(`${prefix}-lon`).value = saved.location.longitude;
       }
-      if (saved.symbol_id) setSymbolPicker(`${prefix}-symbol`, saved.symbol_id);
     }
 
     function collectBeaconFields(prefix, { includePath }) {
-      const sym = getSymbolPickerValue(`${prefix}-symbol`);
       const source = document.querySelector(`input[name="${prefix}-locsource"]:checked`).value;
       const beacon = {
         enabled: true,
-        symbol_id: sym.id,
-        table: sym.table,
-        symbol: sym.symbol,
-        overlay: sym.overlay,
-        comment: document.getElementById(`${prefix}-comment`).value,
         delay: document.getElementById(`${prefix}-delay`).value,
         interval: document.getElementById(`${prefix}-interval`).value,
         location: { source },
@@ -867,6 +1083,7 @@
 
     function renderAprsStep() {
       const d = wizardData.aprs || {};
+      const initialStationSymbol = (d.symbol && d.symbol.table) ? d.symbol : findSymbol('/', '#');
       document.getElementById('step-content').innerHTML = `
         <section>
           <div class="field-row">
@@ -888,6 +1105,41 @@
             </select>
           </div>
 
+          <div class="subsection disabled" id="digipeat-section">
+            <details class="advanced">
+              <summary>Digipeater settings</summary>
+              <div class="field">
+                <label for="aprs-digipeat-rules">Digipeat rules</label>
+                <select id="aprs-digipeat-rules">
+                  <option value="fillin">Fill-in digi (handles WIDE1-1 only)</option>
+                  <option value="widearea">Wide-area digi (handles WIDE2-1, WIDE2-2, etc.)</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <p class="hint">Which alias patterns get repeated. Fill-in digis extend range for low-power/HT stations nearby; wide-area digis (typically hilltop, well-sited) handle the longer-range hops. Most setups use one of these two — see aprs.org's digipeater guide if unsure which fits your site.</p>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="aprs-digipeat-alias">Alias pattern</label>
+                  <input type="text" id="aprs-digipeat-alias" readonly>
+                </div>
+                <div class="field">
+                  <label for="aprs-digipeat-wide">Wide pattern</label>
+                  <input type="text" id="aprs-digipeat-wide" readonly>
+                </div>
+              </div>
+              <div class="field">
+                <label for="aprs-digipeat-dedupe">Dedupe window</label>
+                <div class="field-suffix"><input type="number" id="aprs-digipeat-dedupe" value="${APRS_DEFAULT_DEDUPE}"><span>sec</span></div>
+                <p class="hint">Won't repeat the same packet twice if heard again (e.g. via another digipeater) within this window.</p>
+              </div>
+              <div class="field">
+                <label for="aprs-digipeat-filter">RF filter</label>
+                <input type="text" id="aprs-digipeat-filter" placeholder="optional">
+                <p class="hint">Limits which heard packets actually get repeated onto RF, on top of the alias match — leave blank to repeat everything that matches.</p>
+              </div>
+            </details>
+          </div>
+
           <div class="field">
             <label for="aprs-igate-mode">IGate</label>
             <select id="aprs-igate-mode">
@@ -898,42 +1150,76 @@
           </div>
 
           <div class="subsection disabled" id="igate-section">
-            <div class="subsection-title">IGate settings</div>
-            <div class="subsection-body">
+            <div class="field">
+              <label for="aprs-igate-region">IGate region</label>
+              <select id="aprs-igate-region">
+                <option value="automatic">Automatic (global rotate)</option>
+                <option value="noam">North America</option>
+                <option value="soam">South America</option>
+                <option value="euro">Europe / Africa</option>
+                <option value="asia">Asia</option>
+                <option value="aunz">Oceania</option>
+                <option value="custom">Custom</option>
+              </select>
+              <p class="hint">Sets the APRS-IS server address below. Direwolf's own guidance is to use a regional rotate rather than the global one where possible.</p>
+            </div>
+            <details class="advanced">
+              <summary>IGate settings</summary>
               <div class="field">
                 <label for="aprs-igate-passcode">APRS-IS passcode</label>
                 <div class="with-button">
                   <input type="text" id="aprs-igate-passcode" placeholder="Generated from callsign">
                   <button type="button" id="btn-generate-passcode">Generate</button>
                 </div>
-                <p class="hint">Calculated from your callsign. Only needed if logging in as something else.</p>
+                <p class="hint">Fills in automatically from your callsign — use Generate if you clear it and want it back.</p>
               </div>
               <div class="field">
                 <label for="aprs-igate-server">Server address</label>
-                <input type="text" id="aprs-igate-server" placeholder="Automatic (recommended)">
+                <input type="text" id="aprs-igate-server" value="${APRS_DEFAULT_SERVER}" readonly>
+                <p class="hint">Set by the IGate region picker above — choose "Custom" there to edit this directly.</p>
               </div>
-              <details class="advanced">
-                <summary>Advanced</summary>
+              <div class="field">
+                <label for="aprs-igate-port">Server port</label>
+                <input type="number" id="aprs-igate-port" value="${APRS_DEFAULT_PORT}">
+              </div>
+              <div class="field">
+                <label for="aprs-igate-filter">APRS-IS filter (server → you)</label>
+                <input type="text" id="aprs-igate-filter" placeholder="e.g. m/50 (optional)">
+                <p class="hint">Limits which packets APRS-IS sends back to you (e.g. only within a certain distance) — leave blank to receive everything.</p>
+              </div>
+              <div class="field">
+                <label for="aprs-igate-gatefilter">Packet types to gate (you → server)</label>
+                <input type="text" id="aprs-igate-gatefilter" placeholder="e.g. t/m (optional)">
+                <p class="hint">Limits which packet types get forwarded from RF to APRS-IS (e.g. t/m for messages only) — leave blank to gate everything you hear.</p>
+              </div>
+              <div class="field">
+                <label for="aprs-igate-txvia">TX via path</label>
+                <input type="text" id="aprs-igate-txvia" value="${APRS_DEFAULT_TXVIA}">
+                <p class="hint">Path used when relaying messages from the internet onto RF. Only takes effect in RX &amp; TX mode.</p>
+              </div>
+              <div class="field-row">
                 <div class="field">
-                  <label for="aprs-igate-port">Server port</label>
-                  <input type="number" id="aprs-igate-port" placeholder="14580">
+                  <label for="aprs-igate-ratelimit-1">TX limit (1 min)</label>
+                  <input type="number" id="aprs-igate-ratelimit-1" value="${APRS_DEFAULT_RATE_1MIN}">
                 </div>
                 <div class="field">
-                  <label for="aprs-igate-filter">Server-side filter</label>
-                  <input type="text" id="aprs-igate-filter" placeholder="e.g. r/0/0/200 (optional)">
+                  <label for="aprs-igate-ratelimit-5">TX limit (5 min)</label>
+                  <input type="number" id="aprs-igate-ratelimit-5" value="${APRS_DEFAULT_RATE_5MIN}">
                 </div>
-                <div class="field-row">
-                  <div class="field">
-                    <label for="aprs-igate-ratelimit-1">TX limit (1 min)</label>
-                    <input type="number" id="aprs-igate-ratelimit-1" placeholder="6">
-                  </div>
-                  <div class="field">
-                    <label for="aprs-igate-ratelimit-5">TX limit (5 min)</label>
-                    <input type="number" id="aprs-igate-ratelimit-5" placeholder="10">
-                  </div>
-                </div>
-              </details>
-            </div>
+              </div>
+            </details>
+          </div>
+
+          <div class="field">
+            <label>Station icon</label>
+            ${symbolPickerHTML('station-symbol', initialStationSymbol)}
+            <p class="hint">Type an APRS symbol code directly, or pick one from the list. Shown on the map wherever this station's beacon appears — used for both RF and IGate beacons.</p>
+          </div>
+
+          <div class="field">
+            <label for="station-comment">Station comment</label>
+            <input type="text" id="station-comment" maxlength="60" placeholder="e.g. Digipeater + IGate">
+            <p class="hint">Status text shown alongside your position — used for both RF and IGate beacons.</p>
           </div>
 
           <div class="subsection disabled" id="rfbeacon-section">
@@ -963,15 +1249,32 @@
       if (d.callsign) document.getElementById('aprs-callsign').value = d.callsign;
       if (d.ssid) document.getElementById('aprs-ssid').value = d.ssid;
       document.getElementById('aprs-digipeat-mode').value = d.digipeat_mode || 'rxonly';
+      if (d.digipeat) {
+        document.getElementById('aprs-digipeat-dedupe').value = d.digipeat.dedupe || APRS_DEFAULT_DEDUPE;
+        document.getElementById('aprs-digipeat-filter').value = d.digipeat.filter || '';
+      }
+      document.getElementById('aprs-digipeat-rules').value = d.digipeat?.rules || 'widearea';
+      if (d.digipeat?.rules === 'custom') {
+        document.getElementById('aprs-digipeat-alias').value = d.digipeat.alias || '';
+        document.getElementById('aprs-digipeat-wide').value = d.digipeat.wide || '';
+      }
+      applyDigipeatRulesPreset();
       document.getElementById('aprs-igate-mode').value = d.igate_mode || 'off';
       if (d.igate) {
         document.getElementById('aprs-igate-passcode').value = d.igate.passcode || '';
-        document.getElementById('aprs-igate-server').value = d.igate.server || '';
-        document.getElementById('aprs-igate-port').value = d.igate.port || '';
+        document.getElementById('aprs-igate-port').value = d.igate.port || APRS_DEFAULT_PORT;
         document.getElementById('aprs-igate-filter').value = d.igate.filter || '';
-        document.getElementById('aprs-igate-ratelimit-1').value = d.igate.rate_limit_1min || '';
-        document.getElementById('aprs-igate-ratelimit-5').value = d.igate.rate_limit_5min || '';
+        document.getElementById('aprs-igate-gatefilter').value = d.igate.gate_filter || '';
+        document.getElementById('aprs-igate-txvia').value = d.igate.tx_via || APRS_DEFAULT_TXVIA;
+        document.getElementById('aprs-igate-ratelimit-1').value = d.igate.rate_limit_1min || APRS_DEFAULT_RATE_1MIN;
+        document.getElementById('aprs-igate-ratelimit-5').value = d.igate.rate_limit_5min || APRS_DEFAULT_RATE_5MIN;
       }
+      document.getElementById('aprs-igate-region').value = d.igate?.region || 'automatic';
+      if (d.igate?.region === 'custom') {
+        document.getElementById('aprs-igate-server').value = d.igate.server || APRS_DEFAULT_SERVER;
+      }
+      applyIgateRegionPreset();
+      document.getElementById('station-comment').value = d.comment || '';
       document.getElementById('rfbeacon-enabled').checked = !!(d.rf_beacon && d.rf_beacon.enabled);
       document.getElementById('igbeacon-enabled').checked = !!(d.igate_beacon && d.igate_beacon.enabled);
       restoreBeaconFields('rf', d.rf_beacon);
@@ -979,6 +1282,7 @@
 
       const digipeatMode = document.getElementById('aprs-digipeat-mode');
       const igateMode = document.getElementById('aprs-igate-mode');
+      const digipeatSection = document.getElementById('digipeat-section');
       const igateSection = document.getElementById('igate-section');
       const rfSection = document.getElementById('rfbeacon-section');
       const igSection = document.getElementById('igbeacon-section');
@@ -989,41 +1293,87 @@
         const isDigi = digipeatMode.value === 'digipeater';
         const igateOn = igateMode.value !== 'off';
 
+        digipeatSection.classList.toggle('disabled', !isDigi);
+
         rfEnabled.disabled = !isDigi;
         if (!isDigi) rfEnabled.checked = false;
         rfSection.classList.toggle('disabled', !isDigi || !rfEnabled.checked);
+        rfSection.classList.toggle('active', isDigi && rfEnabled.checked);
 
         igEnabled.disabled = !igateOn;
         if (!igateOn) igEnabled.checked = false;
         igateSection.classList.toggle('disabled', !igateOn);
         igSection.classList.toggle('disabled', !igateOn || !igEnabled.checked);
+        igSection.classList.toggle('active', igateOn && igEnabled.checked);
       }
 
-      wireSymbolPicker('rf-symbol');
-      wireSymbolPicker('ig-symbol');
+      wireSymbolPicker('station-symbol');
       wireBeaconFields('rf');
       wireBeaconFields('ig');
+
+      function applyDigipeatRulesPreset() {
+        const rulesSelect = document.getElementById('aprs-digipeat-rules');
+        const aliasInput = document.getElementById('aprs-digipeat-alias');
+        const wideInput = document.getElementById('aprs-digipeat-wide');
+        const preset = DIGIPEAT_PRESETS[rulesSelect.value];
+        if (preset) {
+          aliasInput.value = preset.alias;
+          wideInput.value = preset.wide;
+        }
+        aliasInput.readOnly = !!preset;
+        wideInput.readOnly = !!preset;
+      }
+      document.getElementById('aprs-digipeat-rules').addEventListener('change', applyDigipeatRulesPreset);
+
+      function applyIgateRegionPreset() {
+        const regionSelect = document.getElementById('aprs-igate-region');
+        const serverInput = document.getElementById('aprs-igate-server');
+        const server = APRS_IGATE_REGIONS[regionSelect.value];
+        if (server) serverInput.value = server;
+        serverInput.readOnly = !!server;
+      }
+      document.getElementById('aprs-igate-region').addEventListener('change', applyIgateRegionPreset);
 
       digipeatMode.addEventListener('change', updateModeVisibility);
       igateMode.addEventListener('change', updateModeVisibility);
       rfEnabled.addEventListener('change', () => {
         rfSection.classList.toggle('disabled', !rfEnabled.checked);
+        rfSection.classList.toggle('active', rfEnabled.checked);
       });
       igEnabled.addEventListener('change', () => {
         igSection.classList.toggle('disabled', !igEnabled.checked);
+        igSection.classList.toggle('active', igEnabled.checked);
       });
 
-      document.getElementById('btn-generate-passcode').addEventListener('click', async () => {
+      // Passcode auto-fills from the callsign as it's typed, so there's
+      // usually nothing to click — an existing saved value (this render or
+      // a manual override typed in directly) is left alone rather than
+      // silently overwritten. Generate is still there for when someone
+      // clears the field and wants it back.
+      const passcodeInput = document.getElementById('aprs-igate-passcode');
+      let passcodeManuallySet = !!(d.igate && d.igate.passcode);
+      passcodeInput.addEventListener('input', () => { passcodeManuallySet = true; });
+
+      async function fetchAndFillPasscode() {
         const callsign = document.getElementById('aprs-callsign').value.trim();
         if (!callsign) return;
         try {
           const res = await fetch(`/api/aprs/passcode?callsign=${encodeURIComponent(callsign)}`);
           const data = await res.json();
-          document.getElementById('aprs-igate-passcode').value = data.passcode;
+          passcodeInput.value = data.passcode;
         } catch (e) {
           // leave field as-is — manual entry still works
         }
+      }
+      function autoFillPasscode() {
+        if (!passcodeManuallySet) fetchAndFillPasscode();
+      }
+      document.getElementById('aprs-callsign').addEventListener('input', autoFillPasscode);
+      document.getElementById('btn-generate-passcode').addEventListener('click', () => {
+        passcodeManuallySet = false;
+        fetchAndFillPasscode();
       });
+      autoFillPasscode();
 
       updateModeVisibility();
     }
@@ -1032,19 +1382,40 @@
       const digipeatMode = document.getElementById('aprs-digipeat-mode').value;
       const igateMode = document.getElementById('aprs-igate-mode').value;
 
+      const stationSymbol = getSymbolPickerValue('station-symbol');
       const aprsConfig = {
         callsign: document.getElementById('aprs-callsign').value.trim().toUpperCase(),
         ssid: document.getElementById('aprs-ssid').value,
         digipeat_mode: digipeatMode,
         igate_mode: igateMode,
+        symbol: {
+          code: symbolCodeFromSymbol(stationSymbol),
+          table: stationSymbol.table,
+          symbol: stationSymbol.symbol,
+          overlay: stationSymbol.overlay,
+        },
+        comment: document.getElementById('station-comment').value,
       };
+
+      if (digipeatMode === 'digipeater') {
+        aprsConfig.digipeat = {
+          rules: document.getElementById('aprs-digipeat-rules').value,
+          alias: document.getElementById('aprs-digipeat-alias').value,
+          wide: document.getElementById('aprs-digipeat-wide').value,
+          dedupe: document.getElementById('aprs-digipeat-dedupe').value,
+          filter: document.getElementById('aprs-digipeat-filter').value,
+        };
+      }
 
       if (igateMode !== 'off') {
         aprsConfig.igate = {
           passcode: document.getElementById('aprs-igate-passcode').value,
+          region: document.getElementById('aprs-igate-region').value,
           server: document.getElementById('aprs-igate-server').value,
           port: document.getElementById('aprs-igate-port').value,
           filter: document.getElementById('aprs-igate-filter').value,
+          gate_filter: document.getElementById('aprs-igate-gatefilter').value,
+          tx_via: document.getElementById('aprs-igate-txvia').value,
           rate_limit_1min: document.getElementById('aprs-igate-ratelimit-1').value,
           rate_limit_5min: document.getElementById('aprs-igate-ratelimit-5').value,
         };

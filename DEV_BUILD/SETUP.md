@@ -44,6 +44,11 @@ No display connected? Skip this step — it's selected as "None" during install.
 
 ## Part 3 — Install the Tool
 
+**Before you start, have ready:**
+- Your callsign and SSID (the APRS-IS passcode fills in automatically from these — no need to look it up)
+- A decision on IGate mode (Off / RX only / RX & TX) — RX only is the safe default if unsure; RX & TX also relays internet messages back onto RF
+- If using a GPIO-pin or CM108 PTT connection, see [PINOUT.md](PINOUT.md) — note GPIO-pin PTT isn't fully wired up in software yet
+
 SSH into the Pi, then run:
 
 ```bash
@@ -57,7 +62,14 @@ Near the end you'll be asked for a WiFi country code (only if one isn't already 
 - Ethernet, Wifi, or Hotspot with SSID, Password, and the address to browse to
 - Either make sure you are connected to your network and getting an IP, or connect to the hotspot
 - Open `http://digipeater.local`, or the IP address shown on the display, in a browser to continue the setup
-- Work through the setup wizard, then press **Finish & Reboot** on the last step — this saves your settings and reboots the device into standard mode
+
+**The setup wizard has four steps:**
+1. **Network setup** — shows current connection status; if on the hotspot, lets you scan for and save WiFi credentials to connect to on the next normal boot
+2. **APRS settings** — callsign/SSID, digipeating and IGate modes, IGate connection details (collapsed by default, sensible defaults pre-filled), station icon/comment, and RF/IGate beacon settings
+3. **Radio setup** — audio device, PTT method, initial frequency, and TX power (radio model and power level are placeholders for now — see [SUPPORTED_HARDWARE.md](SUPPORTED_HARDWARE.md))
+4. **Finish** — press **Finish & Reboot** to save everything and reboot into standard mode; the page auto-reloads into the normal dashboard once it's back up
+
+For exactly how each wizard field maps to the underlying Direwolf configuration, see [`reference/direwolf.conf.annotated`](reference/direwolf.conf.annotated) — Direwolf's own official sample config, annotated line-by-line with where (or whether) each setting is currently exposed in the wizard.
 
 **Useful commands:**
 ```bash

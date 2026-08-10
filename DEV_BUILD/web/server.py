@@ -108,6 +108,10 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     async def serial_devices():
         return {"devices": await hardware.list_serial_devices()}
 
+    @app.get("/api/hardware/cm108-devices")
+    async def cm108_devices():
+        return {"devices": await hardware.list_cm108_devices()}
+
     @app.get("/api/aprs/passcode")
     async def aprs_passcode(callsign: str = ""):
         callsign = callsign.strip()

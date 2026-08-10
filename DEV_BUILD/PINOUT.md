@@ -27,3 +27,15 @@ Neither of the two currently supported displays is a direct-plug RPi HAT — bot
 
 - **Generic 1.54" SPI e-Paper (200×200)** — primary/main hardware target. No direct-plug header at all (bare module), wire by hand.
 - **Waveshare Pico-ePaper-2.9-B (296×128, B/W/R)** — dev/secondary display. Wired for a Pico's header, not a direct-plug RPi HAT.
+
+---
+
+## PTT (Push-to-Talk)
+
+Wiring depends on which PTT method is picked in the setup wizard's Radio step — see [SUPPORTED_HARDWARE.md](SUPPORTED_HARDWARE.md) for what's actually been tested:
+
+| Method | GPIO wiring needed? | Notes |
+|---|---|---|
+| VOX | No | Audio-only — the radio keys itself off the transmit audio. No Pi GPIO involved. |
+| GPIO pin | Yes — one wire from a Pi GPIO pin to the radio's PTT input | **Not yet fully wired up in software** — the wizard lets you select "GPIO pin" as the method, but there's no field yet to actually pick *which* BCM pin. Don't wire this method until that's built; the pin isn't configurable. |
+| CM108-family USB adapter | No | PTT is driven entirely over USB by the adapter itself — the adapter's own output (often a radio-specific or 3.5mm connector) goes straight to the radio. No Pi GPIO pin is used at all. |
