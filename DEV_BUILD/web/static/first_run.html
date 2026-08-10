@@ -4,6 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APRS Digipeater</title>
+  <!-- Vendored locally (no CDN) — same copy ORIGINAL used, see
+       web/static/leaflet/. Only actually loaded/used by the Map caching
+       step's region picker. -->
+  <link rel="stylesheet" href="/static/leaflet/leaflet.css">
   <style>
     :root {
       color-scheme: dark light;
@@ -228,6 +232,19 @@
     .msg.success { color: var(--success); }
     .msg.error { color: var(--error); }
 
+    .progress-bar-wrap {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      height: 10px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background: var(--accent);
+      transition: width 0.3s ease;
+    }
+
     .hint {
       color: var(--muted);
       font-size: 12px;
@@ -399,6 +416,7 @@
 
   </div>
 
+  <script src="/static/leaflet/leaflet.js"></script>
   <script>
     // Accumulates values across steps as the wizard progresses — each
     // step's content gets replaced in the DOM when you move on, so this is
@@ -427,6 +445,21 @@
         onNext: saveGpsStep,
       },
       {
+        title: 'Map caching',
+        render: renderMapStep,
+        onNext: saveMapStep,
+      },
+      {
+        title: 'E-Ink display',
+        render: renderPlaceholderStep,
+        onNext: () => true,
+      },
+      {
+        title: 'User management',
+        render: renderPlaceholderStep,
+        onNext: () => true,
+      },
+      {
         title: 'Finish',
         render: renderFinishStep,
         onNext: finishSetup,
@@ -436,6 +469,13 @@
     let currentStep = 0;
 
     function showStep() {
+      // Stop polling a download's progress if we're navigating away from
+      // the Map caching step — the download itself keeps running server-
+      // side regardless, this just stops this page from asking about it.
+      if (mapStatusPollTimer) {
+        clearInterval(mapStatusPollTimer);
+        mapStatusPollTimer = null;
+      }
       const step = steps[currentStep];
       document.getElementById('step-title').textContent = step.title;
       step.render();
@@ -617,7 +657,13 @@
             <label for="radio-power">TX power level</label>
             <select id="radio-power"></select>
           </div>
-          <p class="hint">Radio model and power level are placeholders for now. Audio device, connected CM108-type USB PTT adapters, and any connected radio's serial port are read live from this device.</p>
+          <div class="field">
+            <label class="subsection-title">
+              <input type="checkbox" id="radio-autostart" checked>
+              Start automatically on boot
+            </label>
+          </div>
+          <p class="hint">Radio model and power level are placeholders for now. Audio device, connected CM108-type USB PTT adapters, and any connected radio's serial port are read live from this device. "Start automatically on boot" is saved for later use — there's no Direwolf process to start yet (see TODO.md).</p>
         </section>
       `;
       const modelSelect = document.getElementById('radio-model');
@@ -632,6 +678,7 @@
         modelSelect.value = wizardData.radio.model ?? modelSelect.value;
         powerSelect.value = wizardData.radio.power_level ?? powerSelect.value;
         document.getElementById('radio-frequency').value = wizardData.radio.frequency_mhz ?? '';
+        document.getElementById('radio-autostart').checked = wizardData.radio.autostart ?? true;
       }
 
       loadAudioDevices();
@@ -695,6 +742,7 @@
         ptt_method: pttMethod,
         audio_device: document.getElementById('radio-audio').value,
         power_level: document.getElementById('radio-power').value,
+        autostart: document.getElementById('radio-autostart').checked,
       };
       // Fixed wiring, not a wizard choice — see RADIO_DEFAULT_PTT_GPIO_PIN.
       if (pttMethod === 'gpio') {
@@ -1312,7 +1360,11 @@
         const isDigi = digipeatMode.value === 'digipeater';
         const igateOn = igateMode.value !== 'off';
 
-        digipeatSection.classList.toggle('disabled', !isDigi);
+        // Fully hidden (not just greyed out) — these are entire settings
+        // blocks that are meaningless until the matching mode is on, unlike
+        // the RF/IGate Beacon subsections below, which stay visible-but-
+        // disabled so it's clear they exist and why they're unavailable.
+        digipeatSection.classList.toggle('hidden', !isDigi);
 
         rfEnabled.disabled = !isDigi;
         if (!isDigi) rfEnabled.checked = false;
@@ -1324,7 +1376,7 @@
 
         igEnabled.disabled = !igateOn;
         if (!igateOn) igEnabled.checked = false;
-        igateSection.classList.toggle('disabled', !igateOn);
+        igateSection.classList.toggle('hidden', !igateOn);
         igSection.classList.toggle('disabled', !igateOn);
         igSection.classList.toggle('active', igateOn && igEnabled.checked);
       }
@@ -1647,8 +1699,340 @@
       return true;
     }
 
+    // ── Map caching step ─────────────────────────────────────────────
+    // Downloads happen live, right here in the wizard (like the GPS step's
+    // "Get current position") rather than being deferred — there's nothing
+    // for a later backend to "apply", the tiles just need to end up on
+    // disk. Entirely optional: never blocks Next, whether or not anything
+    // was actually downloaded.
+    const MAP_DEFAULT_RADIUS_KM = 50;
+    const MAP_DEFAULT_ZOOM_MIN = 8;
+    const MAP_DEFAULT_ZOOM_MAX = 14;
+    let mapStatusPollTimer = null;
+
+    function renderMapStep() {
+      const m = wizardData.map || {};
+      document.getElementById('step-content').innerHTML = `
+        <section>
+          <p class="msg" id="map-checking-msg">Checking for an internet connection…</p>
+
+          <div id="map-offline-warning" class="hidden">
+            <p class="msg error">No internet, can't cache map tiles.</p>
+            <p class="hint">You can still finish setup — come back to this step later, once the device has an internet connection, to cache tiles for offline use.</p>
+          </div>
+
+          <div id="map-online-fields" class="hidden">
+            <div id="map-region-picker" style="height: 320px; border-radius: 8px; overflow: hidden; margin-bottom: 12px;"></div>
+            <p class="hint">Drag the pin (or click anywhere on the map) to move the region. The shaded box is what will be downloaded.</p>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="map-lat">Center latitude</label>
+                <input type="number" id="map-lat" step="0.000001" placeholder="e.g. -36.848461">
+              </div>
+              <div class="field">
+                <label for="map-lon">Center longitude</label>
+                <input type="number" id="map-lon" step="0.000001" placeholder="e.g. 174.763336">
+              </div>
+            </div>
+            <button type="button" id="btn-map-use-station">Use station location</button>
+
+            <div class="field">
+              <label for="map-radius">Radius</label>
+              <div class="field-suffix"><input type="number" id="map-radius" min="1" value="${m.radius_km ?? MAP_DEFAULT_RADIUS_KM}"><span>km</span></div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="map-zoom-min">Min zoom</label>
+                <input type="number" id="map-zoom-min" min="1" max="19" value="${m.zoom_min ?? MAP_DEFAULT_ZOOM_MIN}">
+              </div>
+              <div class="field">
+                <label for="map-zoom-max">Max zoom</label>
+                <input type="number" id="map-zoom-max" min="1" max="19" value="${m.zoom_max ?? MAP_DEFAULT_ZOOM_MAX}">
+              </div>
+            </div>
+            <p class="hint">Tiles come from OpenStreetMap's own free tile server — open, no account or API key needed. Once cached, tiles reload from this device with no internet needed at all, until you re-download to refresh them. Higher max zoom shows more detail but downloads far more tiles — keep the region modest.</p>
+
+            <div class="status-box" id="map-estimate-box">Estimating…</div>
+
+            <button type="button" id="btn-map-download" style="margin-top: 12px;">Download this region</button>
+            <button type="button" id="btn-map-cancel" class="hidden" style="margin-top: 8px;">Cancel download</button>
+
+            <div id="map-progress-wrap" class="hidden" style="margin-top: 12px;">
+              <div class="progress-bar-wrap"><div class="progress-bar" id="map-progress-bar" style="width: 0%;"></div></div>
+              <p class="msg" id="map-progress-msg"></p>
+            </div>
+          </div>
+        </section>
+      `;
+
+      const downloadBtn = document.getElementById('btn-map-download');
+      const cancelBtn = document.getElementById('btn-map-cancel');
+      const estimateBox = document.getElementById('map-estimate-box');
+      const progressWrap = document.getElementById('map-progress-wrap');
+      const progressBar = document.getElementById('map-progress-bar');
+      const progressMsg = document.getElementById('map-progress-msg');
+      const latInput = document.getElementById('map-lat');
+      const lonInput = document.getElementById('map-lon');
+
+      // Local to this render — the map container is thrown away and
+      // recreated (innerHTML above) each time this step is shown, so a
+      // fresh Leaflet map is created fresh each time too, not reused.
+      let regionMap = null;
+      let regionMarker = null;
+      let regionRect = null;
+
+      // Same flat-earth approximation as services/tiles.py's
+      // _bounds_from_radius — only used here to draw the preview box, the
+      // actual download still just sends lat/lon/radius_km to the backend.
+      function boundsFromRadius(lat, lon, radiusKm) {
+        const latDelta = radiusKm / 111.0;
+        const lonDelta = radiusKm / (111.0 * Math.max(Math.cos(lat * Math.PI / 180), 0.01));
+        return L.latLngBounds([lat - latDelta, lon - lonDelta], [lat + latDelta, lon + lonDelta]);
+      }
+
+      function redrawRegion() {
+        if (!regionMap) return;
+        const lat = parseFloat(latInput.value);
+        const lon = parseFloat(lonInput.value);
+        const radiusKm = parseFloat(document.getElementById('map-radius').value);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(radiusKm)) return;
+        regionMarker.setLatLng([lat, lon]);
+        regionRect.setBounds(boundsFromRadius(lat, lon, radiusKm));
+      }
+
+      function setCenter(lat, lon, panMap) {
+        latInput.value = lat.toFixed(6);
+        lonInput.value = lon.toFixed(6);
+        if (regionMap && panMap) regionMap.setView([lat, lon], regionMap.getZoom());
+        redrawRegion();
+      }
+
+      function initRegionMap(lat, lon) {
+        regionMap = L.map('map-region-picker').setView([lat, lon], 9);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors',
+          maxZoom: 19,
+        }).addTo(regionMap);
+        const radiusKm = parseFloat(document.getElementById('map-radius').value) || MAP_DEFAULT_RADIUS_KM;
+        regionRect = L.rectangle(boundsFromRadius(lat, lon, radiusKm), {
+          color: '#4fb3a9', weight: 2, fillOpacity: 0.1,
+        }).addTo(regionMap);
+        regionMarker = L.marker([lat, lon], { draggable: true }).addTo(regionMap);
+        regionMarker.on('dragend', () => {
+          const { lat, lng } = regionMarker.getLatLng();
+          setCenter(lat, lng, false);
+          scheduleEstimate();
+        });
+        regionMap.on('click', (e) => {
+          setCenter(e.latlng.lat, e.latlng.lng, false);
+          scheduleEstimate();
+        });
+      }
+
+      let estimateTimer = null;
+      function scheduleEstimate() {
+        clearTimeout(estimateTimer);
+        estimateTimer = setTimeout(updateEstimate, 300);
+      }
+
+      async function updateEstimate() {
+        const lat = parseFloat(latInput.value);
+        const lon = parseFloat(lonInput.value);
+        const radiusKm = parseFloat(document.getElementById('map-radius').value);
+        const zoomMin = parseInt(document.getElementById('map-zoom-min').value, 10);
+        const zoomMax = parseInt(document.getElementById('map-zoom-max').value, 10);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(radiusKm) ||
+            !Number.isFinite(zoomMin) || !Number.isFinite(zoomMax) || zoomMin > zoomMax) {
+          estimateBox.textContent = 'Enter a valid center position, radius, and zoom range to see an estimate.';
+          downloadBtn.disabled = true;
+          return;
+        }
+        downloadBtn.disabled = false;
+        estimateBox.textContent = 'Estimating…';
+        try {
+          const params = new URLSearchParams({ lat, lon, radius_km: radiusKm, zoom_min: zoomMin, zoom_max: zoomMax });
+          const res = await fetch(`/api/map/estimate?${params}`);
+          const data = await res.json();
+          estimateBox.textContent = `~${data.tile_count.toLocaleString()} tiles, ~${data.estimated_mb} MB`;
+        } catch (e) {
+          estimateBox.textContent = 'Could not estimate — check the server is reachable.';
+        }
+      }
+
+      ['map-lat', 'map-lon', 'map-radius'].forEach(id => {
+        document.getElementById(id).addEventListener('input', () => { redrawRegion(); scheduleEstimate(); });
+      });
+      ['map-zoom-min', 'map-zoom-max'].forEach(id => {
+        document.getElementById(id).addEventListener('input', scheduleEstimate);
+      });
+
+      document.getElementById('btn-map-use-station').addEventListener('click', async () => {
+        const g = wizardData.gps || {};
+        if (g.position_source === 'manual' && g.latitude && g.longitude) {
+          setCenter(parseFloat(g.latitude), parseFloat(g.longitude), true);
+          scheduleEstimate();
+          return;
+        }
+        try {
+          const res = await fetch('/api/gps/position');
+          const data = await res.json();
+          if (data.available) {
+            setCenter(data.latitude, data.longitude, true);
+            scheduleEstimate();
+          } else {
+            estimateBox.textContent = data.reason || 'No station position available — enter one manually.';
+          }
+        } catch (e) {
+          estimateBox.textContent = 'Could not reach the server.';
+        }
+      });
+
+      function pollDownloadStatus() {
+        mapStatusPollTimer = setInterval(async () => {
+          try {
+            const res = await fetch('/api/map/cache/status');
+            const data = await res.json();
+            progressBar.style.width = `${data.percent}%`;
+            progressMsg.textContent = `${data.done} / ${data.total} tiles (zoom ${data.current_zoom})${data.failed ? `, ${data.failed} failed` : ''}`;
+            if (!data.active) {
+              clearInterval(mapStatusPollTimer);
+              mapStatusPollTimer = null;
+              downloadBtn.disabled = false;
+              cancelBtn.classList.add('hidden');
+              progressMsg.textContent += data.cancelled ? ' — cancelled.' : ' — done.';
+            }
+          } catch (e) {
+            // Transient — next poll tries again.
+          }
+        }, 1000);
+      }
+
+      downloadBtn.addEventListener('click', async () => {
+        const lat = parseFloat(document.getElementById('map-lat').value);
+        const lon = parseFloat(document.getElementById('map-lon').value);
+        const radiusKm = parseFloat(document.getElementById('map-radius').value);
+        const zoomMin = parseInt(document.getElementById('map-zoom-min').value, 10);
+        const zoomMax = parseInt(document.getElementById('map-zoom-max').value, 10);
+        downloadBtn.disabled = true;
+        progressWrap.classList.remove('hidden');
+        progressBar.style.width = '0%';
+        progressMsg.textContent = 'Starting…';
+        try {
+          const res = await fetch('/api/map/cache/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lat, lon, radius_km: radiusKm, zoom_min: zoomMin, zoom_max: zoomMax }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            progressMsg.textContent = err.detail || 'Failed to start download.';
+            downloadBtn.disabled = false;
+            return;
+          }
+          cancelBtn.classList.remove('hidden');
+          pollDownloadStatus();
+        } catch (e) {
+          progressMsg.textContent = 'Could not reach the server.';
+          downloadBtn.disabled = false;
+        }
+      });
+
+      cancelBtn.addEventListener('click', async () => {
+        cancelBtn.disabled = true;
+        try {
+          await fetch('/api/map/cache/cancel', { method: 'POST' });
+        } finally {
+          cancelBtn.disabled = false;
+        }
+      });
+
+      (async () => {
+        const checkingMsg = document.getElementById('map-checking-msg');
+        const offlineWarning = document.getElementById('map-offline-warning');
+        const onlineFields = document.getElementById('map-online-fields');
+        let online = false;
+        try {
+          const res = await fetch('/api/network/internet');
+          online = (await res.json()).online;
+        } catch (e) {
+          online = false;
+        }
+        checkingMsg.classList.add('hidden');
+        if (!online) {
+          offlineWarning.classList.remove('hidden');
+          return;
+        }
+        // The map container must actually be visible before Leaflet
+        // initialises against it, or it measures a zero-size box.
+        onlineFields.classList.remove('hidden');
+
+        // Figure out where to center the map: whatever was picked earlier
+        // this session, else the station's own position (manual entry or a
+        // live GPS fix), else a zoomed-out world view the user can pan
+        // from — same fallback order as "Use station location" uses later.
+        let initLat = m.latitude !== undefined ? parseFloat(m.latitude) : NaN;
+        let initLon = m.longitude !== undefined ? parseFloat(m.longitude) : NaN;
+        if (!Number.isFinite(initLat) || !Number.isFinite(initLon)) {
+          const g = wizardData.gps || {};
+          if (g.position_source === 'manual' && g.latitude && g.longitude) {
+            initLat = parseFloat(g.latitude);
+            initLon = parseFloat(g.longitude);
+          } else {
+            try {
+              const res = await fetch('/api/gps/position');
+              const data = await res.json();
+              if (data.available) {
+                initLat = data.latitude;
+                initLon = data.longitude;
+              }
+            } catch (e) {
+              // Falls through to the 0,0 default below.
+            }
+          }
+        }
+        if (!Number.isFinite(initLat) || !Number.isFinite(initLon)) {
+          initLat = 0;
+          initLon = 0;
+        }
+
+        latInput.value = initLat.toFixed(6);
+        lonInput.value = initLon.toFixed(6);
+        initRegionMap(initLat, initLon);
+        updateEstimate();
+      })();
+    }
+
+    function saveMapStep() {
+      const latEl = document.getElementById('map-lat');
+      if (!latEl) {
+        wizardData.map = {};
+        return true;
+      }
+      wizardData.map = {
+        latitude: latEl.value,
+        longitude: document.getElementById('map-lon').value,
+        radius_km: document.getElementById('map-radius').value,
+        zoom_min: document.getElementById('map-zoom-min').value,
+        zoom_max: document.getElementById('map-zoom-max').value,
+      };
+      return true;
+    }
+
+    // ── Placeholder steps (E-Ink display, User management) ────────────
+    // Nothing to configure yet — just here so the step exists in the flow
+    // and doesn't block moving on. step.title (set by showStep) already
+    // says which one this is, so no title repeated in the body here.
+    function renderPlaceholderStep() {
+      document.getElementById('step-content').innerHTML = `
+        <section>
+          <p class="hint">Not built yet — nothing to configure here. Press Next to continue.</p>
+        </section>
+      `;
+    }
+
     // ── Finish step ───────────────────────────────────────────────────
-    const REBOOT_WAIT_S = 30;
+    const REBOOT_WAIT_S = 60;
 
     function renderFinishStep() {
       document.getElementById('step-content').innerHTML = `

@@ -64,12 +64,15 @@ Near the end you'll be asked for a WiFi country code (only if one isn't already 
 - Either make sure you are connected to your network and getting an IP, or connect to the hotspot
 - Open `http://digipeater.local`, or the IP address shown on the display, in a browser to continue the setup
 
-**The setup wizard has five steps:**
+**The setup wizard has eight steps:**
 1. **Network setup** — shows current connection status; if on the hotspot, lets you scan for and save WiFi credentials to connect to on the next normal boot
 2. **APRS settings** — callsign/SSID, digipeating and IGate modes, IGate connection details (collapsed by default, sensible defaults pre-filled), station icon/comment, and RF/IGate beacon settings
-3. **Radio setup** — audio device, PTT method, initial frequency, and TX power (radio model and power level are placeholders for now — see [SUPPORTED_HARDWARE.md](SUPPORTED_HARDWARE.md))
+3. **Radio setup** — audio device, PTT method, initial frequency, TX power, and "start automatically on boot" (radio model, power level, and autostart are placeholders/collected-only for now — see [SUPPORTED_HARDWARE.md](SUPPORTED_HARDWARE.md) and [TODO.md](../TODO.md))
 4. **GPS setup** — pick a connected GPS device (or "No GPS"), beacon position source (GPS or manual lat/lon), optional system time sync from GPS with a timezone picker, and a live GPS status display (position/fix/satellite count) — needs `gpsd` actually running with a device attached to show real data. Device selection, time sync, and timezone are all applied to the system (gpsd, chrony, `timedatectl`) on the next boot; beacon position source is saved but not yet used anywhere (no `direwolf.conf` generator exists yet — see [TODO.md](../TODO.md)).
-5. **Finish** — press **Finish & Reboot** to save everything and reboot into standard mode; the page auto-reloads into the normal dashboard once it's back up
+5. **Map caching** — checks for an internet connection; if there isn't one, just shows a warning (nothing to cache without one). If there is, drag a pin on a live map (or click anywhere, or reuse the station's own GPS position) to place the region, adjust radius and zoom range, see an estimated tile count/size, then download that region right there in the wizard from OpenStreetMap's free tile server — no account or API key needed. Cached tiles are then served from disk with no internet needed at all until re-downloaded. Entirely optional — never blocks moving on, and can be skipped and revisited later.
+6. **E-Ink display** — placeholder, nothing to configure yet
+7. **User management** — placeholder, nothing to configure yet
+8. **Finish** — press **Finish & Reboot** to save everything and reboot into standard mode; the page auto-reloads into the normal dashboard once it's back up
 
 **Useful commands:**
 ```bash

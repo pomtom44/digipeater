@@ -20,6 +20,7 @@ Everything currently deferred or flagged as a known gap in `DEV_BUILD`, collecte
 - "TX power level" dropdown is also a placeholder.
 - GPIO-pin PTT now uses a fixed, hardcoded BCM pin (GPIO 22 — see `PINOUT.md`) saved to `config.yaml` automatically, rather than a wizard field. Same "hardcoded default, config-editable, not wizard-exposed" pattern should be followed for any future GPIO-based hardware (e.g. the power relay below).
 - CM108 PTT device detection is real and working, but (per the big gap above) isn't yet wired into an actual PTT-triggering config.
+- "Start automatically on boot" checkbox added, collected into `config.yaml` as `radio.autostart` — not applied anywhere yet, since there's no Direwolf process for anything to start/stop (part of the big gap above).
 
 ## GPS
 
@@ -36,11 +37,21 @@ Everything currently deferred or flagged as a known gap in `DEV_BUILD`, collecte
 - Generic 1.54" SPI e-Paper driver (`epd1in54_v2`) is a best-guess port — hardware not in hand, never verified.
 - Only two display models are supported; other sizes/models mentioned in `OVERVIEW.md` haven't been ported from `ORIGINAL/`.
 
+## Map
+
+- Tile downloading/caching (wizard step) and offline tile serving (`GET /tiles/{z}/{x}/{y}.png`) are implemented — `services/tiles.py`, ported and adapted from `ORIGINAL/services/tile_cache.py`. Uses OSM's standard open tile server, no API key. Not hardware-tested (needs a real internet connection + a real region download to verify tile math/disk layout end-to-end).
+- The region picker itself is a real Leaflet map with a draggable pin and live preview rectangle (`web/static/leaflet/`, vendored from `ORIGINAL`) — click-to-move and drag-to-move both update the region and re-estimate.
+- The actual map *view* for the (not yet built) dashboard — station markers/traces, filtering — is still not built; this only covers downloading/serving/picking a region for one to eventually use.
+
+## Placeholders (wizard steps that exist but do nothing yet)
+
+- **E-Ink display** — step exists between Map caching and Finish, renders a "not built yet" message, saves nothing. Intended for display driver/model selection and page-rotation config once that's moved into the web wizard (currently install.sh-only — see `SETUP.md`).
+- **User management** — step exists between E-Ink display and Finish, same placeholder treatment. Intended to eventually cover the "Web UI security/password protection" item below.
+
 ## Not yet ported from `ORIGINAL/` at all
 
 - Power relay (radio power-on GPIO sequencing)
 - Radio CAT control (Hamlib rig control, live frequency polling/display)
 - Radio channel programmer (Alinco DR-138T specific)
-- Map / offline tile caching
 - E-ink display page rotation (multi-page cycling through status/config/location/etc.)
 - Web UI security/password protection

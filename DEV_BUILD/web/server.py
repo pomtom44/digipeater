@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from display.base import DisplayDriver
-from services import aprs, gps, hardware, network, system
+from services import aprs, gps, hardware, network, system, tiles
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,11 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     # APRS symbol sprite sheets) — separate from the explicit FileResponse
     # routes below, which serve the HTML pages themselves at clean paths.
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    # Holds the in-progress region download, if any — one at a time. A
+    # plain closure-local dict rather than a module global, since this is
+    # runtime state scoped to this app instance, not app configuration.
+    map_download_state = {"downloader": None}
 
     @app.get("/")
     async def root():
@@ -131,20 +136,80 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     async def system_timezones():
         return {"timezones": await system.list_timezones()}
 
+    @app.get("/api/network/internet")
+    async def internet_status():
+        return {"online": await tiles.has_internet()}
+
+    @app.get("/api/map/estimate")
+    async def map_estimate(lat: float, lon: float, radius_km: float, zoom_min: int, zoom_max: int):
+        if zoom_min < 1 or zoom_max > 19 or zoom_min > zoom_max:
+            raise HTTPException(status_code=400, detail="Invalid zoom range")
+        count, size_mb = tiles.estimate_tiles(lat, lon, radius_km, zoom_min, zoom_max)
+        return {"tile_count": count, "estimated_mb": round(size_mb, 1)}
+
+    @app.post("/api/map/cache/start")
+    async def map_cache_start(request: Request):
+        body = await request.json()
+        try:
+            lat = float(body.get("lat"))
+            lon = float(body.get("lon"))
+            radius_km = float(body.get("radius_km"))
+            zoom_min = int(body.get("zoom_min"))
+            zoom_max = int(body.get("zoom_max"))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid region parameters")
+        if zoom_min < 1 or zoom_max > 19 or zoom_min > zoom_max:
+            raise HTTPException(status_code=400, detail="Invalid zoom range")
+        existing = map_download_state["downloader"]
+        if existing and existing.status()["active"]:
+            raise HTTPException(status_code=409, detail="A download is already in progress")
+        downloader = tiles.TileDownloader(lat, lon, radius_km, zoom_min, zoom_max)
+        map_download_state["downloader"] = downloader
+        asyncio.create_task(downloader.run())
+        return {"ok": True}
+
+    @app.get("/api/map/cache/status")
+    async def map_cache_status():
+        downloader = map_download_state["downloader"]
+        if not downloader:
+            return {"active": False, "cancelled": False, "total": 0, "done": 0, "failed": 0, "percent": 0, "current_zoom": 0}
+        return downloader.status()
+
+    @app.post("/api/map/cache/cancel")
+    async def map_cache_cancel():
+        downloader = map_download_state["downloader"]
+        if downloader:
+            downloader.cancel()
+        return {"ok": True}
+
+    # Offline serving of whatever's been cached so far — a future map view
+    # can hit this with no internet needed at all, only re-contacting OSM
+    # when the setup wizard's download step is used again to refresh tiles.
+    @app.get("/tiles/{z}/{x}/{y}.png")
+    async def serve_tile(z: int, x: int, y: int):
+        tile_path = tiles.TILE_DIR / str(z) / str(x) / f"{y}.png"
+        if not tile_path.exists():
+            raise HTTPException(status_code=404, detail="Tile not cached")
+        return FileResponse(tile_path, media_type="image/png")
+
     @app.post("/api/setup/complete")
     async def setup_complete(request: Request):
         if not first_boot:
             raise HTTPException(status_code=400, detail="Setup has already been completed")
         body = await request.json()
-        # Radio/APRS/GPS config have no dedicated backend yet (nothing
-        # generates direwolf.conf or a gpsd device config from this in
-        # DEV_BUILD) — saved here as-is so it's not lost, ready for
-        # whatever actually consumes it once that lands.
+        # Radio/APRS config (and GPS's beacon-position piece) have no
+        # dedicated backend yet — nothing generates direwolf.conf from this
+        # in DEV_BUILD — saved here as-is so it's not lost, ready for
+        # whatever actually consumes it once that lands. GPS's device/time-
+        # sync/timezone settings are applied for real on the next boot (see
+        # services/gpsconfig.py); map tiles are already downloaded live
+        # during the wizard itself, not deferred.
         config = {
             "setup_complete": True,
             "radio": body.get("radio", {}),
             "aprs": body.get("aprs", {}),
             "gps": body.get("gps", {}),
+            "map": body.get("map", {}),
         }
         CONFIG_PATH.write_text(
             "# Written by the first-boot setup wizard.\n"
