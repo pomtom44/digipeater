@@ -4,9 +4,10 @@ import logging
 from pathlib import Path
 
 import uvicorn
+import yaml
 
 from display.driver_none import NullDriver
-from services import network
+from services import gpsconfig, network
 from web.server import create_app
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -181,6 +182,12 @@ async def main() -> None:
         # Normal boot has nothing left to confirm to the user beyond "it's
         # up" — network detail lives on the web UI now, not the screen.
         await _render(display_driver, template.draw_loading_page, "Digipeater", fast=True)
+        try:
+            config = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+        except Exception as e:
+            logger.error("Failed to read %s: %s", CONFIG_PATH, e)
+            config = {}
+        await gpsconfig.apply(config.get("gps", {}))
 
     network_status = {"kind": kind, "ip": ip, "hotspot_ssid": HOTSPOT_SSID}
     app = create_app(display_driver, first_boot, network_status)

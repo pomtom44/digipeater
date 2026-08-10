@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from display.base import DisplayDriver
-from services import aprs, hardware, network, system
+from services import aprs, gps, hardware, network, system
 
 logger = logging.getLogger(__name__)
 
@@ -119,18 +119,32 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             raise HTTPException(status_code=400, detail="Callsign is required")
         return {"passcode": aprs.calculate_passcode(callsign)}
 
+    @app.get("/api/gps/status")
+    async def gps_status():
+        return await gps.get_status()
+
+    @app.get("/api/gps/position")
+    async def gps_position():
+        return await gps.get_position()
+
+    @app.get("/api/system/timezones")
+    async def system_timezones():
+        return {"timezones": await system.list_timezones()}
+
     @app.post("/api/setup/complete")
     async def setup_complete(request: Request):
         if not first_boot:
             raise HTTPException(status_code=400, detail="Setup has already been completed")
         body = await request.json()
-        # Radio/APRS config have no dedicated backend yet (nothing generates
-        # direwolf.conf from this in DEV_BUILD) — saved here as-is so it's
-        # not lost, ready for whatever actually consumes it once that lands.
+        # Radio/APRS/GPS config have no dedicated backend yet (nothing
+        # generates direwolf.conf or a gpsd device config from this in
+        # DEV_BUILD) — saved here as-is so it's not lost, ready for
+        # whatever actually consumes it once that lands.
         config = {
             "setup_complete": True,
             "radio": body.get("radio", {}),
             "aprs": body.get("aprs", {}),
+            "gps": body.get("gps", {}),
         }
         CONFIG_PATH.write_text(
             "# Written by the first-boot setup wizard.\n"

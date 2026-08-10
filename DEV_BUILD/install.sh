@@ -83,7 +83,7 @@ run_with_spinner "Updating package lists..." sudo apt-get update -qq
 ok "Package lists updated"
 
 # ── Install system packages ───────────────────
-# More packages get added here as later parts (direwolf, GPS, etc.) come online.
+# More packages get added here as later parts (direwolf, etc.) come online.
 run_with_spinner "Installing system packages..." sudo apt-get install -y -qq \
     git \
     python3 \
@@ -92,8 +92,38 @@ run_with_spinner "Installing system packages..." sudo apt-get install -y -qq \
     python3-rpi.gpio \
     python3-spidev \
     fonts-dejavu-core \
+    gpsd \
+    gpsd-clients \
+    chrony \
     curl
 ok "System packages installed"
+
+# ── Use chrony for system time, not systemd-timesyncd ──
+# chrony is what lets the GPS setup step's "update system time from GPS"
+# option actually work (via a GPS refclock, see services/gpsconfig.py) —
+# systemd-timesyncd has no equivalent. Swapped in as a straight 1:1
+# replacement for normal internet NTP too, so this isn't a downgrade for
+# anyone who leaves GPS time sync off.
+run_with_spinner "Switching to chrony for time sync..." bash -c "
+    sudo systemctl disable --now systemd-timesyncd --quiet 2>/dev/null;
+    sudo systemctl enable chrony --quiet &&
+    sudo systemctl restart chrony
+"
+ok "chrony configured"
+
+# ── Ensure gpsd is running (required for the GPS setup step) ──
+# gpsd's own postinst usually enables its socket-activated unit already,
+# but making it explicit here matches how NetworkManager is handled below
+# rather than relying on packaging defaults. This is just the default
+# on-demand/USB-auto-detect mode; if the wizard's GPS step picks an
+# explicit device (needed for a UART-wired GPS), services/gpsconfig.py
+# switches gpsd over to always-running mode pointed at that device on the
+# next boot — see scripts/apply-gps-config.sh.
+run_with_spinner "Configuring gpsd..." bash -c "
+    sudo systemctl enable gpsd.socket --quiet &&
+    sudo systemctl start gpsd.socket
+"
+ok "gpsd configured"
 
 # ── Create directories ────────────────────────
 run_with_spinner "Creating application directories..." bash -c "
@@ -150,6 +180,24 @@ if sudo visudo -c -f "$SUDOERS_TMP2" > /dev/null 2>&1; then
     ok "reboot permissions configured"
 else
     rm -f "$SUDOERS_TMP2"
+    fail "Generated sudoers rule failed validation — aborting for safety"
+fi
+
+# ── Grant access to the GPS config helper for the GPS setup step ──
+# Root-only actions (gpsd/chrony config, timezone) live in this one script
+# rather than being run ad hoc — scoped to exactly this path, same pattern
+# as nmcli/reboot above, not blanket root access. Must be executable for
+# sudo to run it directly.
+chmod +x "$APP_DIR/scripts/apply-gps-config.sh"
+GPSCONFIG_PATH="$APP_DIR/scripts/apply-gps-config.sh"
+SUDOERS_TMP3="$(mktemp)"
+echo "$USER ALL=(root) NOPASSWD: $GPSCONFIG_PATH" > "$SUDOERS_TMP3"
+if sudo visudo -c -f "$SUDOERS_TMP3" > /dev/null 2>&1; then
+    sudo install -o root -g root -m 0440 "$SUDOERS_TMP3" /etc/sudoers.d/digipeater-gpsconfig
+    rm -f "$SUDOERS_TMP3"
+    ok "GPS config permissions configured"
+else
+    rm -f "$SUDOERS_TMP3"
     fail "Generated sudoers rule failed validation — aborting for safety"
 fi
 

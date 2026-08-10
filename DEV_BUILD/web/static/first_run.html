@@ -281,7 +281,10 @@
       cursor: not-allowed;
       outline-color: var(--border);
     }
-    .subsection.disabled .subsection-body { display: none; }
+    /* Body (delay/interval/location fields) only shows once a beacon is
+       both available AND switched on — .disabled alone no longer covers
+       "unchecked but available", so this can't key off .disabled anymore. */
+    .subsection:not(.active) .subsection-body { display: none; }
     /* Only the collapsible disclosures (Digipeater/IGate settings) need
        pointer-events blocked here — they have no native disabled state.
        Checkboxes (RF/IGate Beacon) already block themselves correctly via
@@ -322,22 +325,6 @@
       gap: 10px;
     }
     .field-row .field { flex: 1; margin-bottom: 0; }
-
-    .radio-row {
-      display: flex;
-      gap: 16px;
-      margin: 6px 0 4px;
-    }
-    .radio-row label {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      color: var(--text);
-      font-size: 14px;
-      margin: 0;
-      cursor: pointer;
-    }
-    .radio-row input[type="radio"] { accent-color: var(--accent); cursor: pointer; }
 
     .with-button {
       display: flex;
@@ -380,6 +367,11 @@
       font-weight: 700;
       border-radius: 4px;
     }
+    /* .hidden and .symbol-badge-inline have equal specificity and this one
+       comes later in the stylesheet, so its display:inline-flex would win
+       even with .hidden also applied — shows as an empty colored square
+       instead of disappearing. Needs to beat that on specificity, not order. */
+    .symbol-badge-inline.hidden { display: none; }
     .symbol-select {
       flex: 1 1 160px;
       width: auto;
@@ -428,6 +420,11 @@
         title: 'Radio setup',
         render: renderRadioStep,
         onNext: saveRadioStep,
+      },
+      {
+        title: 'GPS setup',
+        render: renderGpsStep,
+        onNext: saveGpsStep,
       },
       {
         title: 'Finish',
@@ -574,6 +571,13 @@
       'Icom IC-2730A',
     ];
     const PLACEHOLDER_POWER_LEVELS = ['Low', 'Medium', 'High'];
+    // GPIO PTT pin is a config item, but deliberately not wizard-editable —
+    // this hardware target has one fixed wiring convention (see
+    // PINOUT.md), same as the e-ink display pins hardcoded in
+    // display/waveshare/epdconfig.py. Update here (and in PINOUT.md)
+    // together if the physical wiring convention ever changes; it's not
+    // meant to vary per install.
+    const RADIO_DEFAULT_PTT_GPIO_PIN = 22;
 
     function addOption(select, value, label) {
       const opt = document.createElement('option');
@@ -684,13 +688,18 @@
     }
 
     function saveRadioStep() {
+      const pttMethod = document.getElementById('radio-ptt').value;
       wizardData.radio = {
         model: document.getElementById('radio-model').value,
         frequency_mhz: document.getElementById('radio-frequency').value,
-        ptt_method: document.getElementById('radio-ptt').value,
+        ptt_method: pttMethod,
         audio_device: document.getElementById('radio-audio').value,
         power_level: document.getElementById('radio-power').value,
       };
+      // Fixed wiring, not a wizard choice — see RADIO_DEFAULT_PTT_GPIO_PIN.
+      if (pttMethod === 'gpio') {
+        wizardData.radio.ptt_gpio_pin = RADIO_DEFAULT_PTT_GPIO_PIN;
+      }
       return true;
     }
 
@@ -715,6 +724,13 @@
     };
     const APRS_DEFAULT_PORT = '14580';
     const APRS_DEFAULT_TXVIA = 'WIDE1-1,WIDE2-1';
+    // Deliberately different from APRS_DEFAULT_TXVIA above — that's the
+    // path for relaying internet-sourced messages onto RF, this is the
+    // path for the station's own beacon. Best practice for a fixed
+    // digipeater's own beacon is to keep it short (often just one hop)
+    // rather than a wide-area path, since the station's presence is
+    // already implicit in whatever it digipeats for others.
+    const APRS_DEFAULT_RF_BEACON_PATH = 'WIDE1-1';
     const APRS_DEFAULT_RATE_1MIN = '6';
     const APRS_DEFAULT_RATE_5MIN = '10';
     const APRS_DEFAULT_DEDUPE = '60';
@@ -1014,13 +1030,32 @@
 
     // Shared markup for the RF beacon / IGate beacon sections — identical
     // fields apart from Path, which only makes sense for an RF beacon.
+    // Location (GPS/manual/lat-lon) is deliberately not here — it's moving
+    // to its own dedicated GPS settings page, shared across everything
+    // that needs a position rather than duplicated per beacon.
     function beaconFieldsHTML(prefix, { includePath }) {
       return `
         ${includePath ? `
         <div class="field">
           <label for="${prefix}-path">Path</label>
-          <input type="text" id="${prefix}-path" placeholder="e.g. WIDE2-2">
-        </div>` : ''}
+          <input type="text" id="${prefix}-path" value="${APRS_DEFAULT_RF_BEACON_PATH}">
+          <p class="hint">Kept short for a fixed station's own beacon — WIDE1-1 (one hop) is standard practice rather than a wide-area path.</p>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="${prefix}-phg-power">Power</label>
+            <div class="field-suffix"><input type="number" id="${prefix}-phg-power" min="0" placeholder="e.g. 5"><span>W</span></div>
+          </div>
+          <div class="field">
+            <label for="${prefix}-phg-height">Height</label>
+            <div class="field-suffix"><input type="number" id="${prefix}-phg-height" min="0" placeholder="e.g. 20"><span>ft AAT</span></div>
+          </div>
+          <div class="field">
+            <label for="${prefix}-phg-gain">Gain</label>
+            <div class="field-suffix"><input type="number" id="${prefix}-phg-gain" min="0" placeholder="e.g. 3"><span>dB</span></div>
+          </div>
+        </div>
+        <p class="hint">Optional. Antenna power/height/gain, encoded into the beacon so other stations can estimate your range. Leave blank to omit.</p>` : ''}
         <div class="field-row">
           <div class="field">
             <label for="${prefix}-delay">Initial delay</label>
@@ -1031,44 +1066,7 @@
             <div class="field-suffix"><input type="number" id="${prefix}-interval" min="1" value="30"><span>min</span></div>
           </div>
         </div>
-        <div class="field">
-          <label>Location</label>
-          <div class="radio-row">
-            <label><input type="radio" name="${prefix}-locsource" value="gps" checked> GPS</label>
-            <label><input type="radio" name="${prefix}-locsource" value="fixed"> Manual</label>
-          </div>
-          <p class="hint" id="${prefix}-gps-hint">GPS isn't set up yet — this will use the GPS reading once GPS setup is added later.</p>
-          <div class="field-row hidden" id="${prefix}-manual-loc">
-            <div class="field">
-              <label for="${prefix}-lat">Latitude</label>
-              <input type="number" id="${prefix}-lat" step="0.000001" placeholder="e.g. -36.848461">
-            </div>
-            <div class="field">
-              <label for="${prefix}-lon">Longitude</label>
-              <input type="number" id="${prefix}-lon" step="0.000001" placeholder="e.g. 174.763336">
-            </div>
-          </div>
-          <button type="button" class="hidden" id="${prefix}-current-pos" disabled>Use current position</button>
-          <p class="hint hidden" id="${prefix}-current-pos-hint">Needs GPS — not set up yet.</p>
-        </div>
       `;
-    }
-
-    function wireBeaconFields(prefix) {
-      const radios = document.querySelectorAll(`input[name="${prefix}-locsource"]`);
-      const manualLoc = document.getElementById(`${prefix}-manual-loc`);
-      const currentPosBtn = document.getElementById(`${prefix}-current-pos`);
-      const currentPosHint = document.getElementById(`${prefix}-current-pos-hint`);
-      const gpsHint = document.getElementById(`${prefix}-gps-hint`);
-      function update() {
-        const isFixed = document.querySelector(`input[name="${prefix}-locsource"]:checked`).value === 'fixed';
-        manualLoc.classList.toggle('hidden', !isFixed);
-        currentPosBtn.classList.toggle('hidden', !isFixed);
-        currentPosHint.classList.toggle('hidden', !isFixed);
-        gpsHint.classList.toggle('hidden', isFixed);
-      }
-      radios.forEach(r => r.addEventListener('change', update));
-      update();
     }
 
     function restoreBeaconFields(prefix, saved) {
@@ -1077,26 +1075,26 @@
       if (pathEl && saved.path !== undefined) pathEl.value = saved.path;
       document.getElementById(`${prefix}-delay`).value = saved.delay ?? 1;
       document.getElementById(`${prefix}-interval`).value = saved.interval ?? 30;
-      if (saved.location) {
-        const radio = document.querySelector(`input[name="${prefix}-locsource"][value="${saved.location.source || 'gps'}"]`);
-        if (radio) radio.checked = true;
-        if (saved.location.latitude !== undefined) document.getElementById(`${prefix}-lat`).value = saved.location.latitude;
-        if (saved.location.longitude !== undefined) document.getElementById(`${prefix}-lon`).value = saved.location.longitude;
+      const powerEl = document.getElementById(`${prefix}-phg-power`);
+      if (powerEl) {
+        powerEl.value = saved.phg?.power ?? '';
+        document.getElementById(`${prefix}-phg-height`).value = saved.phg?.height ?? '';
+        document.getElementById(`${prefix}-phg-gain`).value = saved.phg?.gain ?? '';
       }
     }
 
     function collectBeaconFields(prefix, { includePath }) {
-      const source = document.querySelector(`input[name="${prefix}-locsource"]:checked`).value;
       const beacon = {
         enabled: true,
         delay: document.getElementById(`${prefix}-delay`).value,
         interval: document.getElementById(`${prefix}-interval`).value,
-        location: { source },
       };
-      if (includePath) beacon.path = document.getElementById(`${prefix}-path`).value;
-      if (source === 'fixed') {
-        beacon.location.latitude = document.getElementById(`${prefix}-lat`).value;
-        beacon.location.longitude = document.getElementById(`${prefix}-lon`).value;
+      if (includePath) {
+        beacon.path = document.getElementById(`${prefix}-path`).value;
+        const power = document.getElementById(`${prefix}-phg-power`).value;
+        const height = document.getElementById(`${prefix}-phg-height`).value;
+        const gain = document.getElementById(`${prefix}-phg-gain`).value;
+        if (power || height || gain) beacon.phg = { power, height, gain };
       }
       return beacon;
     }
@@ -1318,19 +1316,20 @@
 
         rfEnabled.disabled = !isDigi;
         if (!isDigi) rfEnabled.checked = false;
-        rfSection.classList.toggle('disabled', !isDigi || !rfEnabled.checked);
+        // .disabled = genuinely unavailable (mode wrong), not just unchecked
+        // — those need to look different, since one is clickable and the
+        // other isn't.
+        rfSection.classList.toggle('disabled', !isDigi);
         rfSection.classList.toggle('active', isDigi && rfEnabled.checked);
 
         igEnabled.disabled = !igateOn;
         if (!igateOn) igEnabled.checked = false;
         igateSection.classList.toggle('disabled', !igateOn);
-        igSection.classList.toggle('disabled', !igateOn || !igEnabled.checked);
+        igSection.classList.toggle('disabled', !igateOn);
         igSection.classList.toggle('active', igateOn && igEnabled.checked);
       }
 
       wireSymbolPicker('station-symbol');
-      wireBeaconFields('rf');
-      wireBeaconFields('ig');
 
       function applyDigipeatRulesPreset() {
         const rulesSelect = document.getElementById('aprs-digipeat-rules');
@@ -1363,11 +1362,12 @@
       digipeatMode.addEventListener('change', updateModeVisibility);
       igateMode.addEventListener('change', updateModeVisibility);
       rfEnabled.addEventListener('change', () => {
-        rfSection.classList.toggle('disabled', !rfEnabled.checked);
+        // Only ever fires when rfEnabled isn't html-disabled to begin with
+        // (mode is already correct), so .disabled never applies here —
+        // just toggling on/off within the "available" state.
         rfSection.classList.toggle('active', rfEnabled.checked);
       });
       igEnabled.addEventListener('change', () => {
-        igSection.classList.toggle('disabled', !igEnabled.checked);
         igSection.classList.toggle('active', igEnabled.checked);
       });
 
@@ -1455,6 +1455,195 @@
       }
 
       wizardData.aprs = aprsConfig;
+      return true;
+    }
+
+    // ── GPS setup step ───────────────────────────────────────────────
+    function renderGpsStep() {
+      const g = wizardData.gps || {};
+      document.getElementById('step-content').innerHTML = `
+        <section>
+          <div class="field">
+            <label for="gps-device">GPS device</label>
+            <select id="gps-device">
+              <option value="none">No GPS</option>
+            </select>
+            <p class="hint">Detected serial ports — pick the one your GPS is connected to, or leave as "No GPS".</p>
+          </div>
+
+          <div class="field">
+            <label for="gps-position-source">Beacon position</label>
+            <select id="gps-position-source">
+              <option value="gps">GPS</option>
+              <option value="manual">Manual</option>
+            </select>
+          </div>
+
+          <div class="field-row hidden" id="gps-manual-loc">
+            <div class="field">
+              <label for="gps-lat">Latitude</label>
+              <input type="number" id="gps-lat" step="0.000001" placeholder="e.g. -36.848461">
+            </div>
+            <div class="field">
+              <label for="gps-lon">Longitude</label>
+              <input type="number" id="gps-lon" step="0.000001" placeholder="e.g. 174.763336">
+            </div>
+          </div>
+          <div class="field hidden" id="gps-getcurrent-row">
+            <button type="button" id="btn-gps-getcurrent" disabled>Get current position</button>
+            <p class="msg" id="gps-getcurrent-msg"></p>
+          </div>
+
+          <div class="field">
+            <label class="subsection-title">
+              <input type="checkbox" id="gps-time-sync" disabled>
+              Update system time from GPS
+            </label>
+          </div>
+          <div class="field hidden" id="gps-timezone-field">
+            <label for="gps-timezone">Timezone</label>
+            <select id="gps-timezone"></select>
+          </div>
+
+          <div class="field hidden" id="gps-status-field">
+            <label>Live GPS status</label>
+            <div class="status-box" id="gps-status-box">Not checked yet.</div>
+            <button type="button" id="btn-gps-refresh" style="margin-top: 8px;">Refresh</button>
+          </div>
+        </section>
+      `;
+
+      const deviceSelect = document.getElementById('gps-device');
+      const sourceSelect = document.getElementById('gps-position-source');
+      const manualLoc = document.getElementById('gps-manual-loc');
+      const getCurrentRow = document.getElementById('gps-getcurrent-row');
+      const getCurrentBtn = document.getElementById('btn-gps-getcurrent');
+      const timeSyncCheckbox = document.getElementById('gps-time-sync');
+      const timezoneField = document.getElementById('gps-timezone-field');
+      const statusField = document.getElementById('gps-status-field');
+
+      function updateGpsVisibility() {
+        const hasDevice = deviceSelect.value !== 'none';
+        // No GPS device to source a position from — fall back to Manual.
+        if (!hasDevice && sourceSelect.value === 'gps') sourceSelect.value = 'manual';
+        sourceSelect.querySelector('option[value="gps"]').disabled = !hasDevice;
+        const isManual = sourceSelect.value === 'manual';
+        manualLoc.classList.toggle('hidden', !isManual);
+        getCurrentRow.classList.toggle('hidden', !isManual);
+        getCurrentBtn.disabled = !hasDevice;
+        timeSyncCheckbox.disabled = !hasDevice;
+        if (!hasDevice) timeSyncCheckbox.checked = false;
+        timezoneField.classList.toggle('hidden', !timeSyncCheckbox.checked);
+        statusField.classList.toggle('hidden', !hasDevice);
+      }
+
+      deviceSelect.addEventListener('change', updateGpsVisibility);
+      sourceSelect.addEventListener('change', updateGpsVisibility);
+      timeSyncCheckbox.addEventListener('change', updateGpsVisibility);
+
+      getCurrentBtn.addEventListener('click', async () => {
+        const msg = document.getElementById('gps-getcurrent-msg');
+        const prevText = getCurrentBtn.textContent;
+        getCurrentBtn.disabled = true;
+        getCurrentBtn.textContent = 'Getting position…';
+        msg.className = 'msg';
+        try {
+          const res = await fetch('/api/gps/position');
+          const data = await res.json();
+          if (data.available) {
+            document.getElementById('gps-lat').value = data.latitude;
+            document.getElementById('gps-lon').value = data.longitude;
+            msg.textContent = 'Position filled in from GPS.';
+            msg.className = 'msg success';
+          } else {
+            msg.textContent = data.reason || 'No GPS fix available.';
+            msg.className = 'msg error';
+          }
+        } catch (e) {
+          msg.textContent = 'Could not reach the server.';
+          msg.className = 'msg error';
+        } finally {
+          getCurrentBtn.disabled = deviceSelect.value === 'none';
+          getCurrentBtn.textContent = prevText;
+        }
+      });
+
+      document.getElementById('btn-gps-refresh').addEventListener('click', refreshGpsStatus);
+
+      async function refreshGpsStatus() {
+        const box = document.getElementById('gps-status-box');
+        box.textContent = 'Checking…';
+        try {
+          const res = await fetch('/api/gps/status');
+          const data = await res.json();
+          if (!data.available) {
+            box.textContent = data.reason || 'GPS not available.';
+            return;
+          }
+          const sats = `${data.satellites_used ?? '?'} used / ${data.satellites_visible ?? '?'} visible`;
+          const pos = data.has_fix ? `${data.latitude.toFixed(6)}, ${data.longitude.toFixed(6)}` : '—';
+          box.innerHTML = '';
+          [['Fix', data.fix], ['Position', pos], ['Satellites', sats]].forEach(([label, value]) => {
+            const row = document.createElement('div');
+            const l = document.createElement('strong');
+            l.textContent = `${label}: `;
+            row.append(l, value);
+            box.appendChild(row);
+          });
+        } catch (e) {
+          box.textContent = 'Could not reach the server.';
+        }
+      }
+
+      async function loadGpsDevices() {
+        try {
+          const res = await fetch('/api/hardware/serial-devices');
+          const data = await res.json();
+          (data.devices || []).forEach(d => {
+            const label = d.description ? `${d.device} — ${d.description}` : d.device;
+            addOption(deviceSelect, `serial:${d.device}`, label);
+          });
+          if (g.device) deviceSelect.value = g.device;
+        } catch (e) {
+          // "No GPS" still works
+        } finally {
+          updateGpsVisibility();
+          if (deviceSelect.value !== 'none') refreshGpsStatus();
+        }
+      }
+
+      async function loadTimezones() {
+        const tzSelect = document.getElementById('gps-timezone');
+        try {
+          const res = await fetch('/api/system/timezones');
+          const data = await res.json();
+          (data.timezones || []).forEach(tz => addOption(tzSelect, tz, tz));
+        } catch (e) {
+          addOption(tzSelect, 'UTC', 'UTC');
+        }
+        if (g.timezone) tzSelect.value = g.timezone;
+      }
+
+      // Restore anything entered earlier this session.
+      sourceSelect.value = g.position_source || 'manual';
+      if (g.latitude !== undefined) document.getElementById('gps-lat').value = g.latitude;
+      if (g.longitude !== undefined) document.getElementById('gps-lon').value = g.longitude;
+      timeSyncCheckbox.checked = !!g.time_sync;
+
+      loadGpsDevices();
+      loadTimezones();
+      updateGpsVisibility();
+    }
+
+    function saveGpsStep() {
+      wizardData.gps = {
+        device: document.getElementById('gps-device').value,
+        position_source: document.getElementById('gps-position-source').value,
+        latitude: document.getElementById('gps-lat').value,
+        longitude: document.getElementById('gps-lon').value,
+        time_sync: document.getElementById('gps-time-sync').checked,
+        timezone: document.getElementById('gps-timezone').value,
+      };
       return true;
     }
 
