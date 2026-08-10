@@ -275,7 +275,6 @@
     .subsection.disabled {
       opacity: 0.5;
       border-style: dashed;
-      pointer-events: none;
     }
     .subsection.disabled .subsection-title { cursor: default; }
     .subsection.disabled .subsection-title input[type="checkbox"] {
@@ -283,11 +282,28 @@
       outline-color: var(--border);
     }
     .subsection.disabled .subsection-body { display: none; }
+    /* Only the collapsible disclosures (Digipeater/IGate settings) need
+       pointer-events blocked here — they have no native disabled state.
+       Checkboxes (RF/IGate Beacon) already block themselves correctly via
+       their own disabled attribute when unavailable; blocking pointer
+       events at the section level too would make an unchecked-but-available
+       checkbox permanently unclickable, since .disabled stays applied
+       until it's checked. */
+    .subsection.disabled details {
+      pointer-events: none;
+    }
 
     details.advanced {
       margin-top: 14px;
       border-top: 1px solid var(--border);
       padding-top: 10px;
+    }
+    /* No separator line needed when it's the first thing in its box —
+       nothing above it to visually separate from. */
+    details.advanced:first-child {
+      margin-top: 0;
+      border-top: none;
+      padding-top: 0;
     }
     details.advanced > summary {
       cursor: pointer;
@@ -340,8 +356,11 @@
       display: flex;
       align-items: center;
       gap: 10px;
+      flex-wrap: wrap;
     }
-    .symbol-code-input {
+    /* input[type="text"] beats a bare class on specificity, so the base
+       width:100% rule was winning over this — hence the overflow. */
+    input.symbol-code-input {
       width: 70px;
       flex: none;
       text-align: center;
@@ -362,7 +381,8 @@
       border-radius: 4px;
     }
     .symbol-select {
-      margin-top: 8px;
+      flex: 1 1 160px;
+      width: auto;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
 
@@ -943,12 +963,12 @@
             ${symbolGlyphHTML(initialSym, 48)}
             <input type="text" class="symbol-code-input" maxlength="3" value="${code}" placeholder="/#">
             <span class="symbol-badge-inline${initialSym.overlay ? '' : ' hidden'}">${initialSym.overlay || ''}</span>
+            <select class="symbol-select">
+              <option value="">— pick from list —</option>
+              <optgroup label="Primary table (/)">${primaryOptions}</optgroup>
+              <optgroup label="Alternate table (\\)">${altOptions}</optgroup>
+            </select>
           </div>
-          <select class="symbol-select">
-            <option value="">— pick from list —</option>
-            <optgroup label="Primary table (/)">${primaryOptions}</optgroup>
-            <optgroup label="Alternate table (\\)">${altOptions}</optgroup>
-          </select>
         </div>
       `;
     }
@@ -1097,12 +1117,22 @@
             </div>
           </div>
 
-          <div class="field">
-            <label for="aprs-digipeat-mode">Digipeating</label>
-            <select id="aprs-digipeat-mode">
-              <option value="rxonly">RX only</option>
-              <option value="digipeater">RX &amp; TX</option>
-            </select>
+          <div class="field-row">
+            <div class="field">
+              <label for="aprs-digipeat-mode">Digipeating</label>
+              <select id="aprs-digipeat-mode">
+                <option value="rxonly">RX only</option>
+                <option value="digipeater">RX &amp; TX</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="aprs-igate-mode">IGate</label>
+              <select id="aprs-igate-mode">
+                <option value="off">Off</option>
+                <option value="rxonly">RX only</option>
+                <option value="rxtx">RX &amp; TX</option>
+              </select>
+            </div>
           </div>
 
           <div class="subsection disabled" id="digipeat-section">
@@ -1115,7 +1145,7 @@
                   <option value="widearea">Wide-area digi (handles WIDE2-1, WIDE2-2, etc.)</option>
                   <option value="custom">Custom</option>
                 </select>
-                <p class="hint">Which alias patterns get repeated. Fill-in digis extend range for low-power/HT stations nearby; wide-area digis (typically hilltop, well-sited) handle the longer-range hops. Most setups use one of these two — see aprs.org's digipeater guide if unsure which fits your site.</p>
+                <p class="hint">Which alias patterns get repeated — fill-in for nearby low-power stations, wide-area for longer-range hilltop sites.</p>
               </div>
               <div class="field-row">
                 <div class="field">
@@ -1140,15 +1170,6 @@
             </details>
           </div>
 
-          <div class="field">
-            <label for="aprs-igate-mode">IGate</label>
-            <select id="aprs-igate-mode">
-              <option value="off">Off</option>
-              <option value="rxonly">RX only</option>
-              <option value="rxtx">RX &amp; TX</option>
-            </select>
-          </div>
-
           <div class="subsection disabled" id="igate-section">
             <div class="field">
               <label for="aprs-igate-region">IGate region</label>
@@ -1161,7 +1182,7 @@
                 <option value="aunz">Oceania</option>
                 <option value="custom">Custom</option>
               </select>
-              <p class="hint">Sets the APRS-IS server address below. Direwolf's own guidance is to use a regional rotate rather than the global one where possible.</p>
+              <p class="hint">Sets the APRS-IS server address below — a regional rotate is preferred over the global one where possible.</p>
             </div>
             <details class="advanced">
               <summary>IGate settings</summary>
@@ -1171,21 +1192,21 @@
                   <input type="text" id="aprs-igate-passcode" placeholder="Generated from callsign">
                   <button type="button" id="btn-generate-passcode">Generate</button>
                 </div>
-                <p class="hint">Fills in automatically from your callsign — use Generate if you clear it and want it back.</p>
               </div>
-              <div class="field">
-                <label for="aprs-igate-server">Server address</label>
-                <input type="text" id="aprs-igate-server" value="${APRS_DEFAULT_SERVER}" readonly>
-                <p class="hint">Set by the IGate region picker above — choose "Custom" there to edit this directly.</p>
-              </div>
-              <div class="field">
-                <label for="aprs-igate-port">Server port</label>
-                <input type="number" id="aprs-igate-port" value="${APRS_DEFAULT_PORT}">
+              <div class="field-row">
+                <div class="field" style="flex: 3;">
+                  <label for="aprs-igate-server">Server address</label>
+                  <input type="text" id="aprs-igate-server" value="${APRS_DEFAULT_SERVER}" readonly>
+                </div>
+                <div class="field" style="flex: 1;">
+                  <label for="aprs-igate-port">Port</label>
+                  <input type="number" id="aprs-igate-port" value="${APRS_DEFAULT_PORT}" readonly>
+                </div>
               </div>
               <div class="field">
                 <label for="aprs-igate-filter">APRS-IS filter (server → you)</label>
                 <input type="text" id="aprs-igate-filter" placeholder="e.g. m/50 (optional)">
-                <p class="hint">Limits which packets APRS-IS sends back to you (e.g. only within a certain distance) — leave blank to receive everything.</p>
+                <p class="hint">Without this, APRS-IS already limits you to traffic related to what you gate — add a filter (e.g. a range like m/50) to see more than that, not less.</p>
               </div>
               <div class="field">
                 <label for="aprs-igate-gatefilter">Packet types to gate (you → server)</label>
@@ -1195,7 +1216,7 @@
               <div class="field">
                 <label for="aprs-igate-txvia">TX via path</label>
                 <input type="text" id="aprs-igate-txvia" value="${APRS_DEFAULT_TXVIA}">
-                <p class="hint">Path used when relaying messages from the internet onto RF. Only takes effect in RX &amp; TX mode.</p>
+                <p class="hint">Path used when relaying messages from the internet onto RF. Only takes effect when IGate mode is set to "RX &amp; TX".</p>
               </div>
               <div class="field-row">
                 <div class="field">
@@ -1328,9 +1349,14 @@
       function applyIgateRegionPreset() {
         const regionSelect = document.getElementById('aprs-igate-region');
         const serverInput = document.getElementById('aprs-igate-server');
+        const portInput = document.getElementById('aprs-igate-port');
         const server = APRS_IGATE_REGIONS[regionSelect.value];
-        if (server) serverInput.value = server;
+        if (server) {
+          serverInput.value = server;
+          portInput.value = APRS_DEFAULT_PORT;
+        }
         serverInput.readOnly = !!server;
+        portInput.readOnly = !!server;
       }
       document.getElementById('aprs-igate-region').addEventListener('change', applyIgateRegionPreset);
 
