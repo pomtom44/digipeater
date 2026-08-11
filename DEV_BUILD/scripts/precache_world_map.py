@@ -23,15 +23,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from services import tiles  # noqa: E402 — after sys.path fix-up above
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
+# httpx (and httpcore underneath it) log one INFO line per HTTP request at
+# this level — harmless for a handful of requests, but a 1365-tile world
+# pre-cache turned that into 1365 lines of install output. Only our own
+# messages below are meant to show.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 WORLD_MAX_ZOOM = 5
+_PROGRESS_INTERVAL_S = 3
 
 
 async def main() -> None:
     downloader = tiles.TileDownloader(tiles.WORLD_BOUNDS, 0, WORLD_MAX_ZOOM)
     total = downloader.status()["total"]
     print(f"Pre-caching world map (zoom 0-{WORLD_MAX_ZOOM}, {total} tiles)...")
-    await downloader.run()
+
+    async def _report_progress():
+        while True:
+            await asyncio.sleep(_PROGRESS_INTERVAL_S)
+            s = downloader.status()
+            print(f"  {s['done']}/{s['total']} tiles (zoom {s['current_zoom']})...")
+
+    progress_task = asyncio.create_task(_report_progress())
+    try:
+        await downloader.run()
+    finally:
+        progress_task.cancel()
+
     status = downloader.status()
     print(f"World map pre-cache done — {status['done']} cached, {status['failed']} failed.")
 

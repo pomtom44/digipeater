@@ -29,12 +29,19 @@ _INTERNET_CHECK_HOST = "tile.openstreetmap.org"
 _INTERNET_CHECK_PORT = 443
 _INTERNET_CHECK_TIMEOUT_S = 3.0
 
+# Real-world regions (hundreds of km, city-level zoom) land in the
+# hundred-thousand-tile range — bumped from 16 once that stopped being a
+# hypothetical. Raise further only with real justification, not just
+# because a bigger number downloads faster; see TileDownloader.run().
+_MAX_CONCURRENT = 24
+
 AVG_TILE_KB = 15  # rough average tile size, for the size estimate only
 
 # 85.0 rather than 90.0 — Web Mercator (what every slippy-map tile server
 # uses, including OSM's) is undefined at the poles; ~85.05 is the standard
 # cutoff. Used for the install-time world pre-cache, not the wizard's
-# region picker (which is always a radius around a real station position).
+# region picker (which sends its own explicit north/south/east/west bounds
+# straight from the map's draggable rectangle).
 WORLD_BOUNDS = {"north": 85.0, "south": -85.0, "east": 180.0, "west": -180.0}
 
 
@@ -55,20 +62,6 @@ async def has_internet() -> bool:
     except OSError:
         pass
     return True
-
-
-def _bounds_from_radius(lat: float, lon: float, radius_km: float) -> dict:
-    """A simple flat-earth approximation (111km/degree latitude, scaled by
-    cos(lat) for longitude) — plenty accurate for picking a tile range, not
-    meant for precision navigation."""
-    lat_delta = radius_km / 111.0
-    lon_delta = radius_km / (111.0 * max(math.cos(math.radians(lat)), 0.01))
-    return {
-        "north": lat + lat_delta,
-        "south": lat - lat_delta,
-        "east": lon + lon_delta,
-        "west": lon - lon_delta,
-    }
 
 
 def _lon_to_tile(lon: float, z: int) -> int:
@@ -95,9 +88,9 @@ def _tile_count_for_bounds(bounds: dict, zoom_min: int, zoom_max: int) -> int:
     return total
 
 
-def estimate_tiles(lat: float, lon: float, radius_km: float, zoom_min: int, zoom_max: int) -> tuple[int, float]:
+def estimate_tiles_for_bounds(bounds: dict, zoom_min: int, zoom_max: int) -> tuple[int, float]:
     """Return (tile_count, estimated_mb)."""
-    total = _tile_count_for_bounds(_bounds_from_radius(lat, lon, radius_km), zoom_min, zoom_max)
+    total = _tile_count_for_bounds(bounds, zoom_min, zoom_max)
     size_mb = (total * AVG_TILE_KB) / 1024
     return total, size_mb
 
@@ -116,12 +109,6 @@ class TileDownloader:
         self._active = False
         self._cancelled = False
         self._current_zoom = zoom_min
-
-    @classmethod
-    def for_radius(cls, lat: float, lon: float, radius_km: float, zoom_min: int, zoom_max: int) -> "TileDownloader":
-        """The wizard's region-picker path — a center point + radius, not
-        an explicit bounding box."""
-        return cls(_bounds_from_radius(lat, lon, radius_km), zoom_min, zoom_max)
 
     def status(self) -> dict:
         pct = round((self._done / self._total) * 100, 1) if self._total else 0
@@ -153,16 +140,38 @@ class TileDownloader:
                 y_min = _lat_to_tile(self._bounds["north"], z)
                 y_max = _lat_to_tile(self._bounds["south"], z)
 
-                tasks = []
+                # A queue + fixed worker pool, not fixed-size batches — a
+                # worker picks up the next tile the instant it's free,
+                # instead of every worker waiting for the *slowest* tile in
+                # a batch before any of them can start the next one. Same
+                # concurrency ceiling either way, but no artificial stalls;
+                # this alone was leaving real throughput on the table.
+                # Queue-based rather than one asyncio.Task per tile, since
+                # a single zoom level can be a six-figure tile count — a
+                # bounded number of workers pulling from a queue keeps
+                # memory flat regardless of how large that gets.
+                queue: asyncio.Queue = asyncio.Queue()
                 for x in range(min(x_min, x_max), max(x_min, x_max) + 1):
                     for y in range(min(y_min, y_max), max(y_min, y_max) + 1):
-                        tasks.append(self._download_tile(client, z, x, y))
+                        queue.put_nowait((z, x, y))
 
-                # Small batches — considerate of the tile server, not a scraper.
-                for i in range(0, len(tasks), 8):
-                    if self._cancelled:
-                        break
-                    await asyncio.gather(*tasks[i:i + 8], return_exceptions=True)
+                async def _worker():
+                    while not self._cancelled:
+                        try:
+                            zz, xx, yy = queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            return
+                        await self._download_tile(client, zz, xx, yy)
+
+                # _MAX_CONCURRENT — deliberately still well short of what
+                # httpx's connection pool could sustain. OSM's tile usage
+                # policy asks bulk consumers to be considerate, and
+                # traffic that looks abusive risks the whole IP getting
+                # rate-limited or blocked — worse than "slow", since that
+                # breaks tile downloads entirely, including small future
+                # ones. See TODO.md.
+                workers = [asyncio.create_task(_worker()) for _ in range(_MAX_CONCURRENT)]
+                await asyncio.gather(*workers)
 
         self._active = False
         logger.info("Tile download finished — %d done, %d failed", self._done, self._failed)

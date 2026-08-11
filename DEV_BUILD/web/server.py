@@ -147,29 +147,32 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         return {"online": await tiles.has_internet()}
 
     @app.get("/api/map/estimate")
-    async def map_estimate(lat: float, lon: float, radius_km: float, zoom_min: int, zoom_max: int):
-        if zoom_min < 1 or zoom_max > 19 or zoom_min > zoom_max:
-            raise HTTPException(status_code=400, detail="Invalid zoom range")
-        count, size_mb = tiles.estimate_tiles(lat, lon, radius_km, zoom_min, zoom_max)
+    async def map_estimate(north: float, south: float, east: float, west: float, zoom_min: int, zoom_max: int):
+        if zoom_min < 1 or zoom_max > 19 or zoom_min > zoom_max or north <= south or east <= west:
+            raise HTTPException(status_code=400, detail="Invalid region")
+        bounds = {"north": north, "south": south, "east": east, "west": west}
+        count, size_mb = tiles.estimate_tiles_for_bounds(bounds, zoom_min, zoom_max)
         return {"tile_count": count, "estimated_mb": round(size_mb, 1)}
 
     @app.post("/api/map/cache/start")
     async def map_cache_start(request: Request):
         body = await request.json()
         try:
-            lat = float(body.get("lat"))
-            lon = float(body.get("lon"))
-            radius_km = float(body.get("radius_km"))
+            north = float(body.get("north"))
+            south = float(body.get("south"))
+            east = float(body.get("east"))
+            west = float(body.get("west"))
             zoom_min = int(body.get("zoom_min"))
             zoom_max = int(body.get("zoom_max"))
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="Invalid region parameters")
-        if zoom_min < 1 or zoom_max > 19 or zoom_min > zoom_max:
-            raise HTTPException(status_code=400, detail="Invalid zoom range")
+        if zoom_min < 1 or zoom_max > 19 or zoom_min > zoom_max or north <= south or east <= west:
+            raise HTTPException(status_code=400, detail="Invalid region")
         existing = map_download_state["downloader"]
         if existing and existing.status()["active"]:
             raise HTTPException(status_code=409, detail="A download is already in progress")
-        downloader = tiles.TileDownloader.for_radius(lat, lon, radius_km, zoom_min, zoom_max)
+        bounds = {"north": north, "south": south, "east": east, "west": west}
+        downloader = tiles.TileDownloader(bounds, zoom_min, zoom_max)
         map_download_state["downloader"] = downloader
         asyncio.create_task(downloader.run())
         return {"ok": True}

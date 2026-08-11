@@ -21,14 +21,13 @@ ok()   { echo -e "${GREEN}  ✓ $1${NC}"; }
 info() { echo -e "${YELLOW}  → $1${NC}"; }
 fail() { echo -e "${RED}  ✗ $1${NC}"; exit 1; }
 
-# Runs a command with its output hidden behind a spinner, only showing that
-# output if the command actually fails (e.g. apt-get's per-package unpacking
-# noise, which -qq alone doesn't suppress since that's dpkg's own output).
-run_with_spinner() {
+# Internal — shows a spinner while running a command with output captured
+# to $_SPIN_LOG, restoring the cursor line when done. Returns the command's
+# exit status; the two wrappers below decide what to do with a failure.
+_spin() {
     local msg="$1"; shift
-    local logfile
-    logfile=$(mktemp)
-    "$@" > "$logfile" 2>&1 &
+    _SPIN_LOG=$(mktemp)
+    "$@" > "$_SPIN_LOG" 2>&1 &
     local pid=$!
     local spinstr='|/-\'
     local i=0
@@ -40,13 +39,39 @@ run_with_spinner() {
     wait "$pid"
     local status=$?
     printf "\r\033[K"
-    if [ $status -ne 0 ]; then
+    return $status
+}
+
+# Runs a command with its output hidden behind a spinner, only showing that
+# output if the command actually fails (e.g. apt-get's per-package unpacking
+# noise, which -qq alone doesn't suppress since that's dpkg's own output).
+# Aborts the whole installer on failure.
+run_with_spinner() {
+    local msg="$1"
+    if ! _spin "$@"; then
         echo -e "${RED}  ✗ $msg failed:${NC}"
-        cat "$logfile"
-        rm -f "$logfile"
+        cat "$_SPIN_LOG"
+        rm -f "$_SPIN_LOG"
         exit 1
     fi
-    rm -f "$logfile"
+    rm -f "$_SPIN_LOG"
+}
+
+# Same spinner UI, but a failure is just a warning (with the captured
+# output) instead of aborting the whole install — for steps like the world
+# map pre-cache, where a flaky connection at that exact moment shouldn't
+# sink the rest of setup the way a failed apt/git step should. Returns 1 on
+# failure so the caller can skip its own success message.
+run_with_spinner_soft() {
+    local msg="$1"
+    if _spin "$@"; then
+        rm -f "$_SPIN_LOG"
+        return 0
+    fi
+    echo -e "${YELLOW}  ⚠ $msg failed — continuing:${NC}"
+    cat "$_SPIN_LOG"
+    rm -f "$_SPIN_LOG"
+    return 1
 }
 
 echo ""
@@ -216,17 +241,14 @@ run_with_spinner "Installing Python packages..." "$VENV_DIR/bin/pip" install --q
 ok "Python packages installed"
 
 # ── Pre-cache world map tiles (zoom 0-5) ──────
-# Best-effort, not run_with_spinner — a coarse ~20MB whole-world base layer
+# Soft version of run_with_spinner — a coarse ~20MB whole-world base layer
 # so a future map view never renders blank before a specific region has
 # been downloaded via the wizard's Map caching step. Unlike apt/git above
 # (which the install can't proceed without), a flaky connection here
 # shouldn't abort the rest of setup — it's just skipped, and can be re-run
 # later with: DEV_BUILD/scripts/precache_world_map.py
-info "Pre-caching world map tiles (zoom 0-5, ~20MB)..."
-if (cd "$APP_DIR" && "$VENV_DIR/bin/python" scripts/precache_world_map.py); then
+if run_with_spinner_soft "Pre-caching world map tiles (zoom 0-5, ~20MB)..." bash -c "cd '$APP_DIR' && '$VENV_DIR/bin/python' scripts/precache_world_map.py"; then
     ok "World map tiles cached"
-else
-    echo -e "${YELLOW}  ⚠ Could not pre-cache world map tiles (no internet yet?) — continuing. Re-run scripts/precache_world_map.py later.${NC}"
 fi
 
 # ── Install systemd service ───────────────────

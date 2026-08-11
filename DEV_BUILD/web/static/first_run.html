@@ -169,18 +169,20 @@
       margin: 8px 0 4px;
     }
 
-    /* Leaflet divIcon for the map region's drag-to-resize handle — plain
-       CSS square rather than the default pin, so it doesn't get confused
-       with the center marker. */
-    .map-resize-handle {
+    /* Leaflet divIcons for the map region's edge drag handles — plain CSS
+       squares rather than the default pin, so they don't get confused
+       with the center marker. One pair per axis, so the cursor hints at
+       which direction actually does anything when dragged. */
+    .map-edge-handle {
       width: 14px;
       height: 14px;
       background: var(--accent);
       border: 2px solid #fff;
       border-radius: 3px;
       box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
-      cursor: nwse-resize;
     }
+    .map-edge-handle.ns { cursor: ns-resize; }
+    .map-edge-handle.ew { cursor: ew-resize; }
 
     .row {
       display: flex;
@@ -701,7 +703,6 @@
             <label for="radio-power">TX power level</label>
             <select id="radio-power"></select>
           </div>
-          <p class="hint">Radio model and power level are placeholders for now. Audio device, connected CM108-type USB PTT adapters, and any connected radio's serial port are read live from this device.</p>
         </section>
       `;
       const modelSelect = document.getElementById('radio-model');
@@ -1750,7 +1751,17 @@
     const MAP_MIN_ZOOM = 1;
     const MAP_SLIDER_MAX_ZOOM = 16; // OSM allows up to 19, but past ~16 tile counts explode for little practical benefit on a bulk pre-cache
     const MAP_DEFAULT_MAX_ZOOM = 10;
+    // Deliberately conservative — a real single shared public tile server
+    // under real-world conditions, not a best-case number. Only used to
+    // warn about download time before committing (tile counts roughly
+    // quadruple per zoom level, so this is easy to underestimate by eye).
+    const ASSUMED_TILES_PER_SEC = 15;
     let mapStatusPollTimer = null;
+    // Module-level, not render-local — saveMapStep() needs to read the
+    // current region after renderMapStep()'s own closure has done its
+    // work. There's no input field holding this anymore (GUI-only, no
+    // coordinate text boxes), so this plain object is the only copy.
+    let mapRegionBounds = null;
 
     function renderMapStep() {
       const m = wizardData.map || {};
@@ -1765,29 +1776,14 @@
 
           <div id="map-online-fields" class="hidden">
             <div id="map-region-picker" style="height: 320px; border-radius: 8px; overflow: hidden; margin-bottom: 12px;"></div>
-            <p class="hint">Drag the pin (or click anywhere on the map) to move the region. Drag the small square at its corner to resize it. The shaded box is what will be downloaded.</p>
+            <p class="hint">Drag the pin (or click anywhere) to move the whole region. Drag the small squares on each edge to resize it — drag one side to make it a rectangle instead of a square.</p>
 
-            <div class="field-row">
-              <div class="field">
-                <label for="map-lat">Center latitude</label>
-                <input type="number" id="map-lat" step="0.000001" placeholder="e.g. -36.848461">
-              </div>
-              <div class="field">
-                <label for="map-lon">Center longitude</label>
-                <input type="number" id="map-lon" step="0.000001" placeholder="e.g. 174.763336">
-              </div>
-            </div>
             <button type="button" id="btn-map-use-station">Use station location</button>
 
-            <div class="field">
-              <label for="map-radius">Radius</label>
-              <div class="field-suffix"><input type="number" id="map-radius" min="1" value="${m.radius_km ?? MAP_DEFAULT_RADIUS_KM}"><span>km</span></div>
-            </div>
             <div class="field">
               <label for="map-zoom-max">Detail level — zoom <span id="map-zoom-max-value"></span></label>
               <input type="range" id="map-zoom-max" min="${MAP_MIN_ZOOM}" max="${MAP_SLIDER_MAX_ZOOM}" value="${m.zoom_max ?? MAP_DEFAULT_MAX_ZOOM}">
             </div>
-            <p class="hint">Tiles come from OpenStreetMap's own free tile server — open, no account or API key needed. Once cached, tiles reload from this device with no internet needed at all, until you re-download to refresh them. Higher detail shows more but downloads far more tiles — keep the region modest.</p>
 
             <div class="status-box" id="map-estimate-box">Estimating…</div>
 
@@ -1808,99 +1804,125 @@
       const progressWrap = document.getElementById('map-progress-wrap');
       const progressBar = document.getElementById('map-progress-bar');
       const progressMsg = document.getElementById('map-progress-msg');
-      const latInput = document.getElementById('map-lat');
-      const lonInput = document.getElementById('map-lon');
 
       // Local to this render — the map container is thrown away and
       // recreated (innerHTML above) each time this step is shown, so a
       // fresh Leaflet map is created fresh each time too, not reused.
+      // mapRegionBounds (the actual region data) is module-level though —
+      // saveMapStep() needs it after this closure is gone, and there's no
+      // input field holding a copy of it anymore.
       let regionMap = null;
       let regionMarker = null;
       let regionRect = null;
-      let resizeHandle = null;
+      let edgeHandleN = null, edgeHandleS = null, edgeHandleE = null, edgeHandleW = null;
 
-      // Same flat-earth approximation as services/tiles.py's
-      // _bounds_from_radius — only used here to draw the preview box, the
-      // actual download still just sends lat/lon/radius_km to the backend.
+      // Same flat-earth approximation the backend used to use for its own
+      // (now-removed) radius-based path — kept here client-side only, to
+      // seed the initial box size when there's nothing saved to restore.
+      // Everything after that works directly off mapRegionBounds; the
+      // backend only ever sees explicit north/south/east/west now.
       function boundsFromRadius(lat, lon, radiusKm) {
         const latDelta = radiusKm / 111.0;
         const lonDelta = radiusKm / (111.0 * Math.max(Math.cos(lat * Math.PI / 180), 0.01));
-        return L.latLngBounds([lat - latDelta, lon - lonDelta], [lat + latDelta, lon + lonDelta]);
+        return { north: lat + latDelta, south: lat - latDelta, east: lon + lonDelta, west: lon - lonDelta };
       }
 
-      // Great-circle distance — used to turn "where the resize handle got
-      // dragged to" into a radius in km, the same unit the radius field
-      // and the backend both work in.
-      function distanceKm(lat1, lon1, lat2, lon2) {
-        const R = 6371;
-        const dLat = (lat2 - lat1) * Math.PI / 180;
-        const dLon = (lon2 - lon1) * Math.PI / 180;
-        const a = Math.sin(dLat / 2) ** 2 +
-          Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-        return 2 * R * Math.asin(Math.sqrt(a));
-      }
-
+      // Redraws the rectangle, center pin, and all four edge handles from
+      // mapRegionBounds — the single source of truth. Every interaction
+      // (drag a handle, drag the pin, click the map) ends by calling this.
       function redrawRegion() {
-        if (!regionMap) return;
-        const lat = parseFloat(latInput.value);
-        const lon = parseFloat(lonInput.value);
-        const radiusKm = parseFloat(document.getElementById('map-radius').value);
-        if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(radiusKm)) return;
-        regionMarker.setLatLng([lat, lon]);
-        const bounds = boundsFromRadius(lat, lon, radiusKm);
-        regionRect.setBounds(bounds);
-        // Keeps the handle sitting exactly on the corner even after a
-        // manual radius/lat/lon edit, not just after dragging the handle
-        // itself.
-        if (resizeHandle) resizeHandle.setLatLng(bounds.getSouthEast());
+        if (!regionMap || !mapRegionBounds) return;
+        const b = mapRegionBounds;
+        const centerLat = (b.north + b.south) / 2;
+        const centerLon = (b.east + b.west) / 2;
+        regionMarker.setLatLng([centerLat, centerLon]);
+        regionRect.setBounds([[b.south, b.west], [b.north, b.east]]);
+        edgeHandleN.setLatLng([b.north, centerLon]);
+        edgeHandleS.setLatLng([b.south, centerLon]);
+        edgeHandleE.setLatLng([centerLat, b.east]);
+        edgeHandleW.setLatLng([centerLat, b.west]);
       }
 
-      function setCenter(lat, lon, panMap) {
-        latInput.value = lat.toFixed(6);
-        lonInput.value = lon.toFixed(6);
+      // Moves the whole box by the same delta in every direction — used by
+      // both dragging the center pin and clicking elsewhere on the map.
+      // Resizing (making it a rectangle) only ever happens via the edge
+      // handles, never this.
+      function recenterTo(lat, lon, panMap) {
+        const b = mapRegionBounds;
+        const centerLat = (b.north + b.south) / 2;
+        const centerLon = (b.east + b.west) / 2;
+        const dLat = lat - centerLat;
+        const dLon = lon - centerLon;
+        b.north += dLat; b.south += dLat;
+        b.east += dLon; b.west += dLon;
         if (regionMap && panMap) regionMap.setView([lat, lon], regionMap.getZoom());
         redrawRegion();
       }
 
-      function initRegionMap(lat, lon) {
-        regionMap = L.map('map-region-picker').setView([lat, lon], 9);
+      function initRegionMap(bounds) {
+        mapRegionBounds = bounds;
+        const b = mapRegionBounds;
+        const centerLat = (b.north + b.south) / 2;
+        const centerLon = (b.east + b.west) / 2;
+
+        regionMap = L.map('map-region-picker').setView([centerLat, centerLon], 9);
         L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; OpenStreetMap contributors',
           maxZoom: 19,
         }).addTo(regionMap);
-        const radiusKm = parseFloat(document.getElementById('map-radius').value) || MAP_DEFAULT_RADIUS_KM;
-        const bounds = boundsFromRadius(lat, lon, radiusKm);
-        regionRect = L.rectangle(bounds, {
+
+        regionRect = L.rectangle([[b.south, b.west], [b.north, b.east]], {
           color: '#4fb3a9', weight: 2, fillOpacity: 0.1,
         }).addTo(regionMap);
-        regionMarker = L.marker([lat, lon], { draggable: true }).addTo(regionMap);
+
+        regionMarker = L.marker([centerLat, centerLon], { draggable: true }).addTo(regionMap);
         regionMarker.on('dragend', () => {
-          const { lat, lng } = regionMarker.getLatLng();
-          setCenter(lat, lng, false);
+          const c = regionMarker.getLatLng();
+          recenterTo(c.lat, c.lng, false);
           scheduleEstimate();
         });
         regionMap.on('click', (e) => {
-          setCenter(e.latlng.lat, e.latlng.lng, false);
+          recenterTo(e.latlng.lat, e.latlng.lng, false);
           scheduleEstimate();
         });
 
-        // Resize handle — a small draggable square sitting on the SE
-        // corner of the box. Dragging it changes the radius (keeping the
-        // region a square, not a free-form rectangle); redrawRegion()
-        // above snaps it back onto the exact corner once released.
-        resizeHandle = L.marker(bounds.getSouthEast(), {
-          draggable: true,
-          icon: L.divIcon({ className: 'map-resize-handle', iconSize: [14, 14], iconAnchor: [7, 7] }),
-        }).addTo(regionMap);
-        resizeHandle.on('drag', () => {
-          const center = regionMarker.getLatLng();
-          const handlePos = resizeHandle.getLatLng();
-          const newRadius = Math.max(1, Math.round(distanceKm(center.lat, center.lng, handlePos.lat, handlePos.lng)));
-          document.getElementById('map-radius').value = newRadius;
-          regionRect.setBounds(boundsFromRadius(center.lat, center.lng, newRadius));
+        function makeEdgeHandle(latlng, axisClass) {
+          return L.marker(latlng, {
+            draggable: true,
+            icon: L.divIcon({ className: `map-edge-handle ${axisClass}`, iconSize: [14, 14], iconAnchor: [7, 7] }),
+          }).addTo(regionMap);
+        }
+        edgeHandleN = makeEdgeHandle([b.north, centerLon], 'ns');
+        edgeHandleS = makeEdgeHandle([b.south, centerLon], 'ns');
+        edgeHandleE = makeEdgeHandle([centerLat, b.east], 'ew');
+        edgeHandleW = makeEdgeHandle([centerLat, b.west], 'ew');
+
+        // Each handle only ever moves its own edge — dragging North only
+        // changes north, regardless of how far sideways the pointer drifts
+        // during the drag; redrawRegion() snaps it back onto the midpoint
+        // of that edge once done. A small minimum gap stops the box from
+        // inverting if a handle gets dragged past its opposite edge.
+        const MIN_GAP_DEG = 0.001;
+        edgeHandleN.on('drag', () => {
+          mapRegionBounds.north = Math.max(edgeHandleN.getLatLng().lat, mapRegionBounds.south + MIN_GAP_DEG);
+          redrawRegion();
           scheduleEstimate();
         });
-        resizeHandle.on('dragend', redrawRegion);
+        edgeHandleS.on('drag', () => {
+          mapRegionBounds.south = Math.min(edgeHandleS.getLatLng().lat, mapRegionBounds.north - MIN_GAP_DEG);
+          redrawRegion();
+          scheduleEstimate();
+        });
+        edgeHandleE.on('drag', () => {
+          mapRegionBounds.east = Math.max(edgeHandleE.getLatLng().lng, mapRegionBounds.west + MIN_GAP_DEG);
+          redrawRegion();
+          scheduleEstimate();
+        });
+        edgeHandleW.on('drag', () => {
+          mapRegionBounds.west = Math.min(edgeHandleW.getLatLng().lng, mapRegionBounds.east - MIN_GAP_DEG);
+          redrawRegion();
+          scheduleEstimate();
+        });
       }
 
       let estimateTimer = null;
@@ -1909,23 +1931,37 @@
         estimateTimer = setTimeout(updateEstimate, 300);
       }
 
+      // Below 1.2GB shows MB (as the backend already rounds it, to 1
+      // decimal place); at or above, GB reads far easier than a 4-5 digit
+      // MB figure.
+      function formatTileSize(mb) {
+        if (mb >= 1200) return `${(mb / 1024).toFixed(1)} GB`;
+        return `${mb} MB`;
+      }
+
       async function updateEstimate() {
-        const lat = parseFloat(latInput.value);
-        const lon = parseFloat(lonInput.value);
-        const radiusKm = parseFloat(document.getElementById('map-radius').value);
+        if (!mapRegionBounds) return;
         const zoomMax = parseInt(document.getElementById('map-zoom-max').value, 10);
-        if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(radiusKm) || !Number.isFinite(zoomMax)) {
-          estimateBox.textContent = 'Enter a valid center position and radius to see an estimate.';
-          downloadBtn.disabled = true;
-          return;
-        }
+        if (!Number.isFinite(zoomMax)) return;
         downloadBtn.disabled = false;
         estimateBox.textContent = 'Estimating…';
         try {
-          const params = new URLSearchParams({ lat, lon, radius_km: radiusKm, zoom_min: MAP_MIN_ZOOM, zoom_max: zoomMax });
+          const b = mapRegionBounds;
+          const params = new URLSearchParams({
+            north: b.north, south: b.south, east: b.east, west: b.west,
+            zoom_min: MAP_MIN_ZOOM, zoom_max: zoomMax,
+          });
           const res = await fetch(`/api/map/estimate?${params}`);
           const data = await res.json();
-          estimateBox.textContent = `~${data.tile_count.toLocaleString()} tiles, ~${data.estimated_mb} MB`;
+          // Rough and deliberately conservative — actual speed depends on
+          // the connection and how busy OSM's own server is, but the point
+          // is to warn before committing, not to be precise. Tile counts
+          // roughly quadruple per zoom level, so a high detail level on
+          // any real region adds up fast — this is what's easy to miss
+          // just looking at the tile count/size alone.
+          const etaS = data.tile_count / ASSUMED_TILES_PER_SEC;
+          estimateBox.textContent =
+            `~${data.tile_count.toLocaleString()} tiles, ~${formatTileSize(data.estimated_mb)}, roughly ${formatDuration(etaS)} to download`;
         } catch (e) {
           estimateBox.textContent = 'Could not estimate — check the server is reachable.';
         }
@@ -1937,16 +1973,12 @@
         zoomMaxValue.textContent = zoomMaxInput.value;
       }
       updateZoomLabel();
-
-      ['map-lat', 'map-lon', 'map-radius'].forEach(id => {
-        document.getElementById(id).addEventListener('input', () => { redrawRegion(); scheduleEstimate(); });
-      });
       zoomMaxInput.addEventListener('input', () => { updateZoomLabel(); scheduleEstimate(); });
 
       document.getElementById('btn-map-use-station').addEventListener('click', async () => {
         const g = wizardData.gps || {};
         if (g.position_source === 'manual' && g.latitude && g.longitude) {
-          setCenter(parseFloat(g.latitude), parseFloat(g.longitude), true);
+          recenterTo(parseFloat(g.latitude), parseFloat(g.longitude), true);
           scheduleEstimate();
           return;
         }
@@ -1954,29 +1986,50 @@
           const res = await fetch('/api/gps/position');
           const data = await res.json();
           if (data.available) {
-            setCenter(data.latitude, data.longitude, true);
+            recenterTo(data.latitude, data.longitude, true);
             scheduleEstimate();
           } else {
-            estimateBox.textContent = data.reason || 'No station position available — enter one manually.';
+            estimateBox.textContent = data.reason || 'No station position available.';
           }
         } catch (e) {
           estimateBox.textContent = 'Could not reach the server.';
         }
       });
 
+      // m:ss / h:mm formatting for the download ETA below.
+      function formatDuration(totalSeconds) {
+        const s = Math.max(0, Math.round(totalSeconds));
+        if (s < 60) return `${s}s`;
+        const m = Math.floor(s / 60);
+        if (m < 60) return `${m}m ${s % 60}s`;
+        const h = Math.floor(m / 60);
+        return `${h}h ${m % 60}m`;
+      }
+
       function pollDownloadStatus() {
+        const startTime = Date.now();
         mapStatusPollTimer = setInterval(async () => {
           try {
             const res = await fetch('/api/map/cache/status');
             const data = await res.json();
             progressBar.style.width = `${data.percent}%`;
-            progressMsg.textContent = `${data.done} / ${data.total} tiles (zoom ${data.current_zoom})${data.failed ? `, ${data.failed} failed` : ''}`;
+            let etaText = '';
+            if (data.active && data.done > 0) {
+              const elapsedS = (Date.now() - startTime) / 1000;
+              const rate = data.done / elapsedS; // tiles/sec, averaged since this download started
+              const remaining = data.total - data.done;
+              if (rate > 0) etaText = ` — about ${formatDuration(remaining / rate)} remaining`;
+            }
+            progressMsg.textContent =
+              `${data.done} / ${data.total} tiles (zoom ${data.current_zoom})${data.failed ? `, ${data.failed} failed` : ''}${etaText}`;
             if (!data.active) {
               clearInterval(mapStatusPollTimer);
               mapStatusPollTimer = null;
               downloadBtn.disabled = false;
               cancelBtn.classList.add('hidden');
-              progressMsg.textContent += data.cancelled ? ' — cancelled.' : ' — done.';
+              progressMsg.textContent =
+                `${data.done} / ${data.total} tiles (zoom ${data.current_zoom})${data.failed ? `, ${data.failed} failed` : ''}` +
+                (data.cancelled ? ' — cancelled.' : ' — done.');
             }
           } catch (e) {
             // Transient — next poll tries again.
@@ -1985,9 +2038,7 @@
       }
 
       downloadBtn.addEventListener('click', async () => {
-        const lat = parseFloat(document.getElementById('map-lat').value);
-        const lon = parseFloat(document.getElementById('map-lon').value);
-        const radiusKm = parseFloat(document.getElementById('map-radius').value);
+        if (!mapRegionBounds) return;
         const zoomMax = parseInt(document.getElementById('map-zoom-max').value, 10);
         downloadBtn.disabled = true;
         progressWrap.classList.remove('hidden');
@@ -1997,7 +2048,7 @@
           const res = await fetch('/api/map/cache/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lat, lon, radius_km: radiusKm, zoom_min: MAP_MIN_ZOOM, zoom_max: zoomMax }),
+            body: JSON.stringify({ ...mapRegionBounds, zoom_min: MAP_MIN_ZOOM, zoom_max: zoomMax }),
           });
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
@@ -2042,13 +2093,18 @@
         // initialises against it, or it measures a zero-size box.
         onlineFields.classList.remove('hidden');
 
-        // Figure out where to center the map: whatever was picked earlier
-        // this session, else the station's own position (manual entry or a
-        // live GPS fix), else a zoomed-out world view the user can pan
-        // from — same fallback order as "Use station location" uses later.
-        let initLat = m.latitude !== undefined ? parseFloat(m.latitude) : NaN;
-        let initLon = m.longitude !== undefined ? parseFloat(m.longitude) : NaN;
-        if (!Number.isFinite(initLat) || !Number.isFinite(initLon)) {
+        // Restore whatever was picked earlier this session, if anything;
+        // otherwise seed a default-sized box centered on the station's own
+        // position (manual entry or a live GPS fix), else a zoomed-out
+        // world view the user can pan from.
+        let initialBounds = null;
+        if (m.north !== undefined && m.south !== undefined && m.east !== undefined && m.west !== undefined) {
+          initialBounds = {
+            north: parseFloat(m.north), south: parseFloat(m.south),
+            east: parseFloat(m.east), west: parseFloat(m.west),
+          };
+        } else {
+          let initLat = NaN, initLon = NaN;
           const g = wizardData.gps || {};
           if (g.position_source === 'manual' && g.latitude && g.longitude) {
             initLat = parseFloat(g.latitude);
@@ -2065,29 +2121,25 @@
               // Falls through to the 0,0 default below.
             }
           }
-        }
-        if (!Number.isFinite(initLat) || !Number.isFinite(initLon)) {
-          initLat = 0;
-          initLon = 0;
+          if (!Number.isFinite(initLat) || !Number.isFinite(initLon)) {
+            initLat = 0;
+            initLon = 0;
+          }
+          initialBounds = boundsFromRadius(initLat, initLon, MAP_DEFAULT_RADIUS_KM);
         }
 
-        latInput.value = initLat.toFixed(6);
-        lonInput.value = initLon.toFixed(6);
-        initRegionMap(initLat, initLon);
+        initRegionMap(initialBounds);
         updateEstimate();
       })();
     }
 
     function saveMapStep() {
-      const latEl = document.getElementById('map-lat');
-      if (!latEl) {
+      if (!mapRegionBounds) {
         wizardData.map = {};
         return true;
       }
       wizardData.map = {
-        latitude: latEl.value,
-        longitude: document.getElementById('map-lon').value,
-        radius_km: document.getElementById('map-radius').value,
+        ...mapRegionBounds,
         zoom_max: document.getElementById('map-zoom-max').value,
       };
       return true;
@@ -2121,7 +2173,11 @@
             <select id="user-security-mode">
               ${USER_SECURITY_MODES.map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
             </select>
-            <p class="hint">No security: open access, no password. Read only: viewing is open, any change needs the password. Full security: the password is needed for everything, including just viewing.</p>
+            <ul class="hint" style="margin: 10px 0 0; padding-left: 18px;">
+              <li><strong>No security:</strong> open access, no password.</li>
+              <li><strong>Read only:</strong> viewing is open, any change needs the password.</li>
+              <li><strong>Full security:</strong> the password is needed for everything, including just viewing.</li>
+            </ul>
           </div>
           <div class="field hidden" id="user-password-field">
             <label for="user-password">Admin password</label>
@@ -2132,7 +2188,6 @@
             <input type="password" id="user-password-confirm" placeholder="Re-enter the password" autocomplete="new-password">
           </div>
           <p class="msg" id="user-msg"></p>
-          <p class="hint">Saved for later use — there's no login system built yet to actually enforce this (see TODO.md), so nothing is protected yet regardless of what's picked here.</p>
         </section>
       `;
 
@@ -2288,12 +2343,10 @@
           <div class="field">
             <label for="eink-display">Display</label>
             <select id="eink-display"></select>
-            <p class="hint">Preset to whatever was picked during install. Changing it here takes effect after Finish &amp; Reboot — make sure it matches what's actually wired up (see PINOUT.md).</p>
           </div>
 
           <div class="field">
             <label>Screens</label>
-            <p class="hint">Not live yet — nothing renders these in rotation until page rotation itself is built (see TODO.md). Reorder with the arrows, or move a screen to Disabled below; it's all ready to go once that lands.</p>
             <div id="eink-enabled-list"></div>
 
             <label style="margin-top: 20px; display: block;">Disabled</label>
@@ -2378,8 +2431,6 @@
               <div class="field-suffix"><input type="number" id="startup-restart-delay" min="1" value="${s.restart_delay_s ?? STARTUP_DEFAULT_RESTART_DELAY_S}"><span>sec</span></div>
             </div>
           </div>
-
-          <p class="hint">Saved for later use — there's no Direwolf process to start or restart yet (see TODO.md), so nothing on this page does anything yet.</p>
         </section>
       `;
 
