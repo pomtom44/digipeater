@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from display.base import DisplayDriver
-from services import aprs, gps, hardware, network, system, tiles
+from services import aprs, auth, gps, hardware, network, system, tiles
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,12 @@ WIFI_PENDING_PATH = Path("wifi_pending.json")
 # CONFIG_PATH there. Written only by the wizard's final "Finish & Reboot"
 # step, once all setup steps have been completed.
 CONFIG_PATH = Path("config.yaml")
+# Written by install.sh's display-selection prompt, read by main.py on
+# every boot (see main.py: _load_display_config). The E-Ink display wizard
+# step reads this to preset its dropdown, and can overwrite it — unlike
+# most of the wizard, this one takes effect for real, since Finish always
+# reboots right after.
+DISPLAY_CONFIG_PATH = Path("display_config.json")
 
 
 def _build_test_image(display_driver: DisplayDriver):
@@ -163,7 +169,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         existing = map_download_state["downloader"]
         if existing and existing.status()["active"]:
             raise HTTPException(status_code=409, detail="A download is already in progress")
-        downloader = tiles.TileDownloader(lat, lon, radius_km, zoom_min, zoom_max)
+        downloader = tiles.TileDownloader.for_radius(lat, lon, radius_km, zoom_min, zoom_max)
         map_download_state["downloader"] = downloader
         asyncio.create_task(downloader.run())
         return {"ok": True}
@@ -204,13 +210,36 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         # sync/timezone settings are applied for real on the next boot (see
         # services/gpsconfig.py); map tiles are already downloaded live
         # during the wizard itself, not deferred.
+        display_cfg = body.get("display", {})
+        user_cfg = body.get("user", {})
+        security_mode = user_cfg.get("mode", "none")
+        # Only ever a hash + salt on disk, never the password itself — see
+        # services/auth.py. Not enforced anywhere yet (no login system
+        # exists in DEV_BUILD — see TODO.md), but there's no reason to
+        # store it insecurely just because nothing checks it yet.
+        security = {"mode": security_mode}
+        password = user_cfg.get("password", "")
+        if security_mode != "none" and password:
+            security.update(auth.hash_password(password))
         config = {
             "setup_complete": True,
             "radio": body.get("radio", {}),
             "aprs": body.get("aprs", {}),
             "gps": body.get("gps", {}),
             "map": body.get("map", {}),
+            "startup": body.get("startup", {}),
+            # Only the page-rotation list — driver/model live in
+            # display_config.json instead (see below), not duplicated here.
+            "display": {"pages": display_cfg.get("pages", [])},
+            "security": security,
         }
+        # Unlike everything else in config.yaml, this one takes effect for
+        # real: main.py reads display_config.json fresh on every boot, and
+        # Finish always reboots right after this request completes.
+        DISPLAY_CONFIG_PATH.write_text(json.dumps({
+            "driver": display_cfg.get("driver", "none"),
+            "model": display_cfg.get("model", ""),
+        }))
         CONFIG_PATH.write_text(
             "# Written by the first-boot setup wizard.\n"
             "# Its existence is what marks first-boot setup as complete.\n"
@@ -238,6 +267,22 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             "width": display_driver.width,
             "height": display_driver.height,
         }
+
+    @app.get("/api/display/models")
+    async def display_models():
+        from display.waveshare import MODELS
+        return {"models": [{"id": name, "desc": info["desc"]} for name, info in MODELS.items()]}
+
+    @app.get("/api/display/config")
+    async def display_config():
+        if not DISPLAY_CONFIG_PATH.exists():
+            return {"driver": "none", "model": ""}
+        try:
+            data = json.loads(DISPLAY_CONFIG_PATH.read_text())
+        except Exception as e:
+            logger.error("Failed to read %s: %s", DISPLAY_CONFIG_PATH, e)
+            return {"driver": "none", "model": ""}
+        return {"driver": data.get("driver", "none"), "model": data.get("model", "")}
 
     # Display calls run in a worker thread, not on the event loop — a hardware
     # hang (e.g. a stuck BUSY pin) would otherwise freeze every other request

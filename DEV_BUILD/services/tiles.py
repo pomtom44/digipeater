@@ -31,6 +31,12 @@ _INTERNET_CHECK_TIMEOUT_S = 3.0
 
 AVG_TILE_KB = 15  # rough average tile size, for the size estimate only
 
+# 85.0 rather than 90.0 — Web Mercator (what every slippy-map tile server
+# uses, including OSM's) is undefined at the poles; ~85.05 is the standard
+# cutoff. Used for the install-time world pre-cache, not the wizard's
+# region picker (which is always a radius around a real station position).
+WORLD_BOUNDS = {"north": 85.0, "south": -85.0, "east": 180.0, "west": -180.0}
+
 
 async def has_internet() -> bool:
     """Checks reachability of the tile server specifically, not just "any"
@@ -66,40 +72,56 @@ def _bounds_from_radius(lat: float, lon: float, radius_km: float) -> dict:
 
 
 def _lon_to_tile(lon: float, z: int) -> int:
-    return int((lon + 180) / 360 * (2 ** z))
+    # Clamped to [0, n-1] — lon=180 (the antimeridian, e.g. WORLD_BOUNDS'
+    # east edge) computes exactly n unclamped, an out-of-range index one
+    # past the real last column, which was silently doubling tile counts
+    # at every zoom level for anything reaching the boundary.
+    n = 2 ** z
+    return max(0, min(n - 1, int((lon + 180) / 360 * n)))
 
 
 def _lat_to_tile(lat: float, z: int) -> int:
+    n = 2 ** z
     lat_r = math.radians(lat)
-    return int((1 - math.log(math.tan(lat_r) + 1 / math.cos(lat_r)) / math.pi) / 2 * (2 ** z))
+    return max(0, min(n - 1, int((1 - math.log(math.tan(lat_r) + 1 / math.cos(lat_r)) / math.pi) / 2 * n)))
 
 
-def estimate_tiles(lat: float, lon: float, radius_km: float, zoom_min: int, zoom_max: int) -> tuple[int, float]:
-    """Return (tile_count, estimated_mb)."""
-    bounds = _bounds_from_radius(lat, lon, radius_km)
+def _tile_count_for_bounds(bounds: dict, zoom_min: int, zoom_max: int) -> int:
     total = 0
     for z in range(zoom_min, zoom_max + 1):
         x_min, x_max = _lon_to_tile(bounds["west"], z), _lon_to_tile(bounds["east"], z)
         y_min, y_max = _lat_to_tile(bounds["north"], z), _lat_to_tile(bounds["south"], z)
         total += (abs(x_max - x_min) + 1) * (abs(y_max - y_min) + 1)
+    return total
+
+
+def estimate_tiles(lat: float, lon: float, radius_km: float, zoom_min: int, zoom_max: int) -> tuple[int, float]:
+    """Return (tile_count, estimated_mb)."""
+    total = _tile_count_for_bounds(_bounds_from_radius(lat, lon, radius_km), zoom_min, zoom_max)
     size_mb = (total * AVG_TILE_KB) / 1024
     return total, size_mb
 
 
 class TileDownloader:
-    """One region download at a time — status()/cancel() are polled/called
-    from the web layer while run() executes as a background asyncio task."""
+    """One download at a time — status()/cancel() are polled/called from
+    the web layer while run() executes as a background asyncio task."""
 
-    def __init__(self, lat: float, lon: float, radius_km: float, zoom_min: int, zoom_max: int):
-        self._bounds = _bounds_from_radius(lat, lon, radius_km)
+    def __init__(self, bounds: dict, zoom_min: int, zoom_max: int):
+        self._bounds = bounds
         self._zoom_min = zoom_min
         self._zoom_max = zoom_max
-        self._total, _ = estimate_tiles(lat, lon, radius_km, zoom_min, zoom_max)
+        self._total = _tile_count_for_bounds(bounds, zoom_min, zoom_max)
         self._done = 0
         self._failed = 0
         self._active = False
         self._cancelled = False
         self._current_zoom = zoom_min
+
+    @classmethod
+    def for_radius(cls, lat: float, lon: float, radius_km: float, zoom_min: int, zoom_max: int) -> "TileDownloader":
+        """The wizard's region-picker path — a center point + radius, not
+        an explicit bounding box."""
+        return cls(_bounds_from_radius(lat, lon, radius_km), zoom_min, zoom_max)
 
     def status(self) -> dict:
         pct = round((self._done / self._total) * 100, 1) if self._total else 0

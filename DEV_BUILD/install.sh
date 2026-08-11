@@ -215,6 +215,20 @@ ok "Virtual environment created"
 run_with_spinner "Installing Python packages..." "$VENV_DIR/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
 ok "Python packages installed"
 
+# ── Pre-cache world map tiles (zoom 0-5) ──────
+# Best-effort, not run_with_spinner — a coarse ~20MB whole-world base layer
+# so a future map view never renders blank before a specific region has
+# been downloaded via the wizard's Map caching step. Unlike apt/git above
+# (which the install can't proceed without), a flaky connection here
+# shouldn't abort the rest of setup — it's just skipped, and can be re-run
+# later with: DEV_BUILD/scripts/precache_world_map.py
+info "Pre-caching world map tiles (zoom 0-5, ~20MB)..."
+if (cd "$APP_DIR" && "$VENV_DIR/bin/python" scripts/precache_world_map.py); then
+    ok "World map tiles cached"
+else
+    echo -e "${YELLOW}  ⚠ Could not pre-cache world map tiles (no internet yet?) — continuing. Re-run scripts/precache_world_map.py later.${NC}"
+fi
+
 # ── Install systemd service ───────────────────
 sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null <<EOF
 [Unit]

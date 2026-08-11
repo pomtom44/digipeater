@@ -163,12 +163,50 @@
     .field-suffix input { flex: 1; }
     .field-suffix span { color: var(--muted); font-size: 14px; flex-shrink: 0; }
 
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+      margin: 8px 0 4px;
+    }
+
+    /* Leaflet divIcon for the map region's drag-to-resize handle — plain
+       CSS square rather than the default pin, so it doesn't get confused
+       with the center marker. */
+    .map-resize-handle {
+      width: 14px;
+      height: 14px;
+      background: var(--accent);
+      border: 2px solid #fff;
+      border-radius: 3px;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+      cursor: nwse-resize;
+    }
+
     .row {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
     }
     .row input { flex: 1 1 160px; }
+
+    .eink-page-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 8px;
+      background: var(--panel-2);
+    }
+    .eink-page-row.disabled {
+      opacity: 0.6;
+      border-style: dashed;
+    }
+    .eink-page-info { flex: 1; font-size: 14px; }
+    .eink-page-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .eink-page-actions button { min-height: 32px; padding: 4px 10px; font-size: 13px; }
+    .eink-duration { width: 100%; }
 
     button {
       min-height: 40px;
@@ -259,13 +297,6 @@
       border-radius: 8px;
       padding: 14px 16px;
       margin-top: 14px;
-    }
-    /* .active = enabled and switched on — needs to be unmistakable at a
-       glance in dark mode, where a subtle border-only difference is easy
-       to miss entirely. */
-    .subsection.active {
-      border-color: var(--accent);
-      background: rgba(79, 179, 169, 0.08);
     }
     .subsection-title {
       display: flex;
@@ -451,13 +482,18 @@
       },
       {
         title: 'E-Ink display',
-        render: renderPlaceholderStep,
-        onNext: () => true,
+        render: renderEinkStep,
+        onNext: saveEinkStep,
       },
       {
         title: 'User management',
-        render: renderPlaceholderStep,
-        onNext: () => true,
+        render: renderUserStep,
+        onNext: saveUserStep,
+      },
+      {
+        title: 'Startup',
+        render: renderStartupStep,
+        onNext: saveStartupStep,
       },
       {
         title: 'Finish',
@@ -476,6 +512,10 @@
         clearInterval(mapStatusPollTimer);
         mapStatusPollTimer = null;
       }
+      // Reset before render() runs, not after — a step that needs live
+      // validation (e.g. User management's password fields) disables this
+      // itself from inside its own render, and that must be the last word.
+      document.getElementById('btn-next').disabled = false;
       const step = steps[currentStep];
       document.getElementById('step-title').textContent = step.title;
       step.render();
@@ -661,13 +701,7 @@
             <label for="radio-power">TX power level</label>
             <select id="radio-power"></select>
           </div>
-          <div class="field">
-            <label class="subsection-title">
-              <input type="checkbox" id="radio-autostart" checked>
-              Start automatically on boot
-            </label>
-          </div>
-          <p class="hint">Radio model and power level are placeholders for now. Audio device, connected CM108-type USB PTT adapters, and any connected radio's serial port are read live from this device. "Start automatically on boot" is saved for later use — there's no Direwolf process to start yet (see TODO.md).</p>
+          <p class="hint">Radio model and power level are placeholders for now. Audio device, connected CM108-type USB PTT adapters, and any connected radio's serial port are read live from this device.</p>
         </section>
       `;
       const modelSelect = document.getElementById('radio-model');
@@ -682,7 +716,6 @@
         modelSelect.value = wizardData.radio.model ?? modelSelect.value;
         powerSelect.value = wizardData.radio.power_level ?? powerSelect.value;
         document.getElementById('radio-frequency').value = wizardData.radio.frequency_mhz ?? '';
-        document.getElementById('radio-autostart').checked = wizardData.radio.autostart ?? true;
       }
 
       loadAudioDevices();
@@ -746,7 +779,6 @@
         ptt_method: pttMethod,
         audio_device: document.getElementById('radio-audio').value,
         power_level: document.getElementById('radio-power').value,
-        autostart: document.getElementById('radio-autostart').checked,
       };
       // Fixed wiring, not a wizard choice — see RADIO_DEFAULT_PTT_GPIO_PIN.
       if (pttMethod === 'gpio') {
@@ -1185,7 +1217,7 @@
             </div>
           </div>
 
-          <div class="subsection disabled" id="digipeat-section">
+          <div class="subsection hidden" id="digipeat-section">
             <details class="advanced">
               <summary>Digipeater settings</summary>
               <div class="field">
@@ -1220,7 +1252,7 @@
             </details>
           </div>
 
-          <div class="subsection disabled" id="igate-section">
+          <div class="subsection hidden" id="igate-section">
             <div class="field">
               <label for="aprs-igate-region">IGate region</label>
               <select id="aprs-igate-region">
@@ -1710,8 +1742,14 @@
     // disk. Entirely optional: never blocks Next, whether or not anything
     // was actually downloaded.
     const MAP_DEFAULT_RADIUS_KM = 50;
-    const MAP_DEFAULT_ZOOM_MIN = 8;
-    const MAP_DEFAULT_ZOOM_MAX = 14;
+    // Min zoom is fixed, not user-adjustable — 1 (zoomed all the way out)
+    // barely adds any tiles regardless of region size (the world is only
+    // ~1 tile wide at that zoom), so there's nothing meaningful to trade
+    // off by exposing it. Only max zoom — the "how much detail" knob that
+    // actually drives tile count — is worth a control.
+    const MAP_MIN_ZOOM = 1;
+    const MAP_SLIDER_MAX_ZOOM = 16; // OSM allows up to 19, but past ~16 tile counts explode for little practical benefit on a bulk pre-cache
+    const MAP_DEFAULT_MAX_ZOOM = 10;
     let mapStatusPollTimer = null;
 
     function renderMapStep() {
@@ -1727,7 +1765,7 @@
 
           <div id="map-online-fields" class="hidden">
             <div id="map-region-picker" style="height: 320px; border-radius: 8px; overflow: hidden; margin-bottom: 12px;"></div>
-            <p class="hint">Drag the pin (or click anywhere on the map) to move the region. The shaded box is what will be downloaded.</p>
+            <p class="hint">Drag the pin (or click anywhere on the map) to move the region. Drag the small square at its corner to resize it. The shaded box is what will be downloaded.</p>
 
             <div class="field-row">
               <div class="field">
@@ -1745,17 +1783,11 @@
               <label for="map-radius">Radius</label>
               <div class="field-suffix"><input type="number" id="map-radius" min="1" value="${m.radius_km ?? MAP_DEFAULT_RADIUS_KM}"><span>km</span></div>
             </div>
-            <div class="field-row">
-              <div class="field">
-                <label for="map-zoom-min">Min zoom</label>
-                <input type="number" id="map-zoom-min" min="1" max="19" value="${m.zoom_min ?? MAP_DEFAULT_ZOOM_MIN}">
-              </div>
-              <div class="field">
-                <label for="map-zoom-max">Max zoom</label>
-                <input type="number" id="map-zoom-max" min="1" max="19" value="${m.zoom_max ?? MAP_DEFAULT_ZOOM_MAX}">
-              </div>
+            <div class="field">
+              <label for="map-zoom-max">Detail level — zoom <span id="map-zoom-max-value"></span></label>
+              <input type="range" id="map-zoom-max" min="${MAP_MIN_ZOOM}" max="${MAP_SLIDER_MAX_ZOOM}" value="${m.zoom_max ?? MAP_DEFAULT_MAX_ZOOM}">
             </div>
-            <p class="hint">Tiles come from OpenStreetMap's own free tile server — open, no account or API key needed. Once cached, tiles reload from this device with no internet needed at all, until you re-download to refresh them. Higher max zoom shows more detail but downloads far more tiles — keep the region modest.</p>
+            <p class="hint">Tiles come from OpenStreetMap's own free tile server — open, no account or API key needed. Once cached, tiles reload from this device with no internet needed at all, until you re-download to refresh them. Higher detail shows more but downloads far more tiles — keep the region modest.</p>
 
             <div class="status-box" id="map-estimate-box">Estimating…</div>
 
@@ -1785,6 +1817,7 @@
       let regionMap = null;
       let regionMarker = null;
       let regionRect = null;
+      let resizeHandle = null;
 
       // Same flat-earth approximation as services/tiles.py's
       // _bounds_from_radius — only used here to draw the preview box, the
@@ -1795,6 +1828,18 @@
         return L.latLngBounds([lat - latDelta, lon - lonDelta], [lat + latDelta, lon + lonDelta]);
       }
 
+      // Great-circle distance — used to turn "where the resize handle got
+      // dragged to" into a radius in km, the same unit the radius field
+      // and the backend both work in.
+      function distanceKm(lat1, lon1, lat2, lon2) {
+        const R = 6371;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) ** 2 +
+          Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+        return 2 * R * Math.asin(Math.sqrt(a));
+      }
+
       function redrawRegion() {
         if (!regionMap) return;
         const lat = parseFloat(latInput.value);
@@ -1802,7 +1847,12 @@
         const radiusKm = parseFloat(document.getElementById('map-radius').value);
         if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(radiusKm)) return;
         regionMarker.setLatLng([lat, lon]);
-        regionRect.setBounds(boundsFromRadius(lat, lon, radiusKm));
+        const bounds = boundsFromRadius(lat, lon, radiusKm);
+        regionRect.setBounds(bounds);
+        // Keeps the handle sitting exactly on the corner even after a
+        // manual radius/lat/lon edit, not just after dragging the handle
+        // itself.
+        if (resizeHandle) resizeHandle.setLatLng(bounds.getSouthEast());
       }
 
       function setCenter(lat, lon, panMap) {
@@ -1819,7 +1869,8 @@
           maxZoom: 19,
         }).addTo(regionMap);
         const radiusKm = parseFloat(document.getElementById('map-radius').value) || MAP_DEFAULT_RADIUS_KM;
-        regionRect = L.rectangle(boundsFromRadius(lat, lon, radiusKm), {
+        const bounds = boundsFromRadius(lat, lon, radiusKm);
+        regionRect = L.rectangle(bounds, {
           color: '#4fb3a9', weight: 2, fillOpacity: 0.1,
         }).addTo(regionMap);
         regionMarker = L.marker([lat, lon], { draggable: true }).addTo(regionMap);
@@ -1832,6 +1883,24 @@
           setCenter(e.latlng.lat, e.latlng.lng, false);
           scheduleEstimate();
         });
+
+        // Resize handle — a small draggable square sitting on the SE
+        // corner of the box. Dragging it changes the radius (keeping the
+        // region a square, not a free-form rectangle); redrawRegion()
+        // above snaps it back onto the exact corner once released.
+        resizeHandle = L.marker(bounds.getSouthEast(), {
+          draggable: true,
+          icon: L.divIcon({ className: 'map-resize-handle', iconSize: [14, 14], iconAnchor: [7, 7] }),
+        }).addTo(regionMap);
+        resizeHandle.on('drag', () => {
+          const center = regionMarker.getLatLng();
+          const handlePos = resizeHandle.getLatLng();
+          const newRadius = Math.max(1, Math.round(distanceKm(center.lat, center.lng, handlePos.lat, handlePos.lng)));
+          document.getElementById('map-radius').value = newRadius;
+          regionRect.setBounds(boundsFromRadius(center.lat, center.lng, newRadius));
+          scheduleEstimate();
+        });
+        resizeHandle.on('dragend', redrawRegion);
       }
 
       let estimateTimer = null;
@@ -1844,18 +1913,16 @@
         const lat = parseFloat(latInput.value);
         const lon = parseFloat(lonInput.value);
         const radiusKm = parseFloat(document.getElementById('map-radius').value);
-        const zoomMin = parseInt(document.getElementById('map-zoom-min').value, 10);
         const zoomMax = parseInt(document.getElementById('map-zoom-max').value, 10);
-        if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(radiusKm) ||
-            !Number.isFinite(zoomMin) || !Number.isFinite(zoomMax) || zoomMin > zoomMax) {
-          estimateBox.textContent = 'Enter a valid center position, radius, and zoom range to see an estimate.';
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(radiusKm) || !Number.isFinite(zoomMax)) {
+          estimateBox.textContent = 'Enter a valid center position and radius to see an estimate.';
           downloadBtn.disabled = true;
           return;
         }
         downloadBtn.disabled = false;
         estimateBox.textContent = 'Estimating…';
         try {
-          const params = new URLSearchParams({ lat, lon, radius_km: radiusKm, zoom_min: zoomMin, zoom_max: zoomMax });
+          const params = new URLSearchParams({ lat, lon, radius_km: radiusKm, zoom_min: MAP_MIN_ZOOM, zoom_max: zoomMax });
           const res = await fetch(`/api/map/estimate?${params}`);
           const data = await res.json();
           estimateBox.textContent = `~${data.tile_count.toLocaleString()} tiles, ~${data.estimated_mb} MB`;
@@ -1864,12 +1931,17 @@
         }
       }
 
+      const zoomMaxInput = document.getElementById('map-zoom-max');
+      const zoomMaxValue = document.getElementById('map-zoom-max-value');
+      function updateZoomLabel() {
+        zoomMaxValue.textContent = zoomMaxInput.value;
+      }
+      updateZoomLabel();
+
       ['map-lat', 'map-lon', 'map-radius'].forEach(id => {
         document.getElementById(id).addEventListener('input', () => { redrawRegion(); scheduleEstimate(); });
       });
-      ['map-zoom-min', 'map-zoom-max'].forEach(id => {
-        document.getElementById(id).addEventListener('input', scheduleEstimate);
-      });
+      zoomMaxInput.addEventListener('input', () => { updateZoomLabel(); scheduleEstimate(); });
 
       document.getElementById('btn-map-use-station').addEventListener('click', async () => {
         const g = wizardData.gps || {};
@@ -1916,7 +1988,6 @@
         const lat = parseFloat(document.getElementById('map-lat').value);
         const lon = parseFloat(document.getElementById('map-lon').value);
         const radiusKm = parseFloat(document.getElementById('map-radius').value);
-        const zoomMin = parseInt(document.getElementById('map-zoom-min').value, 10);
         const zoomMax = parseInt(document.getElementById('map-zoom-max').value, 10);
         downloadBtn.disabled = true;
         progressWrap.classList.remove('hidden');
@@ -1926,7 +1997,7 @@
           const res = await fetch('/api/map/cache/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lat, lon, radius_km: radiusKm, zoom_min: zoomMin, zoom_max: zoomMax }),
+            body: JSON.stringify({ lat, lon, radius_km: radiusKm, zoom_min: MAP_MIN_ZOOM, zoom_max: zoomMax }),
           });
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
@@ -2017,22 +2088,326 @@
         latitude: latEl.value,
         longitude: document.getElementById('map-lon').value,
         radius_km: document.getElementById('map-radius').value,
-        zoom_min: document.getElementById('map-zoom-min').value,
         zoom_max: document.getElementById('map-zoom-max').value,
       };
       return true;
     }
 
-    // ── Placeholder steps (E-Ink display, User management) ────────────
-    // Nothing to configure yet — just here so the step exists in the flow
-    // and doesn't block moving on. step.title (set by showStep) already
-    // says which one this is, so no title repeated in the body here.
-    function renderPlaceholderStep() {
+    // ── User management step ─────────────────────────────────────────
+    // Simplified from ORIGINAL's four web.security.mode levels to three —
+    // dropped "Config password" (start/stop free, config locked). A
+    // separate start/stop gate with no config gate isn't useful without a
+    // dashboard that actually distinguishes the two, and ORIGINAL's own
+    // "Read only" mode didn't gate config changes either despite its label
+    // implying it should (see TODO.md) — three clear levels beats four
+    // confusable ones.
+    // One real change from ORIGINAL: the password is hashed (PBKDF2,
+    // services/auth.py) before it ever touches disk, rather than
+    // ORIGINAL's plaintext config.yaml field — cheap to do right from the
+    // start, even though nothing enforces login yet to actually use it
+    // (see TODO.md).
+    const USER_SECURITY_MODES = [
+      { value: 'none', label: 'No security' },
+      { value: 'readonly', label: 'Read only' },
+      { value: 'full', label: 'Full security' },
+    ];
+
+    function renderUserStep() {
+      const u = wizardData.user || {};
       document.getElementById('step-content').innerHTML = `
         <section>
-          <p class="hint">Not built yet — nothing to configure here. Press Next to continue.</p>
+          <div class="field">
+            <label for="user-security-mode">Security mode</label>
+            <select id="user-security-mode">
+              ${USER_SECURITY_MODES.map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
+            </select>
+            <p class="hint">No security: open access, no password. Read only: viewing is open, any change needs the password. Full security: the password is needed for everything, including just viewing.</p>
+          </div>
+          <div class="field hidden" id="user-password-field">
+            <label for="user-password">Admin password</label>
+            <input type="password" id="user-password" placeholder="At least 8 characters" autocomplete="new-password">
+          </div>
+          <div class="field hidden" id="user-password-confirm-field">
+            <label for="user-password-confirm">Confirm admin password</label>
+            <input type="password" id="user-password-confirm" placeholder="Re-enter the password" autocomplete="new-password">
+          </div>
+          <p class="msg" id="user-msg"></p>
+          <p class="hint">Saved for later use — there's no login system built yet to actually enforce this (see TODO.md), so nothing is protected yet regardless of what's picked here.</p>
         </section>
       `;
+
+      const modeSelect = document.getElementById('user-security-mode');
+      const passwordField = document.getElementById('user-password-field');
+      const confirmField = document.getElementById('user-password-confirm-field');
+      const passwordInput = document.getElementById('user-password');
+      const confirmInput = document.getElementById('user-password-confirm');
+      const msg = document.getElementById('user-msg');
+      const nextBtn = document.getElementById('btn-next');
+      modeSelect.value = u.mode || 'none';
+
+      // Next stays disabled until the password is actually valid — no
+      // clicking through to a mismatched-password error after the fact.
+      // There's no confirm-on-click fallback below because this makes it
+      // structurally impossible to reach saveUserStep() in an invalid state.
+      function updateState() {
+        const needsPassword = modeSelect.value !== 'none';
+        passwordField.classList.toggle('hidden', !needsPassword);
+        confirmField.classList.toggle('hidden', !needsPassword);
+
+        if (!needsPassword) {
+          msg.textContent = '';
+          msg.className = 'msg';
+          nextBtn.disabled = false;
+          return;
+        }
+
+        const password = passwordInput.value;
+        const confirm = confirmInput.value;
+        if (password && password.length < 8) {
+          msg.textContent = 'Password must be at least 8 characters.';
+          msg.className = 'msg error';
+        } else if (confirm && confirm !== password) {
+          msg.textContent = "Passwords don't match.";
+          msg.className = 'msg error';
+        } else {
+          msg.textContent = '';
+          msg.className = 'msg';
+        }
+        nextBtn.disabled = !(password.length >= 8 && confirm === password);
+      }
+
+      modeSelect.addEventListener('change', updateState);
+      passwordInput.addEventListener('input', updateState);
+      confirmInput.addEventListener('input', updateState);
+      updateState();
+    }
+
+    function saveUserStep() {
+      const mode = document.getElementById('user-security-mode').value;
+      wizardData.user = mode === 'none'
+        ? { mode }
+        : { mode, password: document.getElementById('user-password').value };
+      return true;
+    }
+
+    // ── E-Ink display step ───────────────────────────────────────────
+    // Display driver/model actually takes effect for real — it's written
+    // straight to display_config.json (same file install.sh writes), and
+    // Finish always reboots, so there's no "collected but not applied"
+    // gap here like most of the rest of the wizard. The page-rotation
+    // list below is the opposite: fully collected, not applied anywhere
+    // yet, since no page-rotation renderer exists in DEV_BUILD (see
+    // TODO.md) — reordering/disabling now just means it's ready once one
+    // is built.
+    const EINK_DEFAULT_PAGES = [
+      { id: 'status', label: 'Status' },
+      { id: 'config_summary', label: 'Config summary' },
+      { id: 'location', label: 'Location' },
+      { id: 'last_beacon', label: 'Last beacon' },
+      { id: 'last_heard', label: 'Last heard' },
+    ];
+    const EINK_DEFAULT_DURATION_S = 30;
+    let einkPages = [];
+
+    function renderEinkPageLists() {
+      const enabledList = document.getElementById('eink-enabled-list');
+      const disabledList = document.getElementById('eink-disabled-list');
+      const enabled = einkPages.filter(p => p.enabled);
+      const disabled = einkPages.filter(p => !p.enabled);
+
+      enabledList.innerHTML = enabled.map((p, i) => `
+        <div class="eink-page-row">
+          <div class="eink-page-info"><strong>${p.label}</strong></div>
+          <div class="field-suffix" style="flex: 0 0 100px;">
+            <input type="number" min="1" class="eink-duration" data-id="${p.id}" value="${p.duration}">
+            <span>sec</span>
+          </div>
+          <div class="eink-page-actions">
+            <button type="button" class="eink-move-up" data-id="${p.id}" ${i === 0 ? 'disabled' : ''} title="Move up">&uarr;</button>
+            <button type="button" class="eink-move-down" data-id="${p.id}" ${i === enabled.length - 1 ? 'disabled' : ''} title="Move down">&darr;</button>
+            <button type="button" class="eink-disable" data-id="${p.id}">Disable</button>
+          </div>
+        </div>
+      `).join('') || '<p class="hint">Nothing enabled — every screen is disabled below.</p>';
+
+      disabledList.innerHTML = disabled.map(p => `
+        <div class="eink-page-row disabled">
+          <div class="eink-page-info"><strong>${p.label}</strong></div>
+          <div class="eink-page-actions">
+            <button type="button" class="eink-enable" data-id="${p.id}">Enable</button>
+          </div>
+        </div>
+      `).join('') || '<p class="hint">Nothing disabled.</p>';
+
+      enabledList.querySelectorAll('.eink-move-up').forEach(btn =>
+        btn.addEventListener('click', () => moveEinkPage(btn.dataset.id, -1)));
+      enabledList.querySelectorAll('.eink-move-down').forEach(btn =>
+        btn.addEventListener('click', () => moveEinkPage(btn.dataset.id, 1)));
+      enabledList.querySelectorAll('.eink-disable').forEach(btn =>
+        btn.addEventListener('click', () => setEinkPageEnabled(btn.dataset.id, false)));
+      disabledList.querySelectorAll('.eink-enable').forEach(btn =>
+        btn.addEventListener('click', () => setEinkPageEnabled(btn.dataset.id, true)));
+      enabledList.querySelectorAll('.eink-duration').forEach(input =>
+        input.addEventListener('input', () => {
+          const page = einkPages.find(p => p.id === input.dataset.id);
+          if (page) page.duration = input.value;
+        }));
+    }
+
+    // Swaps the two enabled pages themselves, wherever they sit in the
+    // underlying array — disabled pages interspersed between them don't
+    // affect an enabled page's position relative to other enabled pages.
+    function moveEinkPage(id, delta) {
+      const enabledIds = einkPages.filter(p => p.enabled).map(p => p.id);
+      const from = enabledIds.indexOf(id);
+      const to = from + delta;
+      if (from === -1 || to < 0 || to >= enabledIds.length) return;
+      const fromIdx = einkPages.findIndex(p => p.id === id);
+      const toIdx = einkPages.findIndex(p => p.id === enabledIds[to]);
+      [einkPages[fromIdx], einkPages[toIdx]] = [einkPages[toIdx], einkPages[fromIdx]];
+      renderEinkPageLists();
+    }
+
+    // Re-enabling always appends to the end of the live rotation, rather
+    // than trying to restore its old position — simpler to reason about,
+    // and "goes back to the bottom of the list" is the expected behavior
+    // for this kind of enable/disable list.
+    function setEinkPageEnabled(id, enabled) {
+      const idx = einkPages.findIndex(p => p.id === id);
+      if (idx === -1) return;
+      const [page] = einkPages.splice(idx, 1);
+      page.enabled = enabled;
+      einkPages.push(page);
+      renderEinkPageLists();
+    }
+
+    async function renderEinkStep() {
+      const d = wizardData.display || {};
+      document.getElementById('step-content').innerHTML = `
+        <section>
+          <div class="field">
+            <label for="eink-display">Display</label>
+            <select id="eink-display"></select>
+            <p class="hint">Preset to whatever was picked during install. Changing it here takes effect after Finish &amp; Reboot — make sure it matches what's actually wired up (see PINOUT.md).</p>
+          </div>
+
+          <div class="field">
+            <label>Screens</label>
+            <p class="hint">Not live yet — nothing renders these in rotation until page rotation itself is built (see TODO.md). Reorder with the arrows, or move a screen to Disabled below; it's all ready to go once that lands.</p>
+            <div id="eink-enabled-list"></div>
+
+            <label style="margin-top: 20px; display: block;">Disabled</label>
+            <div id="eink-disabled-list"></div>
+          </div>
+        </section>
+      `;
+
+      einkPages = (d.pages && d.pages.length ? d.pages : EINK_DEFAULT_PAGES.map(p => ({ ...p, duration: EINK_DEFAULT_DURATION_S, enabled: true })))
+        .map(p => ({ ...EINK_DEFAULT_PAGES.find(dp => dp.id === p.id), ...p }));
+      renderEinkPageLists();
+
+      const select = document.getElementById('eink-display');
+      addOption(select, 'none|', 'None (disabled)');
+      try {
+        const res = await fetch('/api/display/models');
+        const data = await res.json();
+        (data.models || []).forEach(m => addOption(select, `waveshare|${m.id}`, m.desc));
+      } catch (e) {
+        // "None" still works without this
+      }
+
+      // Preset to whatever was already picked this session, else whatever
+      // install.sh configured, else "None".
+      if (d.driver !== undefined) {
+        select.value = `${d.driver}|${d.model || ''}`;
+      } else {
+        try {
+          const res = await fetch('/api/display/config');
+          const data = await res.json();
+          select.value = `${data.driver || 'none'}|${data.model || ''}`;
+        } catch (e) {
+          select.value = 'none|';
+        }
+      }
+    }
+
+    function saveEinkStep() {
+      const [driver, model] = document.getElementById('eink-display').value.split('|');
+      wizardData.display = {
+        driver,
+        model,
+        pages: einkPages.map(({ id, duration, enabled }) => ({ id, duration, enabled })),
+      };
+      return true;
+    }
+
+    // ── Startup step ─────────────────────────────────────────────────
+    // Its own step, last before Finish — not tucked under Radio, and not
+    // early enough to skim past. Everything here is about how the station
+    // behaves once it's running unattended, so it belongs right before the
+    // wizard actually commits and reboots into that state.
+    const STARTUP_DEFAULT_RESTART_ATTEMPTS = 3;
+    const STARTUP_DEFAULT_RESTART_DELAY_S = 30;
+
+    function renderStartupStep() {
+      const s = wizardData.startup || {};
+      document.getElementById('step-content').innerHTML = `
+        <section>
+          <div class="field">
+            <label class="subsection-title">
+              <input type="checkbox" id="startup-autostart" checked>
+              Start automatically on boot
+            </label>
+            <p class="hint">Recommended for a field-deployed station — if the power drops and comes back, or the Pi reboots on its own, it starts digipeating again without anyone needing to log in and start it by hand.</p>
+          </div>
+
+          <div class="field">
+            <label class="subsection-title">
+              <input type="checkbox" id="startup-autorestart" checked>
+              Restart automatically if it crashes
+            </label>
+            <p class="hint">If Direwolf exits unexpectedly (not a normal shutdown), try restarting it rather than leaving the station silent until someone notices.</p>
+          </div>
+          <div class="field-row" id="startup-restart-fields">
+            <div class="field">
+              <label for="startup-restart-attempts">Max attempts</label>
+              <input type="number" id="startup-restart-attempts" min="1" value="${s.restart_attempts ?? STARTUP_DEFAULT_RESTART_ATTEMPTS}">
+            </div>
+            <div class="field">
+              <label for="startup-restart-delay">Delay between attempts</label>
+              <div class="field-suffix"><input type="number" id="startup-restart-delay" min="1" value="${s.restart_delay_s ?? STARTUP_DEFAULT_RESTART_DELAY_S}"><span>sec</span></div>
+            </div>
+          </div>
+
+          <p class="hint">Saved for later use — there's no Direwolf process to start or restart yet (see TODO.md), so nothing on this page does anything yet.</p>
+        </section>
+      `;
+
+      const autostartBox = document.getElementById('startup-autostart');
+      const autorestartBox = document.getElementById('startup-autorestart');
+      const restartFields = document.getElementById('startup-restart-fields');
+
+      autostartBox.checked = s.autostart ?? true;
+      autorestartBox.checked = s.autorestart ?? true;
+
+      function updateRestartFieldsVisibility() {
+        restartFields.classList.toggle('hidden', !autorestartBox.checked);
+      }
+      autorestartBox.addEventListener('change', updateRestartFieldsVisibility);
+      updateRestartFieldsVisibility();
+    }
+
+    function saveStartupStep() {
+      const autorestart = document.getElementById('startup-autorestart').checked;
+      wizardData.startup = {
+        autostart: document.getElementById('startup-autostart').checked,
+        autorestart,
+      };
+      if (autorestart) {
+        wizardData.startup.restart_attempts = document.getElementById('startup-restart-attempts').value;
+        wizardData.startup.restart_delay_s = document.getElementById('startup-restart-delay').value;
+      }
+      return true;
     }
 
     // ── Finish step ───────────────────────────────────────────────────
