@@ -146,13 +146,35 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     async def internet_status():
         return {"online": await tiles.has_internet()}
 
-    @app.get("/api/map/estimate")
-    async def map_estimate(north: float, south: float, east: float, west: float, zoom_min: int, zoom_max: int):
-        if zoom_min < 1 or zoom_max > 19 or zoom_min > zoom_max or north <= south or east <= west:
-            raise HTTPException(status_code=400, detail="Invalid region")
-        bounds = {"north": north, "south": south, "east": east, "west": west}
-        count, size_mb = tiles.estimate_tiles_for_bounds(bounds, zoom_min, zoom_max)
-        return {"tile_count": count, "estimated_mb": round(size_mb, 1)}
+    @app.get("/api/map/world-status")
+    async def map_world_status():
+        return {"available": tiles.WORLD_PMTILES_PATH.exists()}
+
+    # Range-request serving (needed by the PMTiles JS reader, which reads
+    # chunks of the archive on demand rather than the whole file at once —
+    # Starlette's FileResponse has supported Range since 0.39, see
+    # requirements.txt) for whichever local map data exists. 404 rather
+    # than a partial/placeholder response if a file isn't there yet — the
+    # frontend checks availability via world-status/cache-status first and
+    # shouldn't be requesting a path that can't exist.
+    @app.get("/map-data/world.pmtiles")
+    async def serve_world_pmtiles():
+        if not tiles.WORLD_PMTILES_PATH.exists():
+            raise HTTPException(status_code=404, detail="World map not cached yet")
+        return FileResponse(tiles.WORLD_PMTILES_PATH, media_type="application/octet-stream")
+
+    @app.get("/map-data/region.pmtiles")
+    async def serve_region_pmtiles():
+        if not tiles.REGION_PATH.exists():
+            raise HTTPException(status_code=404, detail="No region downloaded yet")
+        return FileResponse(tiles.REGION_PATH, media_type="application/octet-stream")
+
+    # No size/tile-count estimate endpoint — unlike the old per-tile raster
+    # approach, a PMTiles region extract's size depends on how much actual
+    # map data exists in the area (a dense city vs. open countryside at the
+    # same bbox/zoom can differ by an order of magnitude), not a clean
+    # geometric formula. Better to say so honestly than show a fake-precise
+    # number — see TODO.md.
 
     @app.post("/api/map/cache/start")
     async def map_cache_start(request: Request):
@@ -162,17 +184,16 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             south = float(body.get("south"))
             east = float(body.get("east"))
             west = float(body.get("west"))
-            zoom_min = int(body.get("zoom_min"))
             zoom_max = int(body.get("zoom_max"))
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="Invalid region parameters")
-        if zoom_min < 1 or zoom_max > 19 or zoom_min > zoom_max or north <= south or east <= west:
+        if zoom_max < 1 or zoom_max > 15 or north <= south or east <= west:
             raise HTTPException(status_code=400, detail="Invalid region")
         existing = map_download_state["downloader"]
         if existing and existing.status()["active"]:
             raise HTTPException(status_code=409, detail="A download is already in progress")
         bounds = {"north": north, "south": south, "east": east, "west": west}
-        downloader = tiles.TileDownloader(bounds, zoom_min, zoom_max)
+        downloader = tiles.RegionDownloader(bounds, zoom_max)
         map_download_state["downloader"] = downloader
         asyncio.create_task(downloader.run())
         return {"ok": True}
@@ -181,7 +202,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     async def map_cache_status():
         downloader = map_download_state["downloader"]
         if not downloader:
-            return {"active": False, "cancelled": False, "total": 0, "done": 0, "failed": 0, "percent": 0, "current_zoom": 0}
+            return {"active": False, "done": False, "cancelled": False, "error": None, "bytes": 0, "elapsed_s": None}
         return downloader.status()
 
     @app.post("/api/map/cache/cancel")
@@ -190,16 +211,6 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         if downloader:
             downloader.cancel()
         return {"ok": True}
-
-    # Offline serving of whatever's been cached so far — a future map view
-    # can hit this with no internet needed at all, only re-contacting OSM
-    # when the setup wizard's download step is used again to refresh tiles.
-    @app.get("/tiles/{z}/{x}/{y}.png")
-    async def serve_tile(z: int, x: int, y: int):
-        tile_path = tiles.TILE_DIR / str(z) / str(x) / f"{y}.png"
-        if not tile_path.exists():
-            raise HTTPException(status_code=404, detail="Tile not cached")
-        return FileResponse(tile_path, media_type="image/png")
 
     @app.post("/api/setup/complete")
     async def setup_complete(request: Request):

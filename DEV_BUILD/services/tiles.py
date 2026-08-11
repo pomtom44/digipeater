@@ -1,57 +1,104 @@
-"""Downloads and caches OpenStreetMap tiles for a region around the
-station, so a map view can eventually work fully offline. Uses OSM's own
-standard tile server — open, free, no account or API key needed.
+"""Downloads a single offline map data file (PMTiles) covering a region
+around the station, via Protomaps' hosted daily planet build.
 
-OSM's tile usage policy (operations.osmfoundation.org/policies/tiles/) asks
-bulk consumers to be considerate: a real User-Agent, no hammering the
-server. Downloads here run in small sequential batches (not one big
-parallel blast) for that reason — same approach ORIGINAL/services/
-tile_cache.py used, ported here since this is otherwise a straight rebuild
-of that module for DEV_BUILD's layout.
+This deliberately does NOT scrape individual tiles from a live tile
+server. OpenStreetMap's own tile usage policy is explicit that this isn't
+just discouraged, it's disallowed outright: "Offline use is not permitted
+on tile.openstreetmap.org", and bulk downloading is defined to include
+exactly what an earlier version of this module did — pre-emptive fetching
+of tiles beyond what's being actively viewed, pre-seeding areas, building
+tile archives. See operations.osmfoundation.org/policies/tiles/ and
+TODO.md.
+
+PMTiles is the legitimate, designed-for-this-exact-purpose alternative
+(also what OSM's own policy page recommends for offline use): a single
+static file containing a region's map data, extracted from a hosted
+planet-wide build via HTTP range requests — you only download the bytes
+for your region, not the whole planet, and no API key or account is
+needed for this self-hosted extraction path (unlike Protomaps' hosted
+*live* tile API, which is a separate, unrelated commercial product this
+project doesn't use). Region-extraction is only implemented in the
+official Go CLI (protomaps/go-pmtiles), not the Python package, so
+install.sh fetches that one static binary rather than reimplementing the
+PMTiles archive format from scratch — same "shell out to a well-tested
+external tool" approach this project already uses for gpsd/nmcli/etc.
+
+The wizard's interactive region-picker map is now MapLibre GL JS + this
+same PMTiles machinery, not Leaflet + live OSM raster tiles — it always
+renders from the local WORLD_PMTILES_PATH cache (extracted once at
+install time, see scripts/precache_world.py), so the picker itself works
+with or without internet at setup time. Only downloading a more detailed
+*region* on top of that coarse world layer needs a real connection to
+Protomaps' build host.
+
+Two RegionDownloader use cases share this module: the one-off whole-world
+install-time precache (coarse, fixed zoom, run by
+scripts/precache_world.py) and the wizard's on-demand region extracts
+(finer detail, user-picked bounds/zoom, run from web/server.py). Same
+class, different output path and bounds/zoom.
 """
 
 import asyncio
 import logging
-import math
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-TILE_SERVER = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-# Relative to the working directory, same convention as config.yaml /
-# wifi_pending.json — the systemd unit sets WorkingDirectory to the app dir.
-TILE_DIR = Path("map_tiles")
-_USER_AGENT = "digipeater-setup/1.0 (+https://github.com/pomtom44/digipeater)"
+PMTILES_BIN = Path(__file__).resolve().parent.parent / "bin" / "pmtiles"
+MAP_DATA_DIR = Path("map_data")
+REGION_PATH = MAP_DATA_DIR / "region.pmtiles"
+# Written once at install time (scripts/precache_world.py) — the always-
+# available basemap for the wizard's region picker, regardless of whether
+# there's internet at setup time. Coarse (maxzoom 8, ~1GB) on purpose;
+# see TODO.md for the sizing reasoning.
+WORLD_PMTILES_PATH = MAP_DATA_DIR / "world.pmtiles"
+WORLD_MAX_ZOOM = 8
+# 85.0 rather than 90.0 — Web Mercator (what PMTiles/Protomaps' planet
+# build uses, same as every other slippy-map tile scheme) is undefined at
+# the poles; ~85.05 is the standard cutoff.
+WORLD_BOUNDS = {"north": 85.0, "south": -85.0, "east": 180.0, "west": -180.0}
 
-_INTERNET_CHECK_HOST = "tile.openstreetmap.org"
+_BUILD_HOST = "build.protomaps.com"
+_BUILD_URL_TEMPLATE = f"https://{_BUILD_HOST}/{{date}}.pmtiles"
+# The daily build lags real time by roughly a day (confirmed against the
+# live service — today's date 404s, the two before it don't) — walk
+# backward a few days rather than assuming any single date is ready yet.
+_BUILD_LOOKBACK_DAYS = 5
+
 _INTERNET_CHECK_PORT = 443
 _INTERNET_CHECK_TIMEOUT_S = 3.0
 
-# Real-world regions (hundreds of km, city-level zoom) land in the
-# hundred-thousand-tile range — bumped from 16 once that stopped being a
-# hypothetical. Raise further only with real justification, not just
-# because a bigger number downloads faster; see TileDownloader.run().
-_MAX_CONCURRENT = 24
+_BUILD_DATE_RE = re.compile(r"/(\d{8})\.pmtiles$")
 
-AVG_TILE_KB = 15  # rough average tile size, for the size estimate only
 
-# 85.0 rather than 90.0 — Web Mercator (what every slippy-map tile server
-# uses, including OSM's) is undefined at the poles; ~85.05 is the standard
-# cutoff. Used for the install-time world pre-cache, not the wizard's
-# region picker (which sends its own explicit north/south/east/west bounds
-# straight from the map's draggable rectangle).
-WORLD_BOUNDS = {"north": 85.0, "south": -85.0, "east": 180.0, "west": -180.0}
+def _build_date_marker_path(output_path: Path) -> Path:
+    """Sidecar file recording which planet build an extract came from —
+    lets scripts/auto_tile_update.py tell "is there a newer build than
+    what's cached" apart from re-parsing the pmtiles archive itself."""
+    return output_path.with_name(output_path.name + ".build_date")
+
+
+def cached_build_date(output_path: Path) -> str | None:
+    """The build date (YYYYMMDD) the file at output_path was last
+    extracted from, or None if it doesn't exist / was never recorded
+    (e.g. a file left over from before this tracking existed)."""
+    marker = _build_date_marker_path(output_path)
+    if not marker.exists():
+        return None
+    return marker.read_text().strip() or None
 
 
 async def has_internet() -> bool:
-    """Checks reachability of the tile server specifically, not just "any"
-    internet — what actually matters for this feature is whether tiles can
-    be fetched at all."""
+    """Checks reachability of Protomaps' build host specifically, not just
+    "any" internet — what actually matters for this feature is whether a
+    region extract can be fetched at all."""
     try:
         reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(_INTERNET_CHECK_HOST, _INTERNET_CHECK_PORT),
+            asyncio.open_connection(_BUILD_HOST, _INTERNET_CHECK_PORT),
             timeout=_INTERNET_CHECK_TIMEOUT_S,
         )
     except (OSError, asyncio.TimeoutError):
@@ -64,132 +111,139 @@ async def has_internet() -> bool:
     return True
 
 
-def _lon_to_tile(lon: float, z: int) -> int:
-    # Clamped to [0, n-1] — lon=180 (the antimeridian, e.g. WORLD_BOUNDS'
-    # east edge) computes exactly n unclamped, an out-of-range index one
-    # past the real last column, which was silently doubling tile counts
-    # at every zoom level for anything reaching the boundary.
-    n = 2 ** z
-    return max(0, min(n - 1, int((lon + 180) / 360 * n)))
+async def find_source_url() -> tuple[str, str]:
+    """Finds the most recent available daily planet build. Returns
+    (url, date_str) — the date is handed back separately (rather than
+    re-parsed from the URL by callers) since it's also the value recorded
+    in the build_date marker file for future update checks (see
+    cached_build_date). Raises RuntimeError if none of the last few days
+    resolve — the build host being reachable (has_internet) doesn't
+    guarantee a specific date's file exists yet."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        today = datetime.now(timezone.utc).date()
+        for days_back in range(_BUILD_LOOKBACK_DAYS):
+            date_str = (today - timedelta(days=days_back)).strftime("%Y%m%d")
+            url = _BUILD_URL_TEMPLATE.format(date=date_str)
+            try:
+                response = await client.head(url)
+                if response.status_code == 200:
+                    return url, date_str
+            except httpx.HTTPError:
+                continue
+    raise RuntimeError(
+        f"No Protomaps planet build found in the last {_BUILD_LOOKBACK_DAYS} days "
+        f"— the build host may be reachable but not currently serving builds."
+    )
 
 
-def _lat_to_tile(lat: float, z: int) -> int:
-    n = 2 ** z
-    lat_r = math.radians(lat)
-    return max(0, min(n - 1, int((1 - math.log(math.tan(lat_r) + 1 / math.cos(lat_r)) / math.pi) / 2 * n)))
+class RegionDownloader:
+    """One region extraction at a time — status()/cancel() are polled/
+    called from the web layer while run() executes as a background task.
 
+    Unlike the old per-tile raster downloader, there's no meaningful
+    "N of M tiles" progress — pmtiles extract is a single CLI invocation.
+    Progress is instead read from the output file's growing size on disk,
+    which is honest (it's the real file being built) rather than parsing
+    CLI-specific log output that could change format across versions.
+    """
 
-def _tile_count_for_bounds(bounds: dict, zoom_min: int, zoom_max: int) -> int:
-    total = 0
-    for z in range(zoom_min, zoom_max + 1):
-        x_min, x_max = _lon_to_tile(bounds["west"], z), _lon_to_tile(bounds["east"], z)
-        y_min, y_max = _lat_to_tile(bounds["north"], z), _lat_to_tile(bounds["south"], z)
-        total += (abs(x_max - x_min) + 1) * (abs(y_max - y_min) + 1)
-    return total
-
-
-def estimate_tiles_for_bounds(bounds: dict, zoom_min: int, zoom_max: int) -> tuple[int, float]:
-    """Return (tile_count, estimated_mb)."""
-    total = _tile_count_for_bounds(bounds, zoom_min, zoom_max)
-    size_mb = (total * AVG_TILE_KB) / 1024
-    return total, size_mb
-
-
-class TileDownloader:
-    """One download at a time — status()/cancel() are polled/called from
-    the web layer while run() executes as a background asyncio task."""
-
-    def __init__(self, bounds: dict, zoom_min: int, zoom_max: int):
+    def __init__(self, bounds: dict, zoom_max: int, output_path: Path = REGION_PATH):
         self._bounds = bounds
-        self._zoom_min = zoom_min
         self._zoom_max = zoom_max
-        self._total = _tile_count_for_bounds(bounds, zoom_min, zoom_max)
-        self._done = 0
-        self._failed = 0
+        self._output_path = output_path
+        # Extraction writes here, not directly to output_path — see run()'s
+        # atomic-rename comment below.
+        self._tmp_path = output_path.with_name(output_path.name + ".part")
         self._active = False
+        self._done = False
         self._cancelled = False
-        self._current_zoom = zoom_min
+        self._error: str | None = None
+        self._process: asyncio.subprocess.Process | None = None
+        self._started_at: float | None = None
+        self._finished_at: float | None = None
 
     def status(self) -> dict:
-        pct = round((self._done / self._total) * 100, 1) if self._total else 0
+        # While active, real progress is the growing temp file; once
+        # finished, tmp_path is gone (renamed on success, deleted on
+        # failure/cancel) and output_path is the thing to report on.
+        progress_path = self._tmp_path if self._active else self._output_path
+        bytes_so_far = progress_path.stat().st_size if progress_path.exists() else 0
+        elapsed_s = None
+        if self._started_at is not None:
+            end = self._finished_at if self._finished_at is not None else asyncio.get_event_loop().time()
+            elapsed_s = round(end - self._started_at, 1)
         return {
             "active": self._active,
-            "cancelled": self._cancelled,
-            "total": self._total,
             "done": self._done,
-            "failed": self._failed,
-            "percent": pct,
-            "current_zoom": self._current_zoom,
+            "cancelled": self._cancelled,
+            "error": self._error,
+            "bytes": bytes_so_far,
+            "elapsed_s": elapsed_s,
         }
 
     def cancel(self) -> None:
         self._cancelled = True
+        if self._process and self._process.returncode is None:
+            self._process.terminate()
 
     async def run(self) -> None:
         self._active = True
-        self._cancelled = False
-        logger.info("Tile download started — %d tiles", self._total)
+        self._started_at = asyncio.get_event_loop().time()
+        MAP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        # Stale temp file from a previous crashed/killed run at this same
+        # path, if any — extract always starts from scratch.
+        self._tmp_path.unlink(missing_ok=True)
 
-        async with httpx.AsyncClient(timeout=10) as client:
-            for z in range(self._zoom_min, self._zoom_max + 1):
-                if self._cancelled:
-                    break
-                self._current_zoom = z
-                x_min = _lon_to_tile(self._bounds["west"], z)
-                x_max = _lon_to_tile(self._bounds["east"], z)
-                y_min = _lat_to_tile(self._bounds["north"], z)
-                y_max = _lat_to_tile(self._bounds["south"], z)
+        try:
+            source_url, source_date = await find_source_url()
+        except RuntimeError as e:
+            self._error = str(e)
+            self._active = False
+            self._finished_at = asyncio.get_event_loop().time()
+            logger.error("Region download failed: %s", e)
+            return
 
-                # A queue + fixed worker pool, not fixed-size batches — a
-                # worker picks up the next tile the instant it's free,
-                # instead of every worker waiting for the *slowest* tile in
-                # a batch before any of them can start the next one. Same
-                # concurrency ceiling either way, but no artificial stalls;
-                # this alone was leaving real throughput on the table.
-                # Queue-based rather than one asyncio.Task per tile, since
-                # a single zoom level can be a six-figure tile count — a
-                # bounded number of workers pulling from a queue keeps
-                # memory flat regardless of how large that gets.
-                queue: asyncio.Queue = asyncio.Queue()
-                for x in range(min(x_min, x_max), max(x_min, x_max) + 1):
-                    for y in range(min(y_min, y_max), max(y_min, y_max) + 1):
-                        queue.put_nowait((z, x, y))
+        b = self._bounds
+        bbox = f"{b['west']},{b['south']},{b['east']},{b['north']}"
+        logger.info("Download started — output=%s bbox=%s maxzoom=%d source=%s", self._output_path, bbox, self._zoom_max, source_url)
 
-                async def _worker():
-                    while not self._cancelled:
-                        try:
-                            zz, xx, yy = queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            return
-                        await self._download_tile(client, zz, xx, yy)
+        try:
+            # Extracted into self._tmp_path, a sibling of the real output
+            # path, and only renamed onto it once fully written (see
+            # below) — so a scheduled refresh of an *already-cached* file
+            # (scripts/auto_tile_update.py) never leaves anything reading
+            # output_path mid-write (the wizard's live map, or a future
+            # dashboard) looking at a truncated/corrupt archive, and a
+            # failed refresh leaves the previous good cache untouched
+            # instead of deleting it upfront and coming up empty.
+            self._process = await asyncio.create_subprocess_exec(
+                str(PMTILES_BIN), "extract", source_url, str(self._tmp_path),
+                f"--bbox={bbox}", f"--maxzoom={self._zoom_max}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError:
+            self._error = f"pmtiles binary not found at {PMTILES_BIN} — was install.sh run?"
+            self._active = False
+            self._finished_at = asyncio.get_event_loop().time()
+            logger.error(self._error)
+            return
 
-                # _MAX_CONCURRENT — deliberately still well short of what
-                # httpx's connection pool could sustain. OSM's tile usage
-                # policy asks bulk consumers to be considerate, and
-                # traffic that looks abusive risks the whole IP getting
-                # rate-limited or blocked — worse than "slow", since that
-                # breaks tile downloads entirely, including small future
-                # ones. See TODO.md.
-                workers = [asyncio.create_task(_worker()) for _ in range(_MAX_CONCURRENT)]
-                await asyncio.gather(*workers)
+        _, stderr = await self._process.communicate()
 
         self._active = False
-        logger.info("Tile download finished — %d done, %d failed", self._done, self._failed)
-
-    async def _download_tile(self, client: httpx.AsyncClient, z: int, x: int, y: int) -> None:
-        tile_path = TILE_DIR / str(z) / str(x) / f"{y}.png"
-        if tile_path.exists():
-            self._done += 1
+        self._finished_at = asyncio.get_event_loop().time()
+        if self._cancelled:
+            self._tmp_path.unlink(missing_ok=True)
+            logger.info("Download cancelled")
             return
-        try:
-            tile_path.parent.mkdir(parents=True, exist_ok=True)
-            response = await client.get(
-                TILE_SERVER.format(z=z, x=x, y=y),
-                headers={"User-Agent": _USER_AGENT},
-            )
-            response.raise_for_status()
-            tile_path.write_bytes(response.content)
-            self._done += 1
-        except Exception as e:
-            self._failed += 1
-            logger.debug("Tile %d/%d/%d failed: %s", z, x, y, e)
+        if self._process.returncode != 0:
+            self._error = stderr.decode(errors="replace").strip() or f"pmtiles exited with code {self._process.returncode}"
+            self._tmp_path.unlink(missing_ok=True)
+            logger.error("Download failed: %s", self._error)
+            return
+
+        self._tmp_path.replace(self._output_path)
+        _build_date_marker_path(self._output_path).write_text(source_date)
+        self._done = True
+        logger.info("Download finished — %s (%d bytes)", self._output_path, self._output_path.stat().st_size)

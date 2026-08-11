@@ -4,10 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APRS Digipeater</title>
-  <!-- Vendored locally (no CDN) — same copy ORIGINAL used, see
-       web/static/leaflet/. Only actually loaded/used by the Map caching
-       step's region picker. -->
-  <link rel="stylesheet" href="/static/leaflet/leaflet.css">
+  <!-- Vendored locally (no CDN), see web/static/maplibre/. Only actually
+       loaded/used by the Map caching step's region picker, which renders
+       from the locally-cached PMTiles map data (see services/tiles.py) —
+       not a live tile server, so this needs a vector renderer rather than
+       Leaflet's raster tile layer (what this used before). -->
+  <link rel="stylesheet" href="/static/maplibre/maplibre-gl.css">
   <style>
     :root {
       color-scheme: dark light;
@@ -169,10 +171,10 @@
       margin: 8px 0 4px;
     }
 
-    /* Leaflet divIcons for the map region's edge drag handles — plain CSS
-       squares rather than the default pin, so they don't get confused
-       with the center marker. One pair per axis, so the cursor hints at
-       which direction actually does anything when dragged. */
+    /* Custom DOM elements for MapLibre's draggable edge-handle markers —
+       plain CSS squares rather than the default pin, so they don't get
+       confused with the center marker. One pair per axis, so the cursor
+       hints at which direction actually does anything when dragged. */
     .map-edge-handle {
       width: 14px;
       height: 14px;
@@ -272,25 +274,81 @@
     .msg.success { color: var(--success); }
     .msg.error { color: var(--error); }
 
-    .progress-bar-wrap {
-      background: var(--panel-2);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      height: 10px;
-      overflow: hidden;
-    }
-    .progress-bar {
-      height: 100%;
-      background: var(--accent);
-      transition: width 0.3s ease;
-    }
-
     .hint {
       color: var(--muted);
       font-size: 12px;
       line-height: 1.5;
       margin: 10px 0 0;
     }
+
+    /* "?" icon next to a label — opens the shared help modal below rather
+       than showing an always-visible block of text under every field. */
+    .help-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      min-height: 0;
+      padding: 0;
+      margin-left: 4px;
+      border-radius: 50%;
+      border: 1px solid var(--muted);
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 700;
+      cursor: pointer;
+      vertical-align: middle;
+    }
+    .help-icon:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .help-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 100;
+    }
+    .help-box {
+      position: relative;
+      max-width: 380px;
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px 28px 24px 20px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+    .help-box p {
+      margin: 0;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .help-close {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 28px;
+      height: 28px;
+      min-height: 0;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .help-close:hover { color: var(--text); }
 
     .hidden { display: none; }
 
@@ -449,8 +507,76 @@
 
   </div>
 
-  <script src="/static/leaflet/leaflet.js"></script>
+  <!-- Shared help modal — one instance for the whole wizard, not one per
+       field. Every "?" icon (see helpIcon() in the script below) opens
+       this same overlay with different content, via event delegation
+       rather than a listener wired up per icon (icons get thrown away and
+       recreated every time a step re-renders; a single delegated listener
+       on document doesn't need rewiring each time). -->
+  <div class="help-overlay hidden" id="help-overlay">
+    <div class="help-box" role="dialog" aria-modal="true" aria-labelledby="help-box-text">
+      <button type="button" class="help-close" id="help-close" aria-label="Close">&times;</button>
+      <p id="help-box-text"></p>
+    </div>
+  </div>
+
+  <script src="/static/maplibre/maplibre-gl.js"></script>
+  <script src="/static/maplibre/pmtiles.js"></script>
   <script>
+    // ── Shared help modal ────────────────────────────────────────────
+    // helpIcon(text) returns a "?" button carrying its explanation in a
+    // data attribute — used inline wherever a field used to have a
+    // <p class="hint"> underneath it. One delegated click listener (below)
+    // handles every icon on every step, current or future, without needing
+    // rewiring after each step's innerHTML gets replaced.
+    function helpIcon(text) {
+      // Escaped even though this is always static wizard copy, never user
+      // input — a broken attribute from an unescaped quote would be a
+      // silent authoring bug, not a security issue, but escaping costs
+      // nothing and rules that out.
+      const escaped = text.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+      return `<button type="button" class="help-icon" data-help="${escaped}" aria-label="Help">?</button>`;
+    }
+
+    const helpOverlay = document.getElementById('help-overlay');
+    const helpBoxText = document.getElementById('help-box-text');
+
+    function showHelp(text) {
+      // innerHTML, not textContent — a couple of help texts (e.g. the
+      // security mode levels) read better as a short list than a run-on
+      // sentence crammed into a modal. Safe here specifically because
+      // every helpIcon() call site is static wizard copy written by hand,
+      // never anything derived from user input at runtime.
+      helpBoxText.innerHTML = text;
+      helpOverlay.classList.remove('hidden');
+    }
+    function hideHelp() {
+      helpOverlay.classList.add('hidden');
+    }
+
+    // Global scope, not step-local — used by both the Map caching step's
+    // own progress display and the Finish step's active-download warning.
+    function formatBytes(bytes) {
+      if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+      if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+      if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${bytes} B`;
+    }
+
+    document.addEventListener('click', (e) => {
+      const icon = e.target.closest('.help-icon');
+      if (icon) {
+        showHelp(icon.dataset.help);
+        return;
+      }
+      // Click on the dark backdrop itself (not the box) also closes it.
+      if (e.target === helpOverlay) hideHelp();
+    });
+    document.getElementById('help-close').addEventListener('click', hideHelp);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !helpOverlay.classList.contains('hidden')) hideHelp();
+    });
+
     // Accumulates values across steps as the wizard progresses — each
     // step's content gets replaced in the DOM when you move on, so this is
     // the only place data survives between steps until Finish sends it all.
@@ -514,6 +640,15 @@
         clearInterval(mapStatusPollTimer);
         mapStatusPollTimer = null;
       }
+      // Explicit teardown, unlike Leaflet before it — MapLibre holds a
+      // WebGL context per map instance, and browsers only allow a small
+      // number of those at once (typically ~8-16). Just letting the old
+      // container get thrown away via innerHTML (as every other step
+      // does) would leak a context every time this step re-renders.
+      if (currentRegionMap) {
+        currentRegionMap.remove();
+        currentRegionMap = null;
+      }
       // Reset before render() runs, not after — a step that needs live
       // validation (e.g. User management's password fields) disables this
       // itself from inside its own render, and that must be the last word.
@@ -541,9 +676,8 @@
             <button type="button" id="btn-scan">Scan</button>
           </div>
           <div id="wifi-scan-results" class="scan-results hidden"></div>
-          <label for="wifi-password">Password</label>
+          <label for="wifi-password">Password ${helpIcon("Leave this blank to skip. Saving won't connect right away — it'll be used the next time the device sets up its network connection, so this hotspot session won't drop mid-setup.")}</label>
           <input type="password" id="wifi-password" placeholder="At least 8 characters">
-          <p class="hint">Leave this blank to skip. Saving won't connect right away — it'll be used the next time the device sets up its network connection, so this hotspot session won't drop mid-setup.</p>
           <p class="msg" id="wifi-msg"></p>
         </section>
       `;
@@ -1122,13 +1256,12 @@
       return `
         ${includePath ? `
         <div class="field">
-          <label for="${prefix}-path">Path</label>
+          <label for="${prefix}-path">Path ${helpIcon("Kept short for a fixed station's own beacon — WIDE1-1 (one hop) is standard practice rather than a wide-area path.")}</label>
           <input type="text" id="${prefix}-path" value="${APRS_DEFAULT_RF_BEACON_PATH}">
-          <p class="hint">Kept short for a fixed station's own beacon — WIDE1-1 (one hop) is standard practice rather than a wide-area path.</p>
         </div>
         <div class="field-row">
           <div class="field">
-            <label for="${prefix}-phg-power">Power</label>
+            <label for="${prefix}-phg-power">Power ${helpIcon('Optional. Antenna power/height/gain, encoded into the beacon so other stations can estimate your range. Leave blank to omit.')}</label>
             <div class="field-suffix"><input type="number" id="${prefix}-phg-power" min="0" placeholder="e.g. 5"><span>W</span></div>
           </div>
           <div class="field">
@@ -1139,8 +1272,7 @@
             <label for="${prefix}-phg-gain">Gain</label>
             <div class="field-suffix"><input type="number" id="${prefix}-phg-gain" min="0" placeholder="e.g. 3"><span>dB</span></div>
           </div>
-        </div>
-        <p class="hint">Optional. Antenna power/height/gain, encoded into the beacon so other stations can estimate your range. Leave blank to omit.</p>` : ''}
+        </div>` : ''}
         <div class="field-row">
           <div class="field">
             <label for="${prefix}-delay">Initial delay</label>
@@ -1222,13 +1354,12 @@
             <details class="advanced">
               <summary>Digipeater settings</summary>
               <div class="field">
-                <label for="aprs-digipeat-rules">Digipeat rules</label>
+                <label for="aprs-digipeat-rules">Digipeat rules ${helpIcon("Recommended: fill-in for lower power, wide-area for hilltop sites.")}</label>
                 <select id="aprs-digipeat-rules">
                   <option value="fillin">Fill-in digi (handles WIDE1-1 only)</option>
                   <option value="widearea">Wide-area digi (handles WIDE2-1, WIDE2-2, etc.)</option>
                   <option value="custom">Custom</option>
                 </select>
-                <p class="hint">Which alias patterns get repeated — fill-in for nearby low-power stations, wide-area for longer-range hilltop sites.</p>
               </div>
               <div class="field-row">
                 <div class="field">
@@ -1240,22 +1371,20 @@
                   <input type="text" id="aprs-digipeat-wide" readonly>
                 </div>
               </div>
-              <div class="field">
-                <label for="aprs-digipeat-dedupe">Dedupe window</label>
+              <div class="field" style="max-width: 130px;">
+                <label for="aprs-digipeat-dedupe">Dedupe window ${helpIcon("Won't repeat the same packet twice if heard again (e.g. via another digipeater) within this window.")}</label>
                 <div class="field-suffix"><input type="number" id="aprs-digipeat-dedupe" value="${APRS_DEFAULT_DEDUPE}"><span>sec</span></div>
-                <p class="hint">Won't repeat the same packet twice if heard again (e.g. via another digipeater) within this window.</p>
               </div>
               <div class="field">
-                <label for="aprs-digipeat-filter">RF filter</label>
+                <label for="aprs-digipeat-filter">RF filter ${helpIcon("Limits which heard packets actually get repeated onto RF, on top of the alias match — leave blank to repeat everything that matches.")}</label>
                 <input type="text" id="aprs-digipeat-filter" placeholder="optional">
-                <p class="hint">Limits which heard packets actually get repeated onto RF, on top of the alias match — leave blank to repeat everything that matches.</p>
               </div>
             </details>
           </div>
 
           <div class="subsection hidden" id="igate-section">
             <div class="field">
-              <label for="aprs-igate-region">IGate region</label>
+              <label for="aprs-igate-region">IGate region ${helpIcon("Sets the APRS-IS server address below — a regional rotate is preferred over the global one where possible.")}</label>
               <select id="aprs-igate-region">
                 <option value="automatic">Automatic (global rotate)</option>
                 <option value="noam">North America</option>
@@ -1265,7 +1394,6 @@
                 <option value="aunz">Oceania</option>
                 <option value="custom">Custom</option>
               </select>
-              <p class="hint">Sets the APRS-IS server address below — a regional rotate is preferred over the global one where possible.</p>
             </div>
             <details class="advanced">
               <summary>IGate settings</summary>
@@ -1287,19 +1415,16 @@
                 </div>
               </div>
               <div class="field">
-                <label for="aprs-igate-filter">APRS-IS filter (server → you)</label>
+                <label for="aprs-igate-filter">APRS-IS filter (server → you) ${helpIcon("Without this, APRS-IS already limits you to traffic related to what you gate — add a filter (e.g. a range like m/50) to see more than that, not less.")}</label>
                 <input type="text" id="aprs-igate-filter" placeholder="e.g. m/50 (optional)">
-                <p class="hint">Without this, APRS-IS already limits you to traffic related to what you gate — add a filter (e.g. a range like m/50) to see more than that, not less.</p>
               </div>
               <div class="field">
-                <label for="aprs-igate-gatefilter">Packet types to gate (you → server)</label>
+                <label for="aprs-igate-gatefilter">Packet types to gate (you → server) ${helpIcon("Limits which packet types get forwarded from RF to APRS-IS (e.g. t/m for messages only) — leave blank to gate everything you hear.")}</label>
                 <input type="text" id="aprs-igate-gatefilter" placeholder="e.g. t/m (optional)">
-                <p class="hint">Limits which packet types get forwarded from RF to APRS-IS (e.g. t/m for messages only) — leave blank to gate everything you hear.</p>
               </div>
               <div class="field">
-                <label for="aprs-igate-txvia">TX via path</label>
+                <label for="aprs-igate-txvia">TX via path ${helpIcon('Path used when relaying messages from the internet onto RF. Only takes effect when IGate mode is set to "RX & TX".')}</label>
                 <input type="text" id="aprs-igate-txvia" value="${APRS_DEFAULT_TXVIA}">
-                <p class="hint">Path used when relaying messages from the internet onto RF. Only takes effect when IGate mode is set to "RX &amp; TX".</p>
               </div>
               <div class="field-row">
                 <div class="field">
@@ -1314,16 +1439,14 @@
             </details>
           </div>
 
-          <div class="field">
+          <div class="field" id="station-icon-field">
             <label>Station icon</label>
             ${symbolPickerHTML('station-symbol', initialStationSymbol)}
-            <p class="hint">Type an APRS symbol code directly, or pick one from the list. Shown on the map wherever this station's beacon appears — used for both RF and IGate beacons.</p>
           </div>
 
           <div class="field">
             <label for="station-comment">Station comment</label>
             <input type="text" id="station-comment" maxlength="60" placeholder="e.g. Digipeater + IGate">
-            <p class="hint">Status text shown alongside your position — used for both RF and IGate beacons.</p>
           </div>
 
           <div class="subsection disabled" id="rfbeacon-section">
@@ -1392,10 +1515,17 @@
       const igSection = document.getElementById('igbeacon-section');
       const rfEnabled = document.getElementById('rfbeacon-enabled');
       const igEnabled = document.getElementById('igbeacon-enabled');
+      const stationIconField = document.getElementById('station-icon-field');
 
       function updateModeVisibility() {
         const isDigi = digipeatMode.value === 'digipeater';
         const igateOn = igateMode.value !== 'off';
+        const igateTx = igateMode.value === 'rxtx';
+
+        // An icon only matters once something actually transmits a beacon
+        // with a position on it — RX-only (either mode) never does, so
+        // there's nothing for it to show up on.
+        stationIconField.classList.toggle('hidden', !(isDigi || igateTx));
 
         // Fully hidden (not just greyed out) — these are entire settings
         // blocks that are meaningless until the matching mode is on, unlike
@@ -1553,11 +1683,10 @@
       document.getElementById('step-content').innerHTML = `
         <section>
           <div class="field">
-            <label for="gps-device">GPS device</label>
+            <label for="gps-device">GPS device ${helpIcon('Detected serial ports — pick the one your GPS is connected to, or leave as "No GPS".')}</label>
             <select id="gps-device">
               <option value="none">No GPS</option>
             </select>
-            <p class="hint">Detected serial ports — pick the one your GPS is connected to, or leave as "No GPS".</p>
           </div>
 
           <div class="field">
@@ -1743,20 +1872,28 @@
     // disk. Entirely optional: never blocks Next, whether or not anything
     // was actually downloaded.
     const MAP_DEFAULT_RADIUS_KM = 50;
-    // Min zoom is fixed, not user-adjustable — 1 (zoomed all the way out)
-    // barely adds any tiles regardless of region size (the world is only
-    // ~1 tile wide at that zoom), so there's nothing meaningful to trade
-    // off by exposing it. Only max zoom — the "how much detail" knob that
-    // actually drives tile count — is worth a control.
+    // Min zoom is fixed at 1 for the region-picker's own live basemap
+    // (which is unaffected by any of this — see below); the download
+    // itself always extracts a full pyramid from 0, matching the pmtiles
+    // CLI's documented efficient path, so there's no min-zoom control on
+    // the download side at all anymore.
     const MAP_MIN_ZOOM = 1;
-    const MAP_SLIDER_MAX_ZOOM = 16; // OSM allows up to 19, but past ~16 tile counts explode for little practical benefit on a bulk pre-cache
+    const MAP_SLIDER_MAX_ZOOM = 15; // matches Protomaps' hosted planet build, which only goes to z15
     const MAP_DEFAULT_MAX_ZOOM = 10;
-    // Deliberately conservative — a real single shared public tile server
-    // under real-world conditions, not a best-case number. Only used to
-    // warn about download time before committing (tile counts roughly
-    // quadruple per zoom level, so this is easy to underestimate by eye).
-    const ASSUMED_TILES_PER_SEC = 15;
+    // Off-peak by default — a large-ish background download at 3am is far
+    // less likely to compete with the station's own RF/APRS traffic or a
+    // dashboard someone's actively looking at than any daytime default.
+    const MAP_DEFAULT_AUTO_UPDATE_TIME = '03:00';
     let mapStatusPollTimer = null;
+    // Module-level so showStep() can tear it down on navigation (see
+    // above) — a fresh MapLibre map is created each time this step is
+    // shown, same as the old Leaflet one was, just with an explicit
+    // cleanup step now that a WebGL context is involved.
+    let currentRegionMap = null;
+    // Registered once globally on first use, not per-render — re-adding
+    // the same protocol handler on every visit to this step would be
+    // harmless but pointless.
+    let pmtilesProtocolRegistered = false;
     // Module-level, not render-local — saveMapStep() needs to read the
     // current region after renderMapStep()'s own closure has done its
     // work. There's no input field holding this anymore (GUI-only, no
@@ -1767,16 +1904,18 @@
       const m = wizardData.map || {};
       document.getElementById('step-content').innerHTML = `
         <section>
-          <p class="msg" id="map-checking-msg">Checking for an internet connection…</p>
+          <p class="msg" id="map-checking-msg">Checking map caching status…</p>
 
-          <div id="map-offline-warning" class="hidden">
-            <p class="msg error">No internet, can't cache map tiles.</p>
-            <p class="hint">You can still finish setup — come back to this step later, once the device has an internet connection, to cache tiles for offline use.</p>
+          <div id="map-unavailable-warning" class="hidden">
+            <p class="msg error">Map caching isn't available on this device.</p>
+            <p class="hint">The world map wasn't cached during install — either there was no internet at the time, or it was skipped. You can still finish setup; this feature just won't be usable until that's fixed (see PINOUT.md/SETUP.md for re-running the install step).</p>
           </div>
 
-          <div id="map-online-fields" class="hidden">
+          <div id="map-fields" class="hidden">
+            <p class="msg error hidden" id="map-offline-note">No internet found. The pre-cached map below will still work, but downloading a more detailed region needs an internet connection.</p>
+
+            <label>Region ${helpIcon("Drag the pin (or click anywhere) to move the whole region. Drag the small squares on each edge to resize it — drag one side to make it a rectangle instead of a square. Shown on the pre-cached world map, so this works even without internet.")}</label>
             <div id="map-region-picker" style="height: 320px; border-radius: 8px; overflow: hidden; margin-bottom: 12px;"></div>
-            <p class="hint">Drag the pin (or click anywhere) to move the whole region. Drag the small squares on each edge to resize it — drag one side to make it a rectangle instead of a square.</p>
 
             <button type="button" id="btn-map-use-station">Use station location</button>
 
@@ -1785,14 +1924,23 @@
               <input type="range" id="map-zoom-max" min="${MAP_MIN_ZOOM}" max="${MAP_SLIDER_MAX_ZOOM}" value="${m.zoom_max ?? MAP_DEFAULT_MAX_ZOOM}">
             </div>
 
-            <div class="status-box" id="map-estimate-box">Estimating…</div>
+            <p class="hint">Size depends on how much map detail actually exists in this area (a city and open countryside at the same size/zoom can differ hugely), so there's no reliable estimate to show before downloading — you'll see real progress once it starts.</p>
+            <p class="msg" id="map-region-msg"></p>
 
             <button type="button" id="btn-map-download" style="margin-top: 12px;">Download this region</button>
             <button type="button" id="btn-map-cancel" class="hidden" style="margin-top: 8px;">Cancel download</button>
 
             <div id="map-progress-wrap" class="hidden" style="margin-top: 12px;">
-              <div class="progress-bar-wrap"><div class="progress-bar" id="map-progress-bar" style="width: 0%;"></div></div>
-              <p class="msg" id="map-progress-msg"></p>
+              <div class="status-box" id="map-progress-msg"></div>
+              <p class="hint">This continues in the background as long as the device stays powered on — closing this page or moving to another step is fine. Rebooting (including Finish &amp; Reboot) will stop it, though, and there's no way to resume it afterward.</p>
+            </div>
+          </div>
+
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border);">
+            <label><input type="checkbox" id="map-auto-update-enabled" ${m.auto_update && m.auto_update.enabled ? 'checked' : ''}> Automatically check for map updates ${helpIcon("Runs in the background, on whatever device this ends up running on, not just during setup. Once a day it checks whether Protomaps has published a newer map build than what's cached, and if so, re-downloads the world map and — if one was ever picked, here or on a later visit — the detailed region too. Needs internet at check time; if there isn't any, it just tries again at the next check rather than waiting a full day.")}</label>
+            <div class="field" id="map-auto-update-time-wrap">
+              <label for="map-auto-update-time">Check time</label>
+              <input type="time" id="map-auto-update-time" value="${(m.auto_update && m.auto_update.time) || MAP_DEFAULT_AUTO_UPDATE_TIME}">
             </div>
           </div>
         </section>
@@ -1800,21 +1948,34 @@
 
       const downloadBtn = document.getElementById('btn-map-download');
       const cancelBtn = document.getElementById('btn-map-cancel');
-      const estimateBox = document.getElementById('map-estimate-box');
+      const useStationBtn = document.getElementById('btn-map-use-station');
+      const regionMsg = document.getElementById('map-region-msg');
+      const offlineNote = document.getElementById('map-offline-note');
       const progressWrap = document.getElementById('map-progress-wrap');
-      const progressBar = document.getElementById('map-progress-bar');
       const progressMsg = document.getElementById('map-progress-msg');
+
+      // Independent of world-cache/internet status above — toggling this
+      // is just a preference for later, doesn't touch the map itself, so
+      // it stays available even when the picker above is showing the
+      // "not available"/offline states.
+      const autoUpdateCheckbox = document.getElementById('map-auto-update-enabled');
+      const autoUpdateTimeWrap = document.getElementById('map-auto-update-time-wrap');
+      function updateAutoUpdateTimeVisibility() {
+        autoUpdateTimeWrap.classList.toggle('hidden', !autoUpdateCheckbox.checked);
+      }
+      updateAutoUpdateTimeVisibility();
+      autoUpdateCheckbox.addEventListener('change', updateAutoUpdateTimeVisibility);
 
       // Local to this render — the map container is thrown away and
       // recreated (innerHTML above) each time this step is shown, so a
-      // fresh Leaflet map is created fresh each time too, not reused.
-      // mapRegionBounds (the actual region data) is module-level though —
-      // saveMapStep() needs it after this closure is gone, and there's no
-      // input field holding a copy of it anymore.
-      let regionMap = null;
+      // fresh MapLibre map is created fresh each time too (currentRegionMap
+      // handles disposing of the old one — see showStep()). mapRegionBounds
+      // (the actual region data) is module-level though — saveMapStep()
+      // needs it after this closure is gone, and there's no input field
+      // holding a copy of it anymore.
       let regionMarker = null;
-      let regionRect = null;
       let edgeHandleN = null, edgeHandleS = null, edgeHandleE = null, edgeHandleW = null;
+      let interactive = false;
 
       // Same flat-earth approximation the backend used to use for its own
       // (now-removed) radius-based path — kept here client-side only, to
@@ -1827,20 +1988,37 @@
         return { north: lat + latDelta, south: lat - latDelta, east: lon + lonDelta, west: lon - lonDelta };
       }
 
+      // MapLibre has no L.rectangle-style helper — the region box is a
+      // plain GeoJSON polygon source/layer instead, redrawn by feeding it
+      // fresh coordinates (closed ring, [lon,lat] pairs — GeoJSON order,
+      // the opposite of Leaflet's [lat,lon]).
+      function rectGeoJSON(b) {
+        return {
+          type: 'Feature',
+          geometry: {
+            type: 'Polygon',
+            coordinates: [[
+              [b.west, b.south], [b.east, b.south], [b.east, b.north], [b.west, b.north], [b.west, b.south],
+            ]],
+          },
+        };
+      }
+
       // Redraws the rectangle, center pin, and all four edge handles from
       // mapRegionBounds — the single source of truth. Every interaction
       // (drag a handle, drag the pin, click the map) ends by calling this.
       function redrawRegion() {
-        if (!regionMap || !mapRegionBounds) return;
+        if (!currentRegionMap || !mapRegionBounds) return;
         const b = mapRegionBounds;
         const centerLat = (b.north + b.south) / 2;
         const centerLon = (b.east + b.west) / 2;
-        regionMarker.setLatLng([centerLat, centerLon]);
-        regionRect.setBounds([[b.south, b.west], [b.north, b.east]]);
-        edgeHandleN.setLatLng([b.north, centerLon]);
-        edgeHandleS.setLatLng([b.south, centerLon]);
-        edgeHandleE.setLatLng([centerLat, b.east]);
-        edgeHandleW.setLatLng([centerLat, b.west]);
+        regionMarker.setLngLat([centerLon, centerLat]);
+        const src = currentRegionMap.getSource('region-rect');
+        if (src) src.setData(rectGeoJSON(b));
+        edgeHandleN.setLngLat([centerLon, b.north]);
+        edgeHandleS.setLngLat([centerLon, b.south]);
+        edgeHandleE.setLngLat([b.east, centerLat]);
+        edgeHandleW.setLngLat([b.west, centerLat]);
       }
 
       // Moves the whole box by the same delta in every direction — used by
@@ -1855,47 +2033,85 @@
         const dLon = lon - centerLon;
         b.north += dLat; b.south += dLat;
         b.east += dLon; b.west += dLon;
-        if (regionMap && panMap) regionMap.setView([lat, lon], regionMap.getZoom());
+        if (currentRegionMap && panMap) currentRegionMap.easeTo({ center: [lon, lat] });
         redrawRegion();
       }
 
-      function initRegionMap(bounds) {
+      // Applied once the map's loaded, and again whenever the live
+      // internet check (at the bottom of this function) resolves — a
+      // region can't actually be downloaded without a connection to
+      // Protomaps' build host, so there's no point letting it be edited
+      // either; only viewing the pre-cached world map still works.
+      function setInteractive(enabled) {
+        interactive = enabled;
+        offlineNote.classList.toggle('hidden', enabled);
+        downloadBtn.disabled = !enabled;
+        if (regionMarker) regionMarker.setDraggable(enabled);
+        [edgeHandleN, edgeHandleS, edgeHandleE, edgeHandleW].forEach(h => h && h.setDraggable(enabled));
+      }
+
+      function makeEdgeHandle(lngLat, axisClass) {
+        const el = document.createElement('div');
+        el.className = `map-edge-handle ${axisClass}`;
+        return new maplibregl.Marker({ element: el, draggable: interactive }).setLngLat(lngLat).addTo(currentRegionMap);
+      }
+
+      // Builds the MapLibre map from Protomaps' basemap style (vendored
+      // locally, see web/static/maplibre/), pointed at the local
+      // world.pmtiles via the pmtiles:// protocol — HTTP range requests
+      // straight from the browser to our own /map-data/world.pmtiles
+      // endpoint (Starlette's FileResponse honors Range, see
+      // requirements.txt), no internet involved at all.
+      async function initRegionMap(bounds) {
         mapRegionBounds = bounds;
-        const b = mapRegionBounds;
+        const b = bounds;
         const centerLat = (b.north + b.south) / 2;
         const centerLon = (b.east + b.west) / 2;
 
-        regionMap = L.map('map-region-picker').setView([centerLat, centerLon], 9);
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; OpenStreetMap contributors',
-          maxZoom: 19,
-        }).addTo(regionMap);
-
-        regionRect = L.rectangle([[b.south, b.west], [b.north, b.east]], {
-          color: '#4fb3a9', weight: 2, fillOpacity: 0.1,
-        }).addTo(regionMap);
-
-        regionMarker = L.marker([centerLat, centerLon], { draggable: true }).addTo(regionMap);
-        regionMarker.on('dragend', () => {
-          const c = regionMarker.getLatLng();
-          recenterTo(c.lat, c.lng, false);
-          scheduleEstimate();
-        });
-        regionMap.on('click', (e) => {
-          recenterTo(e.latlng.lat, e.latlng.lng, false);
-          scheduleEstimate();
-        });
-
-        function makeEdgeHandle(latlng, axisClass) {
-          return L.marker(latlng, {
-            draggable: true,
-            icon: L.divIcon({ className: `map-edge-handle ${axisClass}`, iconSize: [14, 14], iconAnchor: [7, 7] }),
-          }).addTo(regionMap);
+        if (!pmtilesProtocolRegistered) {
+          const protocol = new pmtiles.Protocol();
+          maplibregl.addProtocol('pmtiles', protocol.tile);
+          pmtilesProtocolRegistered = true;
         }
-        edgeHandleN = makeEdgeHandle([b.north, centerLon], 'ns');
-        edgeHandleS = makeEdgeHandle([b.south, centerLon], 'ns');
-        edgeHandleE = makeEdgeHandle([centerLat, b.east], 'ew');
-        edgeHandleW = makeEdgeHandle([centerLat, b.west], 'ew');
+
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const styleUrl = `/static/maplibre/style-${prefersDark ? 'dark' : 'light'}.json`;
+        const style = await (await fetch(styleUrl)).json();
+        style.sources.protomaps.url = `pmtiles://${location.origin}/map-data/world.pmtiles`;
+
+        currentRegionMap = new maplibregl.Map({
+          container: 'map-region-picker',
+          style,
+          center: [centerLon, centerLat],
+          zoom: 6,
+        });
+
+        await new Promise(resolve => currentRegionMap.on('load', resolve));
+
+        currentRegionMap.addSource('region-rect', { type: 'geojson', data: rectGeoJSON(b) });
+        currentRegionMap.addLayer({
+          id: 'region-rect-fill', type: 'fill', source: 'region-rect',
+          paint: { 'fill-color': '#4fb3a9', 'fill-opacity': 0.15 },
+        });
+        currentRegionMap.addLayer({
+          id: 'region-rect-line', type: 'line', source: 'region-rect',
+          paint: { 'line-color': '#4fb3a9', 'line-width': 2 },
+        });
+
+        regionMarker = new maplibregl.Marker({ draggable: interactive }).setLngLat([centerLon, centerLat]).addTo(currentRegionMap);
+        regionMarker.on('dragend', () => {
+          const { lat, lng } = regionMarker.getLngLat();
+          recenterTo(lat, lng, false);
+        });
+        currentRegionMap.on('click', (e) => {
+          if (!interactive) return;
+          recenterTo(e.lngLat.lat, e.lngLat.lng, false);
+        });
+
+        edgeHandleN = makeEdgeHandle([centerLon, b.north], 'ns');
+        edgeHandleS = makeEdgeHandle([centerLon, b.south], 'ns');
+        edgeHandleE = makeEdgeHandle([b.east, centerLat], 'ew');
+        edgeHandleW = makeEdgeHandle([b.west, centerLat], 'ew');
 
         // Each handle only ever moves its own edge — dragging North only
         // changes north, regardless of how far sideways the pointer drifts
@@ -1904,67 +2120,21 @@
         // inverting if a handle gets dragged past its opposite edge.
         const MIN_GAP_DEG = 0.001;
         edgeHandleN.on('drag', () => {
-          mapRegionBounds.north = Math.max(edgeHandleN.getLatLng().lat, mapRegionBounds.south + MIN_GAP_DEG);
+          mapRegionBounds.north = Math.max(edgeHandleN.getLngLat().lat, mapRegionBounds.south + MIN_GAP_DEG);
           redrawRegion();
-          scheduleEstimate();
         });
         edgeHandleS.on('drag', () => {
-          mapRegionBounds.south = Math.min(edgeHandleS.getLatLng().lat, mapRegionBounds.north - MIN_GAP_DEG);
+          mapRegionBounds.south = Math.min(edgeHandleS.getLngLat().lat, mapRegionBounds.north - MIN_GAP_DEG);
           redrawRegion();
-          scheduleEstimate();
         });
         edgeHandleE.on('drag', () => {
-          mapRegionBounds.east = Math.max(edgeHandleE.getLatLng().lng, mapRegionBounds.west + MIN_GAP_DEG);
+          mapRegionBounds.east = Math.max(edgeHandleE.getLngLat().lng, mapRegionBounds.west + MIN_GAP_DEG);
           redrawRegion();
-          scheduleEstimate();
         });
         edgeHandleW.on('drag', () => {
-          mapRegionBounds.west = Math.min(edgeHandleW.getLatLng().lng, mapRegionBounds.east - MIN_GAP_DEG);
+          mapRegionBounds.west = Math.min(edgeHandleW.getLngLat().lng, mapRegionBounds.east - MIN_GAP_DEG);
           redrawRegion();
-          scheduleEstimate();
         });
-      }
-
-      let estimateTimer = null;
-      function scheduleEstimate() {
-        clearTimeout(estimateTimer);
-        estimateTimer = setTimeout(updateEstimate, 300);
-      }
-
-      // Below 1.2GB shows MB (as the backend already rounds it, to 1
-      // decimal place); at or above, GB reads far easier than a 4-5 digit
-      // MB figure.
-      function formatTileSize(mb) {
-        if (mb >= 1200) return `${(mb / 1024).toFixed(1)} GB`;
-        return `${mb} MB`;
-      }
-
-      async function updateEstimate() {
-        if (!mapRegionBounds) return;
-        const zoomMax = parseInt(document.getElementById('map-zoom-max').value, 10);
-        if (!Number.isFinite(zoomMax)) return;
-        downloadBtn.disabled = false;
-        estimateBox.textContent = 'Estimating…';
-        try {
-          const b = mapRegionBounds;
-          const params = new URLSearchParams({
-            north: b.north, south: b.south, east: b.east, west: b.west,
-            zoom_min: MAP_MIN_ZOOM, zoom_max: zoomMax,
-          });
-          const res = await fetch(`/api/map/estimate?${params}`);
-          const data = await res.json();
-          // Rough and deliberately conservative — actual speed depends on
-          // the connection and how busy OSM's own server is, but the point
-          // is to warn before committing, not to be precise. Tile counts
-          // roughly quadruple per zoom level, so a high detail level on
-          // any real region adds up fast — this is what's easy to miss
-          // just looking at the tile count/size alone.
-          const etaS = data.tile_count / ASSUMED_TILES_PER_SEC;
-          estimateBox.textContent =
-            `~${data.tile_count.toLocaleString()} tiles, ~${formatTileSize(data.estimated_mb)}, roughly ${formatDuration(etaS)} to download`;
-        } catch (e) {
-          estimateBox.textContent = 'Could not estimate — check the server is reachable.';
-        }
       }
 
       const zoomMaxInput = document.getElementById('map-zoom-max');
@@ -1973,13 +2143,16 @@
         zoomMaxValue.textContent = zoomMaxInput.value;
       }
       updateZoomLabel();
-      zoomMaxInput.addEventListener('input', () => { updateZoomLabel(); scheduleEstimate(); });
+      zoomMaxInput.addEventListener('input', updateZoomLabel);
 
-      document.getElementById('btn-map-use-station').addEventListener('click', async () => {
+      // Deliberately NOT gated on interactive — this only reads a position
+      // already known locally (a manual value, or gpsd running on this
+      // same device), no internet involved, unlike editing/downloading a
+      // region.
+      useStationBtn.addEventListener('click', async () => {
         const g = wizardData.gps || {};
         if (g.position_source === 'manual' && g.latitude && g.longitude) {
           recenterTo(parseFloat(g.latitude), parseFloat(g.longitude), true);
-          scheduleEstimate();
           return;
         }
         try {
@@ -1987,16 +2160,15 @@
           const data = await res.json();
           if (data.available) {
             recenterTo(data.latitude, data.longitude, true);
-            scheduleEstimate();
           } else {
-            estimateBox.textContent = data.reason || 'No station position available.';
+            regionMsg.textContent = data.reason || 'No station position available.';
           }
         } catch (e) {
-          estimateBox.textContent = 'Could not reach the server.';
+          regionMsg.textContent = 'Could not reach the server.';
         }
       });
 
-      // m:ss / h:mm formatting for the download ETA below.
+      // m:ss / h:mm formatting for elapsed time below.
       function formatDuration(totalSeconds) {
         const s = Math.max(0, Math.round(totalSeconds));
         if (s < 60) return `${s}s`;
@@ -2006,30 +2178,30 @@
         return `${h}h ${m % 60}m`;
       }
 
+      // No tile-by-tile count or percent to show anymore (this is one CLI
+      // extraction, not thousands of individual requests) — progress is
+      // read straight from the growing size of the actual output file on
+      // disk, which is honest, rather than parsing pmtiles' own log output.
       function pollDownloadStatus() {
-        const startTime = Date.now();
         mapStatusPollTimer = setInterval(async () => {
           try {
             const res = await fetch('/api/map/cache/status');
             const data = await res.json();
-            progressBar.style.width = `${data.percent}%`;
-            let etaText = '';
-            if (data.active && data.done > 0) {
-              const elapsedS = (Date.now() - startTime) / 1000;
-              const rate = data.done / elapsedS; // tiles/sec, averaged since this download started
-              const remaining = data.total - data.done;
-              if (rate > 0) etaText = ` — about ${formatDuration(remaining / rate)} remaining`;
+            const elapsed = data.elapsed_s !== null ? formatDuration(data.elapsed_s) : '';
+            if (data.active) {
+              progressMsg.textContent = `Downloading… ${formatBytes(data.bytes)} so far${elapsed ? ` (${elapsed} elapsed)` : ''}`;
+              return;
             }
-            progressMsg.textContent =
-              `${data.done} / ${data.total} tiles (zoom ${data.current_zoom})${data.failed ? `, ${data.failed} failed` : ''}${etaText}`;
-            if (!data.active) {
-              clearInterval(mapStatusPollTimer);
-              mapStatusPollTimer = null;
-              downloadBtn.disabled = false;
-              cancelBtn.classList.add('hidden');
-              progressMsg.textContent =
-                `${data.done} / ${data.total} tiles (zoom ${data.current_zoom})${data.failed ? `, ${data.failed} failed` : ''}` +
-                (data.cancelled ? ' — cancelled.' : ' — done.');
+            clearInterval(mapStatusPollTimer);
+            mapStatusPollTimer = null;
+            downloadBtn.disabled = !interactive;
+            cancelBtn.classList.add('hidden');
+            if (data.cancelled) {
+              progressMsg.textContent = 'Cancelled.';
+            } else if (data.error) {
+              progressMsg.textContent = `Failed: ${data.error}`;
+            } else if (data.done) {
+              progressMsg.textContent = `Done — ${formatBytes(data.bytes)} downloaded${elapsed ? ` in ${elapsed}` : ''}.`;
             }
           } catch (e) {
             // Transient — next poll tries again.
@@ -2038,29 +2210,28 @@
       }
 
       downloadBtn.addEventListener('click', async () => {
-        if (!mapRegionBounds) return;
+        if (!mapRegionBounds || !interactive) return;
         const zoomMax = parseInt(document.getElementById('map-zoom-max').value, 10);
         downloadBtn.disabled = true;
         progressWrap.classList.remove('hidden');
-        progressBar.style.width = '0%';
         progressMsg.textContent = 'Starting…';
         try {
           const res = await fetch('/api/map/cache/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...mapRegionBounds, zoom_min: MAP_MIN_ZOOM, zoom_max: zoomMax }),
+            body: JSON.stringify({ ...mapRegionBounds, zoom_max: zoomMax }),
           });
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             progressMsg.textContent = err.detail || 'Failed to start download.';
-            downloadBtn.disabled = false;
+            downloadBtn.disabled = !interactive;
             return;
           }
           cancelBtn.classList.remove('hidden');
           pollDownloadStatus();
         } catch (e) {
           progressMsg.textContent = 'Could not reach the server.';
-          downloadBtn.disabled = false;
+          downloadBtn.disabled = !interactive;
         }
       });
 
@@ -2075,28 +2246,31 @@
 
       (async () => {
         const checkingMsg = document.getElementById('map-checking-msg');
-        const offlineWarning = document.getElementById('map-offline-warning');
-        const onlineFields = document.getElementById('map-online-fields');
-        let online = false;
+        const unavailableWarning = document.getElementById('map-unavailable-warning');
+        const mapFields = document.getElementById('map-fields');
+
+        // The world cache existing at all is a precondition for showing
+        // anything here — without it there's no local basemap to render,
+        // pre-cached or otherwise (see scripts/precache_world.py).
+        let worldAvailable = false;
         try {
-          const res = await fetch('/api/network/internet');
-          online = (await res.json()).online;
+          const res = await fetch('/api/map/world-status');
+          worldAvailable = (await res.json()).available;
         } catch (e) {
-          online = false;
+          worldAvailable = false;
         }
         checkingMsg.classList.add('hidden');
-        if (!online) {
-          offlineWarning.classList.remove('hidden');
+        if (!worldAvailable) {
+          unavailableWarning.classList.remove('hidden');
           return;
         }
-        // The map container must actually be visible before Leaflet
+        // The map container must actually be visible before MapLibre
         // initialises against it, or it measures a zero-size box.
-        onlineFields.classList.remove('hidden');
+        mapFields.classList.remove('hidden');
 
         // Restore whatever was picked earlier this session, if anything;
         // otherwise seed a default-sized box centered on the station's own
-        // position (manual entry or a live GPS fix), else a zoomed-out
-        // world view the user can pan from.
+        // position (manual entry or a live GPS fix), else the 0,0 default.
         let initialBounds = null;
         if (m.north !== undefined && m.south !== undefined && m.east !== undefined && m.west !== undefined) {
           initialBounds = {
@@ -2128,20 +2302,37 @@
           initialBounds = boundsFromRadius(initLat, initLon, MAP_DEFAULT_RADIUS_KM);
         }
 
-        initRegionMap(initialBounds);
-        updateEstimate();
+        await initRegionMap(initialBounds);
+
+        // Only the actual download (and editing the region, which is
+        // pointless if you can't act on it) needs a live connection to
+        // Protomaps' build host — viewing the pre-cached world map above
+        // already works regardless, since it just loaded from disk.
+        let online = false;
+        try {
+          const res = await fetch('/api/network/internet');
+          online = (await res.json()).online;
+        } catch (e) {
+          online = false;
+        }
+        setInteractive(online);
       })();
     }
 
     function saveMapStep() {
-      if (!mapRegionBounds) {
-        wizardData.map = {};
-        return true;
-      }
-      wizardData.map = {
-        ...mapRegionBounds,
-        zoom_max: document.getElementById('map-zoom-max').value,
+      const map = mapRegionBounds
+        ? { ...mapRegionBounds, zoom_max: document.getElementById('map-zoom-max').value }
+        : {};
+      // Independent of mapRegionBounds — these two fields exist regardless
+      // of whether a region was ever picked (the auto-update checker
+      // always refreshes the world map; the region refresh is just skipped
+      // if map.north/south/east/west were never set, see
+      // scripts/auto_tile_update.py).
+      map.auto_update = {
+        enabled: document.getElementById('map-auto-update-enabled').checked,
+        time: document.getElementById('map-auto-update-time').value || MAP_DEFAULT_AUTO_UPDATE_TIME,
       };
+      wizardData.map = map;
       return true;
     }
 
@@ -2169,15 +2360,10 @@
       document.getElementById('step-content').innerHTML = `
         <section>
           <div class="field">
-            <label for="user-security-mode">Security mode</label>
+            <label for="user-security-mode">Security mode ${helpIcon('<ul style="margin: 0; padding-left: 18px;"><li><strong>No security:</strong> open access, no password.</li><li><strong>Read only:</strong> viewing is open, any change needs the password.</li><li><strong>Full security:</strong> the password is needed for everything, including just viewing.</li></ul>')}</label>
             <select id="user-security-mode">
               ${USER_SECURITY_MODES.map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
             </select>
-            <ul class="hint" style="margin: 10px 0 0; padding-left: 18px;">
-              <li><strong>No security:</strong> open access, no password.</li>
-              <li><strong>Read only:</strong> viewing is open, any change needs the password.</li>
-              <li><strong>Full security:</strong> the password is needed for everything, including just viewing.</li>
-            </ul>
           </div>
           <div class="field hidden" id="user-password-field">
             <label for="user-password">Admin password</label>
@@ -2410,16 +2596,16 @@
             <label class="subsection-title">
               <input type="checkbox" id="startup-autostart" checked>
               Start automatically on boot
+              ${helpIcon("Recommended for a field-deployed station — if the power drops and comes back, or the Pi reboots on its own, it starts digipeating again without anyone needing to log in and start it by hand.")}
             </label>
-            <p class="hint">Recommended for a field-deployed station — if the power drops and comes back, or the Pi reboots on its own, it starts digipeating again without anyone needing to log in and start it by hand.</p>
           </div>
 
           <div class="field">
             <label class="subsection-title">
               <input type="checkbox" id="startup-autorestart" checked>
               Restart automatically if it crashes
+              ${helpIcon("If Direwolf exits unexpectedly (not a normal shutdown), try restarting it rather than leaving the station silent until someone notices.")}
             </label>
-            <p class="hint">If Direwolf exits unexpectedly (not a normal shutdown), try restarting it rather than leaving the station silent until someone notices.</p>
           </div>
           <div class="field-row" id="startup-restart-fields">
             <div class="field">
@@ -2464,14 +2650,32 @@
     // ── Finish step ───────────────────────────────────────────────────
     const REBOOT_WAIT_S = 60;
 
-    function renderFinishStep() {
+    async function renderFinishStep() {
       document.getElementById('step-content').innerHTML = `
         <section>
           <p>That's everything needed for now. Press <strong>Finish &amp; Reboot</strong> to save your settings — the device will reboot and start up in standard mode.</p>
           <p class="hint">This page will automatically reload into the dashboard once it's back up.</p>
+          <div id="finish-download-warning" class="hidden">
+            <p class="msg error" id="finish-download-warning-text"></p>
+            <p class="hint">Rebooting now will stop it partway through — there's no way to resume it afterward, since this setup wizard only exists on first boot. Whatever's already downloaded is kept either way; you'd need to go back to Map caching and start a fresh download for the rest.</p>
+          </div>
           <p class="msg" id="finish-msg"></p>
         </section>
       `;
+
+      // Best-effort — if this can't be reached, just don't show the
+      // warning rather than blocking Finish over it.
+      try {
+        const res = await fetch('/api/map/cache/status');
+        const data = await res.json();
+        if (data.active) {
+          document.getElementById('finish-download-warning-text').textContent =
+            `A map region download is still running (${formatBytes(data.bytes)} so far).`;
+          document.getElementById('finish-download-warning').classList.remove('hidden');
+        }
+      } catch (e) {
+        // Not shown — see comment above.
+      }
     }
 
     function startRebootCountdown() {

@@ -16,8 +16,17 @@ build/
 *.log
 *.json
 
-# ── Cached map tiles (can be gigabytes) ───────────────────────
-web/static/tiles/
+
+# ── Downloaded third-party binary (go-pmtiles, fetched by install.sh —
+# see DEV_BUILD/services/tiles.py) and the region/world extracts it
+# produces ──
+DEV_BUILD/bin/
+DEV_BUILD/map_data/
+
+# ── Basemap fonts/sprites (protomaps/basemaps-assets, fetched by
+# install.sh — see DEV_BUILD/web/static/first_run.html's MapLibre style
+# loading) ──
+DEV_BUILD/web/static/maplibre-assets/
 
 # ── Direwolf generated config ─────────────────────────────────
 direwolf.conf

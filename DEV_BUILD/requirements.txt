@@ -1,4 +1,10 @@
 fastapi
+# Explicit floor, not just whatever fastapi pulls in transitively — PMTiles
+# (the local map cache in services/tiles.py + web/server.py) needs Starlette's
+# FileResponse to honor HTTP Range requests, only added in 0.39.0 and only
+# safe from a real DoS (GHSA-7f5h-v6xp-fcq8, O(n^2) Range-header parsing) as
+# of 0.49.1 — see services/tiles.py.
+starlette>=0.49.1
 uvicorn[standard]
 pillow
 pyyaml

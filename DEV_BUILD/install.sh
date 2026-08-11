@@ -240,15 +240,66 @@ ok "Virtual environment created"
 run_with_spinner "Installing Python packages..." "$VENV_DIR/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
 ok "Python packages installed"
 
-# ── Pre-cache world map tiles (zoom 0-5) ──────
-# Soft version of run_with_spinner — a coarse ~20MB whole-world base layer
-# so a future map view never renders blank before a specific region has
-# been downloaded via the wizard's Map caching step. Unlike apt/git above
-# (which the install can't proceed without), a flaky connection here
-# shouldn't abort the rest of setup — it's just skipped, and can be re-run
-# later with: DEV_BUILD/scripts/precache_world_map.py
-if run_with_spinner_soft "Pre-caching world map tiles (zoom 0-5, ~20MB)..." bash -c "cd '$APP_DIR' && '$VENV_DIR/bin/python' scripts/precache_world_map.py"; then
-    ok "World map tiles cached"
+# ── Install go-pmtiles (offline map region downloads) ──────
+# A single static binary, not available via apt — fetched directly from
+# its latest GitHub release. services/tiles.py shells out to it to extract
+# one region's worth of map data from Protomaps' hosted planet build, the
+# legitimate way to get OSM map data for offline use. This replaced an
+# earlier design that scraped individual raster tiles from a live tile
+# server — OpenStreetMap's own tile usage policy is explicit that offline
+# use and bulk/pre-emptive tile fetching aren't just discouraged, they're
+# not permitted at all (operations.osmfoundation.org/policies/tiles/) —
+# see TODO.md. Soft/non-fatal: the digipeater's actual RF/APRS function
+# doesn't depend on this, so a flaky connection here shouldn't block the
+# rest of setup — the Map caching wizard step just reports it's missing
+# if this didn't succeed, same as any other missing optional dependency.
+PMTILES_ARCH="$(uname -m)"
+case "$PMTILES_ARCH" in
+    aarch64|arm64) PMTILES_ARCH="arm64" ;;
+    x86_64|amd64)  PMTILES_ARCH="x86_64" ;;
+    *) PMTILES_ARCH="" ;;
+esac
+if [ -z "$PMTILES_ARCH" ]; then
+    echo -e "${YELLOW}  ⚠ Unrecognised CPU architecture ($(uname -m)) — skipping go-pmtiles, map caching won't work. Continuing.${NC}"
+else
+    if run_with_spinner_soft "Installing go-pmtiles..." bash -c "
+        PMTILES_URL=\$(curl -sL https://api.github.com/repos/protomaps/go-pmtiles/releases/latest | grep -o '\"browser_download_url\": *\"[^\"]*Linux_${PMTILES_ARCH}[^\"]*\"' | grep -o 'https://[^\"]*') &&
+        [ -n \"\$PMTILES_URL\" ] &&
+        mkdir -p '$APP_DIR/bin' &&
+        curl -sL \"\$PMTILES_URL\" | tar -xz -C '$APP_DIR/bin' pmtiles &&
+        chmod +x '$APP_DIR/bin/pmtiles'
+    "; then
+        ok "go-pmtiles installed"
+    fi
+fi
+
+# ── Install map basemap assets (fonts + sprites) ──────
+# ~19MB uncompressed (~6MB download) — the label fonts and icon sprites
+# MapLibre needs to render the local map data, vendored from Protomaps'
+# own hosted asset bundle the same way the go-pmtiles binary above is.
+# Soft/non-fatal for the same reason: without these the wizard's map step
+# just can't render (falls back to a plain message), it doesn't break the
+# digipeater's actual RF/APRS function.
+if run_with_spinner_soft "Installing map basemap assets (fonts, icons)..." bash -c "
+    mkdir -p '$APP_DIR/web/static/maplibre-assets' &&
+    curl -sL https://codeload.github.com/protomaps/basemaps-assets/tar.gz/refs/heads/main | tar -xz -C '$APP_DIR/web/static/maplibre-assets' --strip-components=1 'basemaps-assets-main/fonts' 'basemaps-assets-main/sprites/v4'
+"; then
+    ok "Map basemap assets installed"
+fi
+
+# ── Pre-cache the whole world map (zoom 0-8) ──────
+# Soft version of run_with_spinner — a coarse ~1GB whole-world PMTiles
+# layer, so the wizard's Map caching step always has a real offline
+# basemap to show and pick a region on, whether or not there's internet
+# at setup time. Only runs if go-pmtiles installed successfully above
+# (map caching just won't offer a picker at all otherwise, same as any
+# other missing optional dependency).
+if [ -x "$APP_DIR/bin/pmtiles" ]; then
+    if run_with_spinner_soft "Pre-caching world map (zoom 0-8, ~1GB)..." bash -c "cd '$APP_DIR' && '$VENV_DIR/bin/python' scripts/precache_world.py"; then
+        ok "World map cached"
+    fi
+else
+    info "Skipping world map pre-cache (go-pmtiles not installed) — re-run scripts/precache_world.py later once it is."
 fi
 
 # ── Install systemd service ───────────────────
@@ -284,6 +335,48 @@ run_with_spinner "Installing systemd service..." bash -c "
     sudo systemctl enable ${SERVICE_NAME} --quiet
 "
 ok "Systemd service installed and enabled — it will start automatically on boot"
+
+# ── Install scheduled map auto-update ─────────
+# Off by default (see scripts/auto_tile_update.py and config.yaml's
+# map.auto_update — set from the Map caching wizard step). The timer runs
+# every 15 minutes, well below any sane check-time granularity, rather
+# than being pointed at the user's configured time directly — that way
+# changing the time in the web UI later doesn't require regenerating or
+# reloading any systemd unit; the script just reads config.yaml fresh each
+# time and mostly no-ops (see its own docstring for the once-a-day marker
+# file that keeps this cheap).
+sudo tee /etc/systemd/system/${SERVICE_NAME}-tile-update.service > /dev/null <<EOF
+[Unit]
+Description=APRS Digipeater — scheduled map tile update check
+After=network.target
+
+[Service]
+Type=oneshot
+User=$USER
+WorkingDirectory=$APP_DIR
+ExecStart=$VENV_DIR/bin/python scripts/auto_tile_update.py
+StandardOutput=journal
+StandardError=journal
+EOF
+
+sudo tee /etc/systemd/system/${SERVICE_NAME}-tile-update.timer > /dev/null <<EOF
+[Unit]
+Description=Run the APRS Digipeater map tile update check periodically
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+run_with_spinner "Installing map auto-update timer..." bash -c "
+    sudo systemctl daemon-reload &&
+    sudo systemctl enable --now ${SERVICE_NAME}-tile-update.timer --quiet
+"
+ok "Map auto-update timer installed (checks every 15 min; actual updates stay off until enabled in the wizard/config)"
 
 # ── WiFi country ───────────────────────────────
 # Without this set, the WiFi radio is soft-blocked by rfkill and the hotspot
