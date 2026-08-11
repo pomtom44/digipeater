@@ -15,6 +15,13 @@ build/
 # ── Runtime data (stored outside repo on the Pi) ──────────────
 *.log
 *.json
+# ...except the vendored MapLibre basemap style JSON below — *.json above
+# is meant for runtime-generated files (display_config.json etc.), but
+# matches these too unless carved out explicitly. They're static vendored
+# assets (generated once via @protomaps/basemaps, not regenerated at
+# install/runtime), so they need to actually be in the repo or the wizard's
+# map step 404s trying to fetch them on a fresh clone.
+!DEV_BUILD/web/static/maplibre/style-*.json
 
 
 # ── Downloaded third-party binary (go-pmtiles, fetched by install.sh —

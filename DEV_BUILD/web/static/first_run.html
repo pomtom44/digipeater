@@ -1935,14 +1935,6 @@
               <p class="hint">This continues in the background as long as the device stays powered on — closing this page or moving to another step is fine. Rebooting (including Finish &amp; Reboot) will stop it, though, and there's no way to resume it afterward.</p>
             </div>
           </div>
-
-          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border);">
-            <label><input type="checkbox" id="map-auto-update-enabled" ${m.auto_update && m.auto_update.enabled ? 'checked' : ''}> Automatically check for map updates ${helpIcon("Runs in the background, on whatever device this ends up running on, not just during setup. Once a day it checks whether Protomaps has published a newer map build than what's cached, and if so, re-downloads the world map and — if one was ever picked, here or on a later visit — the detailed region too. Needs internet at check time; if there isn't any, it just tries again at the next check rather than waiting a full day.")}</label>
-            <div class="field" id="map-auto-update-time-wrap">
-              <label for="map-auto-update-time">Check time</label>
-              <input type="time" id="map-auto-update-time" value="${(m.auto_update && m.auto_update.time) || MAP_DEFAULT_AUTO_UPDATE_TIME}">
-            </div>
-          </div>
         </section>
       `;
 
@@ -1953,18 +1945,6 @@
       const offlineNote = document.getElementById('map-offline-note');
       const progressWrap = document.getElementById('map-progress-wrap');
       const progressMsg = document.getElementById('map-progress-msg');
-
-      // Independent of world-cache/internet status above — toggling this
-      // is just a preference for later, doesn't touch the map itself, so
-      // it stays available even when the picker above is showing the
-      // "not available"/offline states.
-      const autoUpdateCheckbox = document.getElementById('map-auto-update-enabled');
-      const autoUpdateTimeWrap = document.getElementById('map-auto-update-time-wrap');
-      function updateAutoUpdateTimeVisibility() {
-        autoUpdateTimeWrap.classList.toggle('hidden', !autoUpdateCheckbox.checked);
-      }
-      updateAutoUpdateTimeVisibility();
-      autoUpdateCheckbox.addEventListener('change', updateAutoUpdateTimeVisibility);
 
       // Local to this render — the map container is thrown away and
       // recreated (innerHTML above) each time this step is shown, so a
@@ -2320,19 +2300,18 @@
     }
 
     function saveMapStep() {
-      const map = mapRegionBounds
-        ? { ...mapRegionBounds, zoom_max: document.getElementById('map-zoom-max').value }
-        : {};
-      // Independent of mapRegionBounds — these two fields exist regardless
-      // of whether a region was ever picked (the auto-update checker
-      // always refreshes the world map; the region refresh is just skipped
-      // if map.north/south/east/west were never set, see
-      // scripts/auto_tile_update.py).
-      map.auto_update = {
-        enabled: document.getElementById('map-auto-update-enabled').checked,
-        time: document.getElementById('map-auto-update-time').value || MAP_DEFAULT_AUTO_UPDATE_TIME,
+      if (!mapRegionBounds) {
+        // Auto-update's own settings (set on the Finish step) still need
+        // to survive even if no region was ever picked here — merge onto
+        // whatever's already in wizardData.map rather than overwriting it.
+        wizardData.map = wizardData.map || {};
+        return true;
+      }
+      wizardData.map = {
+        ...wizardData.map,
+        ...mapRegionBounds,
+        zoom_max: document.getElementById('map-zoom-max').value,
       };
-      wizardData.map = map;
       return true;
     }
 
@@ -2651,6 +2630,7 @@
     const REBOOT_WAIT_S = 60;
 
     async function renderFinishStep() {
+      const m = wizardData.map || {};
       document.getElementById('step-content').innerHTML = `
         <section>
           <p>That's everything needed for now. Press <strong>Finish &amp; Reboot</strong> to save your settings — the device will reboot and start up in standard mode.</p>
@@ -2659,9 +2639,44 @@
             <p class="msg error" id="finish-download-warning-text"></p>
             <p class="hint">Rebooting now will stop it partway through — there's no way to resume it afterward, since this setup wizard only exists on first boot. Whatever's already downloaded is kept either way; you'd need to go back to Map caching and start a fresh download for the rest.</p>
           </div>
+
+          <div style="margin: 20px 0; padding: 16px; border: 1px solid var(--border); border-radius: 8px;">
+            <label><input type="checkbox" id="map-auto-update-enabled"> Automatically check for map updates ${helpIcon("Runs in the background from now on, not just during setup. Once a day it checks whether Protomaps has published a newer map build than what's cached, and if so, re-downloads the world map and — if a region was picked on the Map caching step — that region too. Needs internet at check time; if there isn't any, it just tries again at the next check rather than waiting a full day.")}</label>
+            <div class="field" id="map-auto-update-time-wrap">
+              <label for="map-auto-update-time">Check time</label>
+              <input type="time" id="map-auto-update-time" value="${(m.auto_update && m.auto_update.time) || MAP_DEFAULT_AUTO_UPDATE_TIME}">
+            </div>
+          </div>
+
           <p class="msg" id="finish-msg"></p>
         </section>
       `;
+
+      const autoUpdateCheckbox = document.getElementById('map-auto-update-enabled');
+      const autoUpdateTimeWrap = document.getElementById('map-auto-update-time-wrap');
+      function updateAutoUpdateTimeVisibility() {
+        autoUpdateTimeWrap.classList.toggle('hidden', !autoUpdateCheckbox.checked);
+      }
+      autoUpdateCheckbox.addEventListener('change', updateAutoUpdateTimeVisibility);
+
+      if (m.auto_update && typeof m.auto_update.enabled === 'boolean') {
+        // A value already exists — e.g. Back then Next through this step
+        // again — that always wins over re-deriving a default.
+        autoUpdateCheckbox.checked = m.auto_update.enabled;
+      } else {
+        // No saved preference yet — default on if there's internet right
+        // now (the most direct read available, at the actual end of
+        // setup, of "was there internet during setup"), off otherwise so
+        // a background task doesn't sit there failing every day on a
+        // station that's normally offline.
+        try {
+          const res = await fetch('/api/network/internet');
+          autoUpdateCheckbox.checked = (await res.json()).online;
+        } catch (e) {
+          autoUpdateCheckbox.checked = false;
+        }
+      }
+      updateAutoUpdateTimeVisibility();
 
       // Best-effort — if this can't be reached, just don't show the
       // warning rather than blocking Finish over it.
@@ -2702,6 +2717,13 @@
       backBtn.disabled = true;
       nextBtn.textContent = 'Rebooting…';
       msg.className = 'msg';
+      wizardData.map = {
+        ...wizardData.map,
+        auto_update: {
+          enabled: document.getElementById('map-auto-update-enabled').checked,
+          time: document.getElementById('map-auto-update-time').value || MAP_DEFAULT_AUTO_UPDATE_TIME,
+        },
+      };
       try {
         const res = await fetch('/api/setup/complete', {
           method: 'POST',
