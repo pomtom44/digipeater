@@ -37,6 +37,8 @@
 
     * { box-sizing: border-box; }
 
+    .hidden { display: none; }
+
     html, body {
       margin: 0;
       height: 100%;
@@ -82,8 +84,6 @@
       padding: 24px;
       color: var(--muted);
     }
-    #map-unavailable.hidden { display: none; }
-
     h1 {
       font-size: 16px;
       margin: 0 0 16px;
@@ -109,6 +109,27 @@
       color: var(--muted);
       text-transform: uppercase;
     }
+
+    .heard-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .heard-row:last-child { border-bottom: none; }
+    .heard-icon {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      border-radius: 4px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+    .heard-call { flex: 1; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .heard-count { color: var(--muted); font-size: 11px; }
+    .heard-time { color: var(--muted); font-size: 11px; width: 56px; text-align: right; flex-shrink: 0; }
 
     .station-header {
       display: flex;
@@ -178,6 +199,68 @@
       line-height: 1.4;
     }
 
+    .msg {
+      font-size: 12px;
+      margin: 6px 0 0;
+      min-height: 0;
+    }
+    .msg:empty { margin: 0; }
+    .msg.error { color: var(--error); }
+
+    .btn {
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+      flex: 1;
+    }
+    .btn:hover { border-color: var(--accent); }
+
+    .auth-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    button.badge {
+      font-family: inherit;
+      cursor: pointer;
+    }
+    button.badge:disabled {
+      cursor: default;
+      opacity: 0.6;
+    }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    /* Not folded into .hidden{display:none} directly — a plain .hidden
+       rule and this one would tie on specificity, and whichever is
+       declared later in the stylesheet would win regardless of which is
+       actually applied last in markup. Scoping the "show" state to
+       :not(.hidden) instead sidesteps that entirely. */
+    .modal-overlay:not(.hidden) { display: flex; }
+    .modal-box {
+      width: 100%;
+      max-width: 320px;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 16px;
+    }
+
     #sidebar-toggle {
       display: none;
       position: absolute;
@@ -215,6 +298,12 @@
     <aside id="sidebar">
       <h1>APRS Digipeater</h1>
 
+      <div class="auth-row">
+        <button type="button" id="btn-config" class="btn hidden">Config</button>
+        <button type="button" id="btn-login" class="btn hidden">Log in</button>
+        <button type="button" id="btn-logout" class="btn hidden">Log out</button>
+      </div>
+
       <div class="card" id="station-card">
         <div class="station-header">
           <div class="station-symbol" id="station-symbol"></div>
@@ -227,26 +316,24 @@
       </div>
 
       <div class="card">
-        <h2>GPS</h2>
+        <h2>System status</h2>
+        <div id="system-status-body"></div>
+      </div>
+
+      <div class="card">
+        <h2 id="gps-title">GPS</h2>
         <div id="gps-body"><div class="note">Checking…</div></div>
       </div>
 
-      <div class="card">
-        <h2>Network</h2>
-        <div id="network-body"><div class="note">Checking…</div></div>
+      <div class="card" id="beacon-stats-card">
+        <h2>Beacon stats</h2>
+        <div id="beacon-stats-body"></div>
       </div>
 
       <div class="card">
-        <h2>Map data</h2>
-        <div id="map-data-body"><div class="note">Checking…</div></div>
+        <h2>Heard stations</h2>
+        <div id="heard-list"></div>
       </div>
-
-      <div class="card">
-        <h2>Display</h2>
-        <div id="display-body"><div class="note">Checking…</div></div>
-      </div>
-
-      <p class="note">Live station tracking, heard-station history, and digipeat/IGate activity aren't built yet — this map shows your station's home location only. See TODO.md.</p>
     </aside>
 
     <button type="button" id="sidebar-toggle" aria-label="Toggle sidebar">☰</button>
@@ -260,6 +347,16 @@
         </div>
       </div>
     </main>
+
+    <div id="confirm-modal" class="modal-overlay hidden">
+      <div class="card modal-box">
+        <p id="confirm-modal-text"></p>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="confirm-modal-cancel">Cancel</button>
+          <button type="button" class="btn" id="confirm-modal-ok">Confirm</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/static/maplibre/maplibre-gl.js"></script>
@@ -288,20 +385,6 @@
       const bgY = -Math.round(row * SPRITE_CELL_H * scale);
       const style = `width:${displayW}px;height:${displayH}px;background-image:url('${SPRITE_BASE}${sheet}');background-repeat:no-repeat;background-size:${bgW}px ${bgH}px;background-position:${bgX}px ${bgY}px;`;
       return `<span style="${style}"></span>`;
-    }
-
-    function formatBytes(bytes) {
-      if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-      if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-      if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-      return `${bytes} B`;
-    }
-
-    function formatBuildDate(raw) {
-      // YYYYMMDD -> readable, without pulling in a date-parsing library for
-      // one string shape (see services/tiles.py's _BUILD_DATE_RE).
-      if (!raw || raw.length !== 8) return 'unknown date';
-      return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
     }
 
     // ── Sidebar toggle (narrow viewports) ────────────────────────────
@@ -336,84 +419,201 @@
     }
 
     // ── GPS card ──────────────────────────────────────────────────────
+    // The one sidebar section backed by real data — services/gps.py's
+    // gpsd client already reports fix/satellites/position live, nothing
+    // here is a placeholder.
     let gpsPollTimer = null;
+    let lastGpsUpdateAt = null;
     const GPS_POLL_MS = 5000;
 
+    function timeSinceLabel(date) {
+      const s = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+      if (s < 60) return `${s}s ago`;
+      const m = Math.round(s / 60);
+      if (m < 60) return `${m}m ago`;
+      return `${Math.round(m / 60)}h ago`;
+    }
+
     function renderGpsBody(gpsCfg, status) {
+      const title = document.getElementById('gps-title');
       const body = document.getElementById('gps-body');
       if (gpsCfg.position_source === 'manual') {
-        body.innerHTML = `
-          <div class="kv"><span class="k">Position</span><span class="v">Manual</span></div>
-          <div class="kv"><span class="k">Latitude</span><span class="v">${gpsCfg.latitude ?? '—'}</span></div>
-          <div class="kv"><span class="k">Longitude</span><span class="v">${gpsCfg.longitude ?? '—'}</span></div>
-        `;
+        title.textContent = 'GPS — Manual';
+        const hasPos = gpsCfg.latitude !== undefined && gpsCfg.longitude !== undefined && gpsCfg.latitude !== '' && gpsCfg.longitude !== '';
+        const pos = hasPos ? `${parseFloat(gpsCfg.latitude).toFixed(5)}, ${parseFloat(gpsCfg.longitude).toFixed(5)}` : '—';
+        body.innerHTML = `<div class="kv"><span class="k">Position</span><span class="v">${pos}</span></div>`;
         return;
       }
+      title.textContent = 'GPS — Live';
       if (!status || !status.available) {
         body.innerHTML = `<div class="note">${(status && status.reason) || 'GPS not available.'}</div>`;
         return;
       }
+      const pos = status.has_fix ? `${status.latitude.toFixed(5)}, ${status.longitude.toFixed(5)}` : 'No fix yet';
+      lastGpsUpdateAt = new Date();
       body.innerHTML = `
+        <div class="kv"><span class="k">Position</span><span class="v">${pos}</span></div>
         <div class="kv"><span class="k">Fix</span><span class="v">${status.fix}</span></div>
-        <div class="kv"><span class="k">Satellites</span><span class="v">${status.satellites_used ?? '—'} / ${status.satellites_visible ?? '—'}</span></div>
-        <div class="kv"><span class="k">Latitude</span><span class="v">${status.has_fix ? status.latitude.toFixed(5) : '—'}</span></div>
-        <div class="kv"><span class="k">Longitude</span><span class="v">${status.has_fix ? status.longitude.toFixed(5) : '—'}</span></div>
+        <div class="kv"><span class="k">Signal</span><span class="v">${status.satellites_used ?? '—'} / ${status.satellites_visible ?? '—'} sats</span></div>
+        <div class="kv"><span class="k">Last update</span><span class="v">${timeSinceLabel(lastGpsUpdateAt)}</span></div>
       `;
     }
 
-    // ── Network card ──────────────────────────────────────────────────
-    function renderNetworkBody(net) {
-      const body = document.getElementById('network-body');
-      const kindLabel = { ethernet: 'Ethernet', wifi: 'WiFi', hotspot: 'Hotspot' }[net.kind] || net.kind;
-      let html = `
-        <div class="kv"><span class="k">Connection</span><span class="v">${kindLabel}</span></div>
-        <div class="kv"><span class="k">IP address</span><span class="v">${net.ip || '—'}</span></div>
-      `;
-      if (net.kind === 'hotspot' && net.hotspot_ssid) {
-        html += `<div class="kv"><span class="k">Hotspot SSID</span><span class="v">${net.hotspot_ssid}</span></div>`;
-      }
-      body.innerHTML = html;
+    // ── Auth (login/config/logout buttons, and gating the Direwolf
+    // control below) ─────────────────────────────────────────────────
+    // Populated once at boot from /api/auth/status — see the boot IIFE.
+    // mode 'full' never actually shows this page logged-out at all
+    // (server.py's root() redirects to /login first), so the only
+    // logged-out case this page itself ever has to render is 'readonly'.
+    let authState = { mode: 'none', logged_in: false };
+
+    function renderAuthControls() {
+      const canConfig = authState.mode === 'none' || authState.logged_in;
+      const showLogin = authState.mode !== 'none' && !authState.logged_in;
+      const showLogout = authState.mode !== 'none' && authState.logged_in;
+      document.getElementById('btn-config').classList.toggle('hidden', !canConfig);
+      document.getElementById('btn-login').classList.toggle('hidden', !showLogin);
+      document.getElementById('btn-logout').classList.toggle('hidden', !showLogout);
     }
 
-    // ── Display card ──────────────────────────────────────────────────
-    async function renderDisplayBody() {
-      const body = document.getElementById('display-body');
+    document.getElementById('btn-config').addEventListener('click', () => { location.href = '/config'; });
+    document.getElementById('btn-login').addEventListener('click', () => { location.href = '/login'; });
+    document.getElementById('btn-logout').addEventListener('click', async () => {
       try {
-        const cfg = await (await fetch('/api/display/config')).json();
-        if (cfg.driver === 'none') {
-          body.innerHTML = `<div class="note">No display connected.</div>`;
-          return;
+        await fetch('/api/auth/logout', { method: 'POST' });
+      } finally {
+        location.reload();
+      }
+    });
+
+    // ── Confirm modal (used only when there's no login gate already
+    // acting as an "are you sure" — see toggleDirewolf below) ──────────
+    function confirmModal(text) {
+      return new Promise((resolve) => {
+        const overlay = document.getElementById('confirm-modal');
+        const okBtn = document.getElementById('confirm-modal-ok');
+        const cancelBtn = document.getElementById('confirm-modal-cancel');
+        document.getElementById('confirm-modal-text').textContent = text;
+        overlay.classList.remove('hidden');
+        function cleanup(result) {
+          overlay.classList.add('hidden');
+          okBtn.removeEventListener('click', onOk);
+          cancelBtn.removeEventListener('click', onCancel);
+          resolve(result);
         }
-        let desc = cfg.model;
-        try {
-          const models = (await (await fetch('/api/display/models')).json()).models;
-          const match = models.find(m => m.id === cfg.model);
-          if (match) desc = match.desc;
-        } catch (e) {
-          // Falls back to the raw model id above.
+        function onOk() { cleanup(true); }
+        function onCancel() { cleanup(false); }
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+      });
+    }
+
+    // ── System status card — real Direwolf status/control. No such
+    // systemd service exists yet (see TODO.md's direwolf.conf generator
+    // gap), so services/system.py honestly reports "not set up" until it
+    // does; this just displays and acts on whatever that says. ─────────
+    async function toggleDirewolf(status) {
+      const wantRunning = !status.running;
+      // A login was already required to reach this control at all under
+      // readonly/full (see the disabled state below) — that in itself is
+      // the "are you sure", so only mode 'none' (no gate at all) also
+      // needs a confirm modal as its own safety net against a stray click.
+      if (authState.mode === 'none') {
+        const ok = await confirmModal(`${wantRunning ? 'Start' : 'Stop'} Direwolf?`);
+        if (!ok) return;
+      }
+      const msg = document.getElementById('direwolf-msg');
+      msg.textContent = '';
+      msg.className = 'msg';
+      try {
+        const res = await fetch(`/api/system/direwolf/${wantRunning ? 'start' : 'stop'}`, { method: 'POST' });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          msg.textContent = body.detail || 'Failed to change Direwolf state.';
+          msg.className = 'msg error';
         }
-        body.innerHTML = `<div class="kv"><span class="k">Model</span><span class="v">${desc}</span></div>`;
+      } catch (e) {
+        msg.textContent = 'Could not reach the server.';
+        msg.className = 'msg error';
+      }
+      renderSystemStatusBody();
+    }
+
+    async function renderSystemStatusBody() {
+      const body = document.getElementById('system-status-body');
+      let status;
+      try {
+        status = await (await fetch('/api/system/direwolf/status')).json();
       } catch (e) {
         body.innerHTML = `<div class="note">Could not reach the server.</div>`;
+        return;
+      }
+      const canControl = authState.mode === 'none' || authState.logged_in;
+      // "simulated" means there's no real direwolf.service to ask/control
+      // yet (see services/system.py) — an in-memory stand-in so this
+      // control's UX (confirm modal, login gating, badge state) can
+      // actually be clicked through and tested. Labelled, not hidden, so
+      // it's never mistaken for real control once a real service exists.
+      const label = (status.running ? 'Running' : 'Stopped') + (status.simulated ? ' (sim)' : '');
+      const title = status.simulated ? 'No direwolf.service installed yet — this toggles an in-memory simulated state for UI testing only.' : '';
+      const badgeClass = `badge${status.running ? ' on' : ''}`;
+      body.innerHTML = `
+        <div class="kv"><span class="k">Direwolf</span><span class="v">
+          <button type="button" class="${badgeClass}" id="direwolf-toggle" title="${title}" ${!canControl ? 'disabled' : ''}>${label}</button>
+        </span></div>
+        <p class="msg" id="direwolf-msg"></p>
+      `;
+      if (canControl) {
+        document.getElementById('direwolf-toggle').addEventListener('click', () => toggleDirewolf(status));
       }
     }
 
-    // ── Map data card ─────────────────────────────────────────────────
-    function renderMapDataBody(worldAvailable, regionAvailable, cacheInfo, autoUpdate) {
-      const body = document.getElementById('map-data-body');
-      const worldValue = worldAvailable ? `as of ${formatBuildDate(cacheInfo.world_build_date)}` : 'not cached';
-      const regionValue = regionAvailable ? `as of ${formatBuildDate(cacheInfo.region_build_date)}` : 'not downloaded';
-      const autoValue = (autoUpdate && autoUpdate.enabled) ? `daily at ${autoUpdate.time}` : 'off';
-      body.innerHTML = `
-        <div class="kv"><span class="k">World map</span><span class="v">${worldValue}</span></div>
-        <div class="kv"><span class="k">Region map</span><span class="v">${regionValue}</span></div>
-        <div class="kv"><span class="k">Auto-update</span><span class="v">${autoValue}</span></div>
+    // ── Beacon stats card (sample data — no packet source exists yet to
+    // report real transmit times from) ──────────────────────────────────
+    function renderBeaconStatsBody(cfg) {
+      const card = document.getElementById('beacon-stats-card');
+      const aprs = cfg.aprs || {};
+      if (!aprs.callsign) {
+        card.classList.add('hidden');
+        return;
+      }
+      card.classList.remove('hidden');
+      document.getElementById('beacon-stats-body').innerHTML = `
+        <div class="kv"><span class="k">Last beacon</span><span class="v">2m ago</span></div>
+        <div class="kv"><span class="k">Next beacon</span><span class="v">in 8m</span></div>
       `;
+    }
+
+    // ── Heard stations card (sample data — no packet source exists yet to
+    // list real heard stations from) ─────────────────────────────────────
+    // dLat/dLon are small offsets from the home point, not absolute
+    // coordinates — the home point itself isn't known until config/GPS
+    // has loaded (see initDashboardMap), so sample markers are placed
+    // relative to wherever that ends up being, not hardcoded to one spot.
+    const SAMPLE_HEARD_STATIONS = [
+      { callsign: 'ZL1ABC-9', symbol: { table: '/', symbol: '>' }, count: 14, seconds_ago: 180, dLat: 0.03, dLon: 0.02 },
+      { callsign: 'ZL2XYZ', symbol: { table: '/', symbol: '#' }, count: 47, seconds_ago: 720, dLat: -0.015, dLon: 0.04 },
+      { callsign: 'ZL3DEF-7', symbol: { table: '/', symbol: '[' }, count: 2, seconds_ago: 3600, dLat: -0.025, dLon: -0.03 },
+    ];
+
+    function renderHeardStations() {
+      const list = document.getElementById('heard-list');
+      if (SAMPLE_HEARD_STATIONS.length === 0) {
+        list.innerHTML = `<div class="note">No stations heard yet.</div>`;
+        return;
+      }
+      list.innerHTML = SAMPLE_HEARD_STATIONS.map(s => `
+        <div class="heard-row">
+          <span class="heard-icon">${symbolGlyphHTML(s.symbol, 20)}</span>
+          <span class="heard-call">${s.callsign}</span>
+          <span class="heard-count">×${s.count}</span>
+          <span class="heard-time">${timeSinceLabel(new Date(Date.now() - s.seconds_ago * 1000))}</span>
+        </div>
+      `).join('');
     }
 
     // ── Home-location map ─────────────────────────────────────────────
     async function initDashboardMap(cfg, worldAvailable, regionAvailable) {
-      const mapWrap = document.getElementById('map-wrap');
       const mapUnavailable = document.getElementById('map-unavailable');
       if (!worldAvailable && !regionAvailable) {
         mapUnavailable.classList.remove('hidden');
@@ -476,20 +676,48 @@
         const sym = (aprs.symbol && aprs.symbol.table && aprs.symbol.symbol) ? aprs.symbol : { table: '/', symbol: '#' };
         el.innerHTML = symbolGlyphHTML(sym, 40);
         new maplibregl.Marker({ element: el }).setLngLat(center).addTo(map);
+
+        // Same sample data as the Heard stations sidebar card, plotted
+        // nearby (see SAMPLE_HEARD_STATIONS' dLat/dLon) — confirms the
+        // whole icon-rendering pipeline works for more than just the one
+        // home marker, ahead of a real packet source existing to place
+        // these from real heard-station positions instead.
+        for (const s of SAMPLE_HEARD_STATIONS) {
+          const sEl = document.createElement('div');
+          sEl.style.cssText = 'width:28px;height:28px;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.5));';
+          sEl.innerHTML = symbolGlyphHTML(s.symbol, 28);
+          new maplibregl.Marker({ element: sEl })
+            .setLngLat([homeLon + s.dLon, homeLat + s.dLat])
+            .addTo(map);
+        }
       }
     }
 
     // ── Boot ──────────────────────────────────────────────────────────
     (async () => {
+      try {
+        authState = await (await fetch('/api/auth/status')).json();
+      } catch (e) {
+        authState = { mode: 'none', logged_in: false };
+      }
+      renderAuthControls();
+
       let cfg = {};
       try {
         const res = await fetch('/api/config');
         if (res.ok) cfg = await res.json();
       } catch (e) {
         // Falls through — every card below handles a missing/partial cfg.
+        // Under mode 'full' while logged out this 401s (see server.py's
+        // get_config) — unreachable in practice since root() would have
+        // redirected to /login before this page's JS ever ran, but this
+        // still degrades to an empty cfg rather than throwing either way.
       }
 
       renderStationCard(cfg);
+      renderSystemStatusBody();
+      renderBeaconStatsBody(cfg);
+      renderHeardStations();
 
       const gpsCfg = cfg.gps || {};
       if (gpsCfg.position_source === 'manual') {
@@ -507,26 +735,13 @@
         gpsPollTimer = setInterval(pollGps, GPS_POLL_MS);
       }
 
-      try {
-        const res = await fetch('/api/network/status');
-        renderNetworkBody(await res.json());
-      } catch (e) {
-        document.getElementById('network-body').innerHTML = `<div class="note">Could not reach the server.</div>`;
-      }
-
-      renderDisplayBody();
-
-      let worldAvailable = false, regionAvailable = false, cacheInfo = {};
+      let worldAvailable = false, regionAvailable = false;
       try {
         worldAvailable = (await (await fetch('/api/map/world-status')).json()).available;
       } catch (e) {}
       try {
         regionAvailable = (await (await fetch('/api/map/region-status')).json()).available;
       } catch (e) {}
-      try {
-        cacheInfo = await (await fetch('/api/map/cache-info')).json();
-      } catch (e) {}
-      renderMapDataBody(worldAvailable, regionAvailable, cacheInfo, cfg.map && cfg.map.auto_update);
 
       initDashboardMap(cfg, worldAvailable, regionAvailable);
     })();

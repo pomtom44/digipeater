@@ -226,6 +226,25 @@ else
     fail "Generated sudoers rule failed validation — aborting for safety"
 fi
 
+# ── Grant systemctl start/stop access for the dashboard's Direwolf control ──
+# Scoped to exactly these two commands, not blanket systemctl access (which
+# could stop/restart any unit, including this app's own service) — same
+# one-rule-per-purpose pattern as nmcli/reboot/gpsconfig above. The
+# direwolf.service unit itself doesn't exist yet (see TODO.md's
+# direwolf.conf generator gap), so these will just fail cleanly ("unit not
+# found") until it does, same as gpsd before it was wired up.
+SYSTEMCTL_PATH="$(command -v systemctl)"
+SUDOERS_TMP4="$(mktemp)"
+echo "$USER ALL=(root) NOPASSWD: $SYSTEMCTL_PATH start direwolf, $SYSTEMCTL_PATH stop direwolf" > "$SUDOERS_TMP4"
+if sudo visudo -c -f "$SUDOERS_TMP4" > /dev/null 2>&1; then
+    sudo install -o root -g root -m 0440 "$SUDOERS_TMP4" /etc/sudoers.d/digipeater-direwolf-control
+    rm -f "$SUDOERS_TMP4"
+    ok "Direwolf start/stop permissions configured"
+else
+    rm -f "$SUDOERS_TMP4"
+    fail "Generated sudoers rule failed validation — aborting for safety"
+fi
+
 # ── Python virtual environment ────────────────
 # --system-site-packages so the venv can see the apt-installed RPi.GPIO/spidev
 # (those build native extensions against the Pi's kernel headers — pip-installing

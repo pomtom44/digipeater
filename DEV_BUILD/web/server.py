@@ -2,11 +2,13 @@ import asyncio
 import json
 import logging
 import os
+import secrets
+import time
 from datetime import datetime
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -16,6 +18,15 @@ from services import aprs, auth, gps, hardware, network, system, tiles
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+# Session cookie for the web UI's security mode (none/readonly/full — see
+# services/auth.py and TODO.md's "User management" section). Sessions live
+# in memory only (see `sessions` below) — a restart forces re-login, which
+# is an acceptable trade-off for a single-admin embedded device that
+# doesn't restart often, and avoids needing any persistent token storage.
+# Not marked Secure: this device is typically reached over plain HTTP on a
+# LAN or its own setup hotspot, no TLS anywhere in this project.
+SESSION_COOKIE_NAME = "digi_session"
+SESSION_TTL_S = 7 * 24 * 3600
 # Saved but not connected to yet — actually applying this is part of the
 # "normal boot" network flow, which is separate/later work. First boot only
 # ever stores the intent here.
@@ -66,10 +77,89 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     # runtime state scoped to this app instance, not app configuration.
     map_download_state = {"downloader": None}
 
+    # token -> expiry (unix time). Closure-local for the same reason as
+    # map_download_state above — one process's worth of runtime state.
+    sessions: dict[str, float] = {}
+
+    def _read_security() -> dict:
+        if not CONFIG_PATH.exists():
+            return {"mode": "none"}
+        try:
+            config = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+        except Exception as e:
+            logger.error("Failed to read %s: %s", CONFIG_PATH, e)
+            return {"mode": "none"}
+        return config.get("security", {}) or {"mode": "none"}
+
+    def _create_session() -> str:
+        token = secrets.token_urlsafe(32)
+        sessions[token] = time.time() + SESSION_TTL_S
+        return token
+
+    def _is_logged_in(request: Request) -> bool:
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        if not token:
+            return False
+        expiry = sessions.get(token)
+        if expiry is None:
+            return False
+        if time.time() > expiry:
+            del sessions[token]
+            return False
+        return True
+
     @app.get("/")
-    async def root():
-        page = "first_run.html" if first_boot else "normal.html"
-        return FileResponse(STATIC_DIR / page)
+    async def root(request: Request):
+        if first_boot:
+            return FileResponse(STATIC_DIR / "first_run.html")
+        # "Full" security means viewing needs a password too, not just
+        # changes (see TODO.md's User management section) — everything
+        # else (none/readonly) leaves the dashboard itself open.
+        if _read_security().get("mode") == "full" and not _is_logged_in(request):
+            return FileResponse(STATIC_DIR / "login.html")
+        return FileResponse(STATIC_DIR / "normal.html")
+
+    @app.get("/login")
+    async def login_page():
+        return FileResponse(STATIC_DIR / "login.html")
+
+    @app.get("/config")
+    async def config_page(request: Request):
+        # Config changes need a password under both readonly and full (see
+        # TODO.md) — unlike root() above, which only gates full.
+        mode = _read_security().get("mode", "none")
+        if mode != "none" and not _is_logged_in(request):
+            return FileResponse(STATIC_DIR / "login.html")
+        return FileResponse(STATIC_DIR / "config.html")
+
+    @app.get("/api/auth/status")
+    async def auth_status(request: Request):
+        return {"mode": _read_security().get("mode", "none"), "logged_in": _is_logged_in(request)}
+
+    @app.post("/api/auth/login")
+    async def auth_login(request: Request, response: Response):
+        security = _read_security()
+        mode = security.get("mode", "none")
+        if mode == "none":
+            raise HTTPException(status_code=400, detail="Login is not enabled")
+        body = await request.json()
+        password = body.get("password") or ""
+        if not auth.verify_password(password, security.get("salt", ""), security.get("hash", "")):
+            raise HTTPException(status_code=401, detail="Incorrect password")
+        token = _create_session()
+        response.set_cookie(
+            SESSION_COOKIE_NAME, token, max_age=SESSION_TTL_S,
+            httponly=True, samesite="lax",
+        )
+        return {"ok": True}
+
+    @app.post("/api/auth/logout")
+    async def auth_logout(request: Request, response: Response):
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        if token:
+            sessions.pop(token, None)
+        response.delete_cookie(SESSION_COOKIE_NAME)
+        return {"ok": True}
 
     @app.get("/test")
     async def test_page():
@@ -142,6 +232,37 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     async def system_timezones():
         return {"timezones": await system.list_timezones()}
 
+    @app.get("/api/system/direwolf/status")
+    async def direwolf_status():
+        # Read-only, not gated — same as everything else "viewing is open"
+        # covers, and under "full" mode the dashboard itself already
+        # required login before this could ever be called anyway.
+        return await system.get_direwolf_status()
+
+    def _require_login_for_action(request: Request) -> None:
+        # Starting/stopping Direwolf is a change, so both "readonly" and
+        # "full" gate it (unlike viewing, where only "full" does) — same
+        # split TODO.md describes for the (not yet built) config-editing
+        # endpoints this will eventually sit alongside.
+        if _read_security().get("mode", "none") != "none" and not _is_logged_in(request):
+            raise HTTPException(status_code=401, detail="Login required")
+
+    @app.post("/api/system/direwolf/start")
+    async def direwolf_start(request: Request):
+        _require_login_for_action(request)
+        result = await system.set_direwolf_running(True)
+        if not result["ok"]:
+            raise HTTPException(status_code=500, detail=result["reason"])
+        return {"ok": True}
+
+    @app.post("/api/system/direwolf/stop")
+    async def direwolf_stop(request: Request):
+        _require_login_for_action(request)
+        result = await system.set_direwolf_running(False)
+        if not result["ok"]:
+            raise HTTPException(status_code=500, detail=result["reason"])
+        return {"ok": True}
+
     @app.get("/api/network/internet")
     async def internet_status():
         return {"online": await tiles.has_internet()}
@@ -153,17 +274,6 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     @app.get("/api/map/region-status")
     async def map_region_status():
         return {"available": tiles.REGION_PATH.exists()}
-
-    # Dashboard-only — which planet build each cached file was last
-    # extracted from (see services/tiles.py: cached_build_date), so the
-    # dashboard can show "map data as of <date>" rather than just a bare
-    # yes/no. None if a file doesn't exist, or predates this tracking.
-    @app.get("/api/map/cache-info")
-    async def map_cache_info():
-        return {
-            "world_build_date": tiles.cached_build_date(tiles.WORLD_PMTILES_PATH),
-            "region_build_date": tiles.cached_build_date(tiles.REGION_PATH),
-        }
 
     # Range-request serving (needed by the PMTiles JS reader, which reads
     # chunks of the archive on demand rather than the whole file at once —
@@ -243,9 +353,10 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         user_cfg = body.get("user", {})
         security_mode = user_cfg.get("mode", "none")
         # Only ever a hash + salt on disk, never the password itself — see
-        # services/auth.py. Not enforced anywhere yet (no login system
-        # exists in DEV_BUILD — see TODO.md), but there's no reason to
-        # store it insecurely just because nothing checks it yet.
+        # services/auth.py. Enforced by root()/get_config()/config_page()
+        # and Direwolf start/stop above once this is written — nothing
+        # retroactively re-checks pages/endpoints added before this
+        # config existed, since first_boot gates them out entirely anyway.
         security = {"mode": security_mode}
         password = user_cfg.get("password", "")
         if security_mode != "none" and password:
@@ -290,21 +401,27 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         return {"ok": True, "first_boot": first_boot}
 
     @app.get("/api/config")
-    async def get_config():
+    async def get_config(request: Request):
         # Only meaningful once setup's actually run — the dashboard that
         # calls this only renders post-setup anyway (see root() above), but
         # guard it directly rather than relying on that.
         if not CONFIG_PATH.exists():
             raise HTTPException(status_code=404, detail="Setup has not been completed yet")
+        # Mirrors root()'s gating — "full" mode means viewing needs a
+        # password too, not just changes. Defense in depth: root() already
+        # keeps normal.html's JS from ever calling this unauthenticated,
+        # but this endpoint shouldn't rely on that alone.
+        if _read_security().get("mode") == "full" and not _is_logged_in(request):
+            raise HTTPException(status_code=401, detail="Login required")
         try:
             config = yaml.safe_load(CONFIG_PATH.read_text()) or {}
         except Exception as e:
             logger.error("Failed to read %s: %s", CONFIG_PATH, e)
             raise HTTPException(status_code=500, detail="Failed to read config")
         # Never hand the password hash/salt back to the frontend — nothing
-        # reads them back today (no login flow exists yet, see TODO.md),
-        # and there's no reason to expose them just because nothing
-        # enforces them yet.
+        # legitimate needs them client-side (login posts a plaintext
+        # password for the server to check, see auth.verify_password),
+        # only a reason to leak crackable material for no benefit.
         security = config.get("security", {})
         config["security"] = {"mode": security.get("mode", "none")}
         return config
