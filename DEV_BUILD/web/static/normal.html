@@ -4,80 +4,532 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APRS Digipeater</title>
+  <!-- Vendored locally (no CDN) — see web/static/maplibre/ and
+       first_run.html's Map caching step, which uses the exact same
+       MapLibre + PMTiles setup this page reuses for the home-location map. -->
+  <link rel="stylesheet" href="/static/maplibre/maplibre-gl.css">
   <style>
     :root {
       color-scheme: dark light;
       --bg: #0f1416;
       --panel: #161d20;
+      --panel-2: #1c2427;
       --border: #263238;
       --text: #e8edee;
       --muted: #8a9ba0;
+      --accent: #4fb3a9;
+      --success: #5fbf8e;
+      --error: #e08585;
     }
     @media (prefers-color-scheme: light) {
       :root {
         --bg: #f4f6f6;
         --panel: #ffffff;
+        --panel-2: #f0f3f3;
         --border: #dde3e3;
         --text: #1a2226;
         --muted: #62726f;
+        --accent: #2e8b7f;
+        --success: #2e8b57;
+        --error: #b03a3a;
       }
     }
 
     * { box-sizing: border-box; }
 
-    body {
+    html, body {
       margin: 0;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      height: 100%;
+      overflow: hidden;
       background: var(--bg);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    #app {
+      display: flex;
+      height: 100%;
+      width: 100%;
+    }
+
+    #sidebar {
+      width: 320px;
+      flex-shrink: 0;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
       padding: 16px;
     }
 
-    .card {
-      width: 100%;
-      max-width: 420px;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 32px;
-      text-align: center;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    #map-wrap {
+      position: relative;
+      flex: 1;
+      min-width: 0;
     }
+
+    #dashboard-map {
+      position: absolute;
+      inset: 0;
+    }
+
+    #map-unavailable {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+      color: var(--muted);
+    }
+    #map-unavailable.hidden { display: none; }
 
     h1 {
-      font-size: 20px;
-      margin: 0 0 8px;
+      font-size: 16px;
+      margin: 0 0 16px;
       font-weight: 700;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      text-transform: uppercase;
     }
 
-    p {
+    .card {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+
+    .card h2 {
+      font-size: 11px;
+      margin: 0 0 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
       color: var(--muted);
-      font-size: 14px;
-      margin: 0;
+      text-transform: uppercase;
+    }
+
+    .station-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .station-symbol {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
+      border-radius: 6px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .station-callsign {
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .station-comment {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 10px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .badge.on {
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .kv {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 13px;
+      padding: 3px 0;
+    }
+    .kv .k { color: var(--muted); }
+    .kv .v { text-align: right; }
+
+    .note {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    #sidebar-toggle {
+      display: none;
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 10;
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    @media (max-width: 720px) {
+      #sidebar-toggle { display: block; }
+      #sidebar {
+        position: absolute;
+        z-index: 9;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        transform: translateX(-100%);
+        transition: transform 0.2s ease;
+        box-shadow: 2px 0 12px rgba(0, 0, 0, 0.3);
+      }
+      #sidebar.open { transform: translateX(0); }
     }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>APRS Digipeater</h1>
-    <p id="status">Checking…</p>
+  <div id="app">
+    <aside id="sidebar">
+      <h1>APRS Digipeater</h1>
+
+      <div class="card" id="station-card">
+        <div class="station-header">
+          <div class="station-symbol" id="station-symbol"></div>
+          <div>
+            <div class="station-callsign" id="station-callsign">—</div>
+          </div>
+        </div>
+        <div class="station-comment" id="station-comment"></div>
+        <div class="badge-row" id="station-badges"></div>
+      </div>
+
+      <div class="card">
+        <h2>GPS</h2>
+        <div id="gps-body"><div class="note">Checking…</div></div>
+      </div>
+
+      <div class="card">
+        <h2>Network</h2>
+        <div id="network-body"><div class="note">Checking…</div></div>
+      </div>
+
+      <div class="card">
+        <h2>Map data</h2>
+        <div id="map-data-body"><div class="note">Checking…</div></div>
+      </div>
+
+      <div class="card">
+        <h2>Display</h2>
+        <div id="display-body"><div class="note">Checking…</div></div>
+      </div>
+
+      <p class="note">Live station tracking, heard-station history, and digipeat/IGate activity aren't built yet — this map shows your station's home location only. See TODO.md.</p>
+    </aside>
+
+    <button type="button" id="sidebar-toggle" aria-label="Toggle sidebar">☰</button>
+
+    <main id="map-wrap">
+      <div id="dashboard-map"></div>
+      <div id="map-unavailable" class="hidden">
+        <div>
+          <p>No map data cached yet.</p>
+          <p class="note">Run the installer, or check the Map caching step during setup.</p>
+        </div>
+      </div>
+    </main>
   </div>
 
+  <script src="/static/maplibre/maplibre-gl.js"></script>
+  <script src="/static/maplibre/pmtiles.js"></script>
   <script>
-    fetch('/api/status')
-      .then(r => r.json())
-      .then(d => {
-        document.getElementById('status').textContent = d.ok
-          ? 'Standard mode — running.'
-          : 'Server responded but reported an error.';
-      })
-      .catch(() => {
-        document.getElementById('status').textContent = 'Could not reach the server.';
+    // ── APRS symbol glyph rendering ──────────────────────────────────
+    // Same sprite sheet / cell math as first_run.html's symbol picker
+    // (web/static/aprs-symbols/, hessu/aprs-symbols, CC BY-SA 4.0) —
+    // display-only here, no picker interactivity needed.
+    const SPRITE_CELL_W = 64;
+    const SPRITE_CELL_H = 64;
+    const SPRITE_SHEET_W = 1024;
+    const SPRITE_SHEET_H = 384;
+    const SPRITE_BASE = '/static/aprs-symbols/';
+
+    function symbolGlyphHTML(sym, displayW) {
+      const sheet = sym.table === '\\' ? 'sheet1.png' : 'sheet0.png';
+      const code = sym.symbol.charCodeAt(0) - 0x21;
+      const col = code % 16;
+      const row = Math.floor(code / 16);
+      const scale = displayW / SPRITE_CELL_W;
+      const displayH = Math.round(SPRITE_CELL_H * scale);
+      const bgW = Math.round(SPRITE_SHEET_W * scale);
+      const bgH = Math.round(SPRITE_SHEET_H * scale);
+      const bgX = -Math.round(col * SPRITE_CELL_W * scale);
+      const bgY = -Math.round(row * SPRITE_CELL_H * scale);
+      const style = `width:${displayW}px;height:${displayH}px;background-image:url('${SPRITE_BASE}${sheet}');background-repeat:no-repeat;background-size:${bgW}px ${bgH}px;background-position:${bgX}px ${bgY}px;`;
+      return `<span style="${style}"></span>`;
+    }
+
+    function formatBytes(bytes) {
+      if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+      if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+      if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${bytes} B`;
+    }
+
+    function formatBuildDate(raw) {
+      // YYYYMMDD -> readable, without pulling in a date-parsing library for
+      // one string shape (see services/tiles.py's _BUILD_DATE_RE).
+      if (!raw || raw.length !== 8) return 'unknown date';
+      return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+    }
+
+    // ── Sidebar toggle (narrow viewports) ────────────────────────────
+    const sidebar = document.getElementById('sidebar');
+    document.getElementById('sidebar-toggle').addEventListener('click', () => {
+      sidebar.classList.toggle('open');
+    });
+
+    // ── Station card ──────────────────────────────────────────────────
+    function renderStationCard(cfg) {
+      const aprs = cfg.aprs || {};
+      const sym = (aprs.symbol && aprs.symbol.table && aprs.symbol.symbol)
+        ? aprs.symbol
+        : { table: '/', symbol: '#' };
+      document.getElementById('station-symbol').innerHTML = symbolGlyphHTML(sym, 40);
+      document.getElementById('station-callsign').textContent =
+        aprs.callsign ? `${aprs.callsign}${aprs.ssid ? '-' + aprs.ssid : ''}` : 'Callsign not set';
+      document.getElementById('station-comment').textContent = aprs.comment || '';
+
+      const badges = [];
+      if (aprs.digipeat_mode === 'digipeater') {
+        const rules = (aprs.digipeat && aprs.digipeat.rules) || '';
+        const label = rules === 'widearea' ? 'Digipeat: Wide-area' : rules === 'fillin' ? 'Digipeat: Fill-in' : 'Digipeat: Custom';
+        badges.push(`<span class="badge on">${label}</span>`);
+      } else {
+        badges.push(`<span class="badge">Digipeat: RX only</span>`);
+      }
+      const igateLabels = { off: 'IGate: Off', rxonly: 'IGate: RX only', rxtx: 'IGate: RX &amp; TX' };
+      const igateOn = (aprs.igate_mode || 'off') !== 'off';
+      badges.push(`<span class="badge${igateOn ? ' on' : ''}">${igateLabels[aprs.igate_mode] || 'IGate: Off'}</span>`);
+      document.getElementById('station-badges').innerHTML = badges.join('');
+    }
+
+    // ── GPS card ──────────────────────────────────────────────────────
+    let gpsPollTimer = null;
+    const GPS_POLL_MS = 5000;
+
+    function renderGpsBody(gpsCfg, status) {
+      const body = document.getElementById('gps-body');
+      if (gpsCfg.position_source === 'manual') {
+        body.innerHTML = `
+          <div class="kv"><span class="k">Position</span><span class="v">Manual</span></div>
+          <div class="kv"><span class="k">Latitude</span><span class="v">${gpsCfg.latitude ?? '—'}</span></div>
+          <div class="kv"><span class="k">Longitude</span><span class="v">${gpsCfg.longitude ?? '—'}</span></div>
+        `;
+        return;
+      }
+      if (!status || !status.available) {
+        body.innerHTML = `<div class="note">${(status && status.reason) || 'GPS not available.'}</div>`;
+        return;
+      }
+      body.innerHTML = `
+        <div class="kv"><span class="k">Fix</span><span class="v">${status.fix}</span></div>
+        <div class="kv"><span class="k">Satellites</span><span class="v">${status.satellites_used ?? '—'} / ${status.satellites_visible ?? '—'}</span></div>
+        <div class="kv"><span class="k">Latitude</span><span class="v">${status.has_fix ? status.latitude.toFixed(5) : '—'}</span></div>
+        <div class="kv"><span class="k">Longitude</span><span class="v">${status.has_fix ? status.longitude.toFixed(5) : '—'}</span></div>
+      `;
+    }
+
+    // ── Network card ──────────────────────────────────────────────────
+    function renderNetworkBody(net) {
+      const body = document.getElementById('network-body');
+      const kindLabel = { ethernet: 'Ethernet', wifi: 'WiFi', hotspot: 'Hotspot' }[net.kind] || net.kind;
+      let html = `
+        <div class="kv"><span class="k">Connection</span><span class="v">${kindLabel}</span></div>
+        <div class="kv"><span class="k">IP address</span><span class="v">${net.ip || '—'}</span></div>
+      `;
+      if (net.kind === 'hotspot' && net.hotspot_ssid) {
+        html += `<div class="kv"><span class="k">Hotspot SSID</span><span class="v">${net.hotspot_ssid}</span></div>`;
+      }
+      body.innerHTML = html;
+    }
+
+    // ── Display card ──────────────────────────────────────────────────
+    async function renderDisplayBody() {
+      const body = document.getElementById('display-body');
+      try {
+        const cfg = await (await fetch('/api/display/config')).json();
+        if (cfg.driver === 'none') {
+          body.innerHTML = `<div class="note">No display connected.</div>`;
+          return;
+        }
+        let desc = cfg.model;
+        try {
+          const models = (await (await fetch('/api/display/models')).json()).models;
+          const match = models.find(m => m.id === cfg.model);
+          if (match) desc = match.desc;
+        } catch (e) {
+          // Falls back to the raw model id above.
+        }
+        body.innerHTML = `<div class="kv"><span class="k">Model</span><span class="v">${desc}</span></div>`;
+      } catch (e) {
+        body.innerHTML = `<div class="note">Could not reach the server.</div>`;
+      }
+    }
+
+    // ── Map data card ─────────────────────────────────────────────────
+    function renderMapDataBody(worldAvailable, regionAvailable, cacheInfo, autoUpdate) {
+      const body = document.getElementById('map-data-body');
+      const worldValue = worldAvailable ? `as of ${formatBuildDate(cacheInfo.world_build_date)}` : 'not cached';
+      const regionValue = regionAvailable ? `as of ${formatBuildDate(cacheInfo.region_build_date)}` : 'not downloaded';
+      const autoValue = (autoUpdate && autoUpdate.enabled) ? `daily at ${autoUpdate.time}` : 'off';
+      body.innerHTML = `
+        <div class="kv"><span class="k">World map</span><span class="v">${worldValue}</span></div>
+        <div class="kv"><span class="k">Region map</span><span class="v">${regionValue}</span></div>
+        <div class="kv"><span class="k">Auto-update</span><span class="v">${autoValue}</span></div>
+      `;
+    }
+
+    // ── Home-location map ─────────────────────────────────────────────
+    async function initDashboardMap(cfg, worldAvailable, regionAvailable) {
+      const mapWrap = document.getElementById('map-wrap');
+      const mapUnavailable = document.getElementById('map-unavailable');
+      if (!worldAvailable && !regionAvailable) {
+        mapUnavailable.classList.remove('hidden');
+        return;
+      }
+
+      // Home point: manual position wins outright (it's exact and static);
+      // otherwise a live GPS fix; otherwise the center of the region
+      // picked during setup (still roughly "home", since that's what it
+      // was centered on); otherwise nothing to show a marker at.
+      let homeLat = null, homeLon = null;
+      const gpsCfg = cfg.gps || {};
+      const mapCfg = cfg.map || {};
+      if (gpsCfg.position_source === 'manual' && gpsCfg.latitude && gpsCfg.longitude) {
+        homeLat = parseFloat(gpsCfg.latitude);
+        homeLon = parseFloat(gpsCfg.longitude);
+      } else {
+        try {
+          const res = await fetch('/api/gps/position');
+          const data = await res.json();
+          if (data.available) {
+            homeLat = data.latitude;
+            homeLon = data.longitude;
+          }
+        } catch (e) {
+          // Falls through to the region-center fallback below.
+        }
+      }
+      if (homeLat === null && mapCfg.north !== undefined && mapCfg.south !== undefined) {
+        homeLat = (parseFloat(mapCfg.north) + parseFloat(mapCfg.south)) / 2;
+        homeLon = (parseFloat(mapCfg.east) + parseFloat(mapCfg.west)) / 2;
+      }
+      const center = [homeLon ?? 0, homeLat ?? 0];
+
+      const protocol = new pmtiles.Protocol();
+      maplibregl.addProtocol('pmtiles', protocol.tile);
+
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const styleUrl = `/static/maplibre/style-${prefersDark ? 'dark' : 'light'}.json`;
+      const style = await (await fetch(styleUrl)).json();
+      // Region data is finer detail (higher max zoom, user-picked bounds)
+      // than the coarse whole-world precache — prefer it when available.
+      const pmtilesFile = regionAvailable ? 'region.pmtiles' : 'world.pmtiles';
+      style.sources.protomaps.url = `pmtiles://${location.origin}/map-data/${pmtilesFile}`;
+
+      const map = new maplibregl.Map({
+        container: 'dashboard-map',
+        style,
+        center,
+        zoom: homeLat !== null ? 12 : 1,
       });
+      map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+      await new Promise(resolve => map.on('load', resolve));
+
+      if (homeLat !== null) {
+        const el = document.createElement('div');
+        el.style.cssText = 'width:40px;height:40px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));';
+        const aprs = cfg.aprs || {};
+        const sym = (aprs.symbol && aprs.symbol.table && aprs.symbol.symbol) ? aprs.symbol : { table: '/', symbol: '#' };
+        el.innerHTML = symbolGlyphHTML(sym, 40);
+        new maplibregl.Marker({ element: el }).setLngLat(center).addTo(map);
+      }
+    }
+
+    // ── Boot ──────────────────────────────────────────────────────────
+    (async () => {
+      let cfg = {};
+      try {
+        const res = await fetch('/api/config');
+        if (res.ok) cfg = await res.json();
+      } catch (e) {
+        // Falls through — every card below handles a missing/partial cfg.
+      }
+
+      renderStationCard(cfg);
+
+      const gpsCfg = cfg.gps || {};
+      if (gpsCfg.position_source === 'manual') {
+        renderGpsBody(gpsCfg, null);
+      } else {
+        async function pollGps() {
+          try {
+            const res = await fetch('/api/gps/status');
+            renderGpsBody(gpsCfg, await res.json());
+          } catch (e) {
+            renderGpsBody(gpsCfg, { available: false, reason: 'Could not reach the server.' });
+          }
+        }
+        await pollGps();
+        gpsPollTimer = setInterval(pollGps, GPS_POLL_MS);
+      }
+
+      try {
+        const res = await fetch('/api/network/status');
+        renderNetworkBody(await res.json());
+      } catch (e) {
+        document.getElementById('network-body').innerHTML = `<div class="note">Could not reach the server.</div>`;
+      }
+
+      renderDisplayBody();
+
+      let worldAvailable = false, regionAvailable = false, cacheInfo = {};
+      try {
+        worldAvailable = (await (await fetch('/api/map/world-status')).json()).available;
+      } catch (e) {}
+      try {
+        regionAvailable = (await (await fetch('/api/map/region-status')).json()).available;
+      } catch (e) {}
+      try {
+        cacheInfo = await (await fetch('/api/map/cache-info')).json();
+      } catch (e) {}
+      renderMapDataBody(worldAvailable, regionAvailable, cacheInfo, cfg.map && cfg.map.auto_update);
+
+      initDashboardMap(cfg, worldAvailable, regionAvailable);
+    })();
   </script>
 </body>
 </html>

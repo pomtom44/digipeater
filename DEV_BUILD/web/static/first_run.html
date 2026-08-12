@@ -563,6 +563,17 @@
       return `${bytes} B`;
     }
 
+    // m:ss / h:mm formatting for elapsed time — also global for the same
+    // reason as formatBytes above.
+    function formatDuration(totalSeconds) {
+      const s = Math.max(0, Math.round(totalSeconds));
+      if (s < 60) return `${s}s`;
+      const m = Math.floor(s / 60);
+      if (m < 60) return `${m}m ${s % 60}s`;
+      const h = Math.floor(m / 60);
+      return `${h}h ${m % 60}m`;
+    }
+
     document.addEventListener('click', (e) => {
       const icon = e.target.closest('.help-icon');
       if (icon) {
@@ -1924,15 +1935,14 @@
               <input type="range" id="map-zoom-max" min="${MAP_MIN_ZOOM}" max="${MAP_SLIDER_MAX_ZOOM}" value="${m.zoom_max ?? MAP_DEFAULT_MAX_ZOOM}">
             </div>
 
-            <p class="hint">Size depends on how much map detail actually exists in this area (a city and open countryside at the same size/zoom can differ hugely), so there's no reliable estimate to show before downloading — you'll see real progress once it starts.</p>
             <p class="msg" id="map-region-msg"></p>
 
-            <button type="button" id="btn-map-download" style="margin-top: 12px;">Download this region</button>
+            <button type="button" id="btn-map-download" style="margin-top: 12px;">Download this region</button>${helpIcon("Size depends on how much map detail actually exists in this area (a city and open countryside at the same size/zoom can differ hugely), so there's no reliable estimate to show before downloading — you'll see real progress once it starts.")}
             <button type="button" id="btn-map-cancel" class="hidden" style="margin-top: 8px;">Cancel download</button>
 
             <div id="map-progress-wrap" class="hidden" style="margin-top: 12px;">
               <div class="status-box" id="map-progress-msg"></div>
-              <p class="hint">This continues in the background as long as the device stays powered on — closing this page or moving to another step is fine. Rebooting (including Finish &amp; Reboot) will stop it, though, and there's no way to resume it afterward.</p>
+              <p class="hint">You can continue with the rest of the wizard — it'll keep downloading in the background. The Finish step will wait for it to complete before letting you save and reboot.</p>
             </div>
           </div>
         </section>
@@ -2147,16 +2157,6 @@
           regionMsg.textContent = 'Could not reach the server.';
         }
       });
-
-      // m:ss / h:mm formatting for elapsed time below.
-      function formatDuration(totalSeconds) {
-        const s = Math.max(0, Math.round(totalSeconds));
-        if (s < 60) return `${s}s`;
-        const m = Math.floor(s / 60);
-        if (m < 60) return `${m}m ${s % 60}s`;
-        const h = Math.floor(m / 60);
-        return `${h}h ${m % 60}m`;
-      }
 
       // No tile-by-tile count or percent to show anymore (this is one CLI
       // extraction, not thousands of individual requests) — progress is
@@ -2567,8 +2567,9 @@
     const STARTUP_DEFAULT_RESTART_ATTEMPTS = 3;
     const STARTUP_DEFAULT_RESTART_DELAY_S = 30;
 
-    function renderStartupStep() {
+    async function renderStartupStep() {
       const s = wizardData.startup || {};
+      const m = wizardData.map || {};
       document.getElementById('step-content').innerHTML = `
         <section>
           <div class="field">
@@ -2596,6 +2597,18 @@
               <div class="field-suffix"><input type="number" id="startup-restart-delay" min="1" value="${s.restart_delay_s ?? STARTUP_DEFAULT_RESTART_DELAY_S}"><span>sec</span></div>
             </div>
           </div>
+
+          <div class="field">
+            <label class="subsection-title">
+              <input type="checkbox" id="map-auto-update-enabled">
+              Automatically check for map updates
+              ${helpIcon("Runs in the background from now on, not just during setup. Once a day it checks whether Protomaps has published a newer map build than what's cached, and if so, re-downloads the world map and — if a region was picked on the Map caching step — that region too. Needs internet at check time; if there isn't any, it just tries again at the next check rather than waiting a full day.")}
+            </label>
+          </div>
+          <div class="field" id="map-auto-update-time-wrap">
+            <label for="map-auto-update-time">Check time</label>
+            <input type="time" id="map-auto-update-time" value="${(m.auto_update && m.auto_update.time) || MAP_DEFAULT_AUTO_UPDATE_TIME}">
+          </div>
         </section>
       `;
 
@@ -2611,46 +2624,6 @@
       }
       autorestartBox.addEventListener('change', updateRestartFieldsVisibility);
       updateRestartFieldsVisibility();
-    }
-
-    function saveStartupStep() {
-      const autorestart = document.getElementById('startup-autorestart').checked;
-      wizardData.startup = {
-        autostart: document.getElementById('startup-autostart').checked,
-        autorestart,
-      };
-      if (autorestart) {
-        wizardData.startup.restart_attempts = document.getElementById('startup-restart-attempts').value;
-        wizardData.startup.restart_delay_s = document.getElementById('startup-restart-delay').value;
-      }
-      return true;
-    }
-
-    // ── Finish step ───────────────────────────────────────────────────
-    const REBOOT_WAIT_S = 60;
-
-    async function renderFinishStep() {
-      const m = wizardData.map || {};
-      document.getElementById('step-content').innerHTML = `
-        <section>
-          <p>That's everything needed for now. Press <strong>Finish &amp; Reboot</strong> to save your settings — the device will reboot and start up in standard mode.</p>
-          <p class="hint">This page will automatically reload into the dashboard once it's back up.</p>
-          <div id="finish-download-warning" class="hidden">
-            <p class="msg error" id="finish-download-warning-text"></p>
-            <p class="hint">Rebooting now will stop it partway through — there's no way to resume it afterward, since this setup wizard only exists on first boot. Whatever's already downloaded is kept either way; you'd need to go back to Map caching and start a fresh download for the rest.</p>
-          </div>
-
-          <div style="margin: 20px 0; padding: 16px; border: 1px solid var(--border); border-radius: 8px;">
-            <label><input type="checkbox" id="map-auto-update-enabled"> Automatically check for map updates ${helpIcon("Runs in the background from now on, not just during setup. Once a day it checks whether Protomaps has published a newer map build than what's cached, and if so, re-downloads the world map and — if a region was picked on the Map caching step — that region too. Needs internet at check time; if there isn't any, it just tries again at the next check rather than waiting a full day.")}</label>
-            <div class="field" id="map-auto-update-time-wrap">
-              <label for="map-auto-update-time">Check time</label>
-              <input type="time" id="map-auto-update-time" value="${(m.auto_update && m.auto_update.time) || MAP_DEFAULT_AUTO_UPDATE_TIME}">
-            </div>
-          </div>
-
-          <p class="msg" id="finish-msg"></p>
-        </section>
-      `;
 
       const autoUpdateCheckbox = document.getElementById('map-auto-update-enabled');
       const autoUpdateTimeWrap = document.getElementById('map-auto-update-time-wrap');
@@ -2665,10 +2638,8 @@
         autoUpdateCheckbox.checked = m.auto_update.enabled;
       } else {
         // No saved preference yet — default on if there's internet right
-        // now (the most direct read available, at the actual end of
-        // setup, of "was there internet during setup"), off otherwise so
-        // a background task doesn't sit there failing every day on a
-        // station that's normally offline.
+        // now, off otherwise, so a background task doesn't sit there
+        // failing every day on a station that's normally offline.
         try {
           const res = await fetch('/api/network/internet');
           autoUpdateCheckbox.checked = (await res.json()).online;
@@ -2677,19 +2648,87 @@
         }
       }
       updateAutoUpdateTimeVisibility();
+    }
 
-      // Best-effort — if this can't be reached, just don't show the
-      // warning rather than blocking Finish over it.
-      try {
-        const res = await fetch('/api/map/cache/status');
-        const data = await res.json();
-        if (data.active) {
-          document.getElementById('finish-download-warning-text').textContent =
-            `A map region download is still running (${formatBytes(data.bytes)} so far).`;
-          document.getElementById('finish-download-warning').classList.remove('hidden');
+    function saveStartupStep() {
+      const autorestart = document.getElementById('startup-autorestart').checked;
+      wizardData.startup = {
+        autostart: document.getElementById('startup-autostart').checked,
+        autorestart,
+      };
+      if (autorestart) {
+        wizardData.startup.restart_attempts = document.getElementById('startup-restart-attempts').value;
+        wizardData.startup.restart_delay_s = document.getElementById('startup-restart-delay').value;
+      }
+      // Independent of the rest of this step — merged onto wizardData.map
+      // (Map caching's own step, earlier in the wizard, owns
+      // north/south/east/west/zoom_max) rather than overwriting it.
+      wizardData.map = {
+        ...wizardData.map,
+        auto_update: {
+          enabled: document.getElementById('map-auto-update-enabled').checked,
+          time: document.getElementById('map-auto-update-time').value || MAP_DEFAULT_AUTO_UPDATE_TIME,
+        },
+      };
+      return true;
+    }
+
+    // ── Finish step ───────────────────────────────────────────────────
+    const REBOOT_WAIT_S = 60;
+
+    async function renderFinishStep() {
+      document.getElementById('step-content').innerHTML = `
+        <section>
+          <p>That's everything needed for now. Press <strong>Finish &amp; Reboot</strong> to save your settings — the device will reboot and start up in standard mode.</p>
+          <p class="hint">This page will automatically reload into the dashboard once it's back up.</p>
+          <div id="finish-download-progress" class="hidden">
+            <p class="hint">A map region download is still running in the background — <strong>Finish &amp; Reboot</strong> is disabled until it's done, since rebooting partway through would stop it with no way to resume afterward (this setup wizard only exists on first boot).</p>
+            <div class="status-box" id="finish-download-progress-msg"></div>
+          </div>
+
+          <p class="msg" id="finish-msg"></p>
+        </section>
+      `;
+
+      // Blocks Finish & Reboot while a region download (started on the Map
+      // caching step, possibly still running after visiting several steps
+      // since) is active — reusing mapStatusPollTimer (module-level;
+      // showStep() already clears it when navigating away from whichever
+      // step started it, Map caching or here). Best-effort: a request that
+      // fails outright is treated as "can't tell, try again next tick"
+      // rather than either blocking or unblocking on bad information.
+      const downloadProgressWrap = document.getElementById('finish-download-progress');
+      const downloadProgressMsg = document.getElementById('finish-download-progress-msg');
+      const nextBtn = document.getElementById('btn-next');
+
+      async function pollFinishDownloadStatus() {
+        let data;
+        try {
+          const res = await fetch('/api/map/cache/status');
+          data = await res.json();
+        } catch (e) {
+          return true; // unknown — keep polling, don't change button state
         }
-      } catch (e) {
-        // Not shown — see comment above.
+        if (!data.active) {
+          downloadProgressWrap.classList.add('hidden');
+          nextBtn.disabled = false;
+          return false;
+        }
+        downloadProgressWrap.classList.remove('hidden');
+        nextBtn.disabled = true;
+        const elapsed = data.elapsed_s !== null ? formatDuration(data.elapsed_s) : '';
+        downloadProgressMsg.textContent = `Downloading… ${formatBytes(data.bytes)} so far${elapsed ? ` (${elapsed} elapsed)` : ''}`;
+        return true;
+      }
+
+      const stillActive = await pollFinishDownloadStatus();
+      if (stillActive) {
+        mapStatusPollTimer = setInterval(async () => {
+          if (!(await pollFinishDownloadStatus())) {
+            clearInterval(mapStatusPollTimer);
+            mapStatusPollTimer = null;
+          }
+        }, 1000);
       }
     }
 
@@ -2717,13 +2756,6 @@
       backBtn.disabled = true;
       nextBtn.textContent = 'Rebooting…';
       msg.className = 'msg';
-      wizardData.map = {
-        ...wizardData.map,
-        auto_update: {
-          enabled: document.getElementById('map-auto-update-enabled').checked,
-          time: document.getElementById('map-auto-update-time').value || MAP_DEFAULT_AUTO_UPDATE_TIME,
-        },
-      };
       try {
         const res = await fetch('/api/setup/complete', {
           method: 'POST',

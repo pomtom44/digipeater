@@ -150,6 +150,21 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     async def map_world_status():
         return {"available": tiles.WORLD_PMTILES_PATH.exists()}
 
+    @app.get("/api/map/region-status")
+    async def map_region_status():
+        return {"available": tiles.REGION_PATH.exists()}
+
+    # Dashboard-only — which planet build each cached file was last
+    # extracted from (see services/tiles.py: cached_build_date), so the
+    # dashboard can show "map data as of <date>" rather than just a bare
+    # yes/no. None if a file doesn't exist, or predates this tracking.
+    @app.get("/api/map/cache-info")
+    async def map_cache_info():
+        return {
+            "world_build_date": tiles.cached_build_date(tiles.WORLD_PMTILES_PATH),
+            "region_build_date": tiles.cached_build_date(tiles.REGION_PATH),
+        }
+
     # Range-request serving (needed by the PMTiles JS reader, which reads
     # chunks of the archive on demand rather than the whole file at once —
     # Starlette's FileResponse has supported Range since 0.39, see
@@ -273,6 +288,26 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     @app.get("/api/status")
     async def status():
         return {"ok": True, "first_boot": first_boot}
+
+    @app.get("/api/config")
+    async def get_config():
+        # Only meaningful once setup's actually run — the dashboard that
+        # calls this only renders post-setup anyway (see root() above), but
+        # guard it directly rather than relying on that.
+        if not CONFIG_PATH.exists():
+            raise HTTPException(status_code=404, detail="Setup has not been completed yet")
+        try:
+            config = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+        except Exception as e:
+            logger.error("Failed to read %s: %s", CONFIG_PATH, e)
+            raise HTTPException(status_code=500, detail="Failed to read config")
+        # Never hand the password hash/salt back to the frontend — nothing
+        # reads them back today (no login flow exists yet, see TODO.md),
+        # and there's no reason to expose them just because nothing
+        # enforces them yet.
+        security = config.get("security", {})
+        config["security"] = {"mode": security.get("mode", "none")}
+        return config
 
     @app.get("/api/display/status")
     async def display_status():
