@@ -37,7 +37,12 @@
 
     * { box-sizing: border-box; }
 
-    .hidden { display: none; }
+    /* !important — otherwise an ID selector like #map-unavailable's own
+       display:flex below (or any later-declared single-class rule at a
+       specificity tie, e.g. .field-row's display:flex) would beat this
+       regardless of source order, silently un-hiding the element. A
+       "hidden" utility class needs to always win. */
+    .hidden { display: none !important; }
 
     html, body {
       margin: 0;

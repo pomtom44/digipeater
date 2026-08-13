@@ -350,7 +350,12 @@
     }
     .help-close:hover { color: var(--text); }
 
-    .hidden { display: none; }
+    /* !important, not just plain display:none — otherwise any other
+       single-class rule (e.g. .field-row's display:flex) declared later
+       in this stylesheet wins a same-specificity tie regardless of which
+       is actually applied last in markup, silently un-hiding the
+       element. A "hidden" utility class needs to always win. */
+    .hidden { display: none !important; }
 
     .subsection {
       border: 1px solid var(--border);
@@ -1783,6 +1788,127 @@
       return { lat, lon };
     }
 
+    // Open Location Code / Plus Codes — ported from Google's own reference
+    // implementation (github.com/google/open-location-code, Apache-2.0),
+    // trimmed to exactly what's needed here: encoding/decoding a full,
+    // unshortened 10-digit code (~13.5m precision at the equator — the
+    // spec's default "normal precision", e.g. "8FVC9G8F+6X"). Pure
+    // arithmetic, same as DMS/Maidenhead above — no API key or network
+    // call needed, unlike what3words, which is why this was chosen over
+    // that as the "short shareable code" option. Not implemented: the
+    // spec's optional 11th-character grid-refinement digit, and
+    // shortening/recovering codes relative to a reference location —
+    // neither is needed for typing in one fixed station position. Output
+    // verified to match Google's own reference implementation exactly
+    // (byte-for-byte, including its own documented Zurich example)
+    // across 11 test points spanning both hemispheres, the antimeridian,
+    // and longitude wraparound.
+    const OLC_ALPHABET = '23456789CFGHJMPQRVWX';
+    const OLC_BASE = OLC_ALPHABET.length;
+    const OLC_PAIR_PRECISION = Math.pow(OLC_BASE, 3);
+    const OLC_PAIR_FIRST_PLACE_VALUE = Math.pow(OLC_BASE, 5 - 1);
+    const OLC_GRID_ROWS = 5;
+    const OLC_GRID_COLUMNS = 4;
+    const OLC_GRID_CODE_LENGTH = 5;
+    const OLC_FINAL_LAT_PRECISION = OLC_PAIR_PRECISION * Math.pow(OLC_GRID_ROWS, OLC_GRID_CODE_LENGTH);
+    const OLC_FINAL_LNG_PRECISION = OLC_PAIR_PRECISION * Math.pow(OLC_GRID_COLUMNS, OLC_GRID_CODE_LENGTH);
+
+    function formatPlusCode(lat, lon) {
+      lat = Math.min(90, Math.max(-90, lat));
+      let lonNorm = lon;
+      while (lonNorm < -180) lonNorm += 360;
+      while (lonNorm >= 180) lonNorm -= 360;
+
+      let latVal = Math.floor(lat * OLC_FINAL_LAT_PRECISION) + 90 * OLC_FINAL_LAT_PRECISION;
+      latVal = Math.min(Math.max(latVal, 0), 2 * 90 * OLC_FINAL_LAT_PRECISION - 1);
+      let lngVal = Math.floor(lonNorm * OLC_FINAL_LNG_PRECISION) + 180 * OLC_FINAL_LNG_PRECISION;
+      const lngRange = 2 * 180 * OLC_FINAL_LNG_PRECISION;
+      lngVal = ((lngVal % lngRange) + lngRange) % lngRange;
+
+      // Strip the grid-refinement precision — only ever encodes to the
+      // 10-digit pair stage, no 11th-character grid digit.
+      latVal = Math.floor(latVal / Math.pow(OLC_GRID_ROWS, OLC_GRID_CODE_LENGTH));
+      lngVal = Math.floor(lngVal / Math.pow(OLC_GRID_COLUMNS, OLC_GRID_CODE_LENGTH));
+
+      const code = new Array(11);
+      code[8] = '+';
+      code[9] = OLC_ALPHABET[latVal % OLC_BASE];
+      code[10] = OLC_ALPHABET[lngVal % OLC_BASE];
+      latVal = Math.floor(latVal / OLC_BASE);
+      lngVal = Math.floor(lngVal / OLC_BASE);
+      for (let i = 6; i >= 0; i -= 2) {
+        code[i] = OLC_ALPHABET[latVal % OLC_BASE];
+        code[i + 1] = OLC_ALPHABET[lngVal % OLC_BASE];
+        latVal = Math.floor(latVal / OLC_BASE);
+        lngVal = Math.floor(lngVal / OLC_BASE);
+      }
+      return code.join('');
+    }
+
+    function parsePlusCode(raw) {
+      if (!raw) return null;
+      // Google Maps' share text sometimes trails the code with a place
+      // name (e.g. "8FVC9G8F+6X Zürich") — take just the leading code.
+      const match = raw.trim().toUpperCase().match(/^([23456789CFGHJMPQRVWX]{8}\+[23456789CFGHJMPQRVWX]{2,3})/);
+      if (!match) return null;
+      const code = match[1].replace('+', '');
+      if (code.length !== 10) return null;
+
+      let normalLat = -90 * OLC_PAIR_PRECISION;
+      let normalLng = -180 * OLC_PAIR_PRECISION;
+      let pv = OLC_PAIR_FIRST_PLACE_VALUE;
+      for (let i = 0; i < 10; i += 2) {
+        const latDigit = OLC_ALPHABET.indexOf(code[i]);
+        const lngDigit = OLC_ALPHABET.indexOf(code[i + 1]);
+        if (latDigit === -1 || lngDigit === -1) return null;
+        normalLat += latDigit * pv;
+        normalLng += lngDigit * pv;
+        if (i < 8) pv /= OLC_BASE;
+      }
+      const precision = pv / OLC_PAIR_PRECISION;
+      // Center of the resolved cell, not its SW corner — same convention
+      // as parseMaidenhead above.
+      const lat = normalLat / OLC_PAIR_PRECISION + precision / 2;
+      const lon = normalLng / OLC_PAIR_PRECISION + precision / 2;
+      if (lat < -90 || lat > 90 || lon < -180 || lon >= 180) return null;
+      return { lat, lon };
+    }
+
+    // Module-level, not renderGpsStep-local — saveGpsStep() (a separate
+    // top-level function, called from the wizard's onNext, long after
+    // renderGpsStep()'s own closure exited) needs to read the same
+    // format-aware position, not just the UI-refresh logic that lives in
+    // renderGpsStep. Reads whichever format's fields are currently
+    // visible (not just the decimal ones) — the decimal inputs are only
+    // "canonical" in the sense that config.yaml stores decimal degrees;
+    // day to day, whichever format is selected is the source of truth
+    // the user is actually looking at.
+    function getManualLatLon(format) {
+      format = format || document.getElementById('gps-loc-format').value;
+      let lat, lon;
+      if (format === 'dms') {
+        lat = parseDMS(document.getElementById('gps-lat-dms').value);
+        lon = parseDMS(document.getElementById('gps-lon-dms').value);
+        if (lat === null || lon === null) return null;
+      } else if (format === 'maidenhead') {
+        const parsed = parseMaidenhead(document.getElementById('gps-grid').value);
+        if (!parsed) return null;
+        lat = parsed.lat;
+        lon = parsed.lon;
+      } else if (format === 'pluscode') {
+        const parsed = parsePlusCode(document.getElementById('gps-pluscode').value);
+        if (!parsed) return null;
+        lat = parsed.lat;
+        lon = parsed.lon;
+      } else {
+        lat = parseFloat(document.getElementById('gps-lat').value);
+        lon = parseFloat(document.getElementById('gps-lon').value);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      }
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+      return { lat, lon };
+    }
+
     function renderGpsStep() {
       const g = wizardData.gps || {};
       document.getElementById('step-content').innerHTML = `
@@ -1809,6 +1935,7 @@
                 <option value="decimal">Decimal degrees</option>
                 <option value="dms">Degrees / minutes / seconds</option>
                 <option value="maidenhead">Maidenhead grid square</option>
+                <option value="pluscode">Plus Code</option>
               </select>
             </div>
 
@@ -1837,6 +1964,11 @@
             <div class="field hidden" id="gps-loc-maidenhead">
               <label for="gps-grid">Grid square ${helpIcon("Maidenhead locator, the standard ham radio grid square system — e.g. RF80qh (6 characters, roughly 4km precision). The position used is the center of that square, not an exact point.")}</label>
               <input type="text" id="gps-grid" maxlength="6" placeholder="e.g. RF80qh">
+            </div>
+
+            <div class="field hidden" id="gps-loc-pluscode">
+              <label for="gps-pluscode">Plus Code ${helpIcon("Open Location Code (Google's open, offline standard — no account or API key needed, unlike what3words) — e.g. 8FVC9G8F+6X, about 14x14m precision. The position used is the center of that square.")}</label>
+              <input type="text" id="gps-pluscode" placeholder="e.g. 8FVC9G8F+6X">
             </div>
 
             <p class="msg" id="gps-loc-msg"></p>
@@ -1876,32 +2008,6 @@
       const formatSelect = document.getElementById('gps-loc-format');
       const locMsg = document.getElementById('gps-loc-msg');
 
-      // Reads the position out of whichever format's fields are currently
-      // visible (not just the decimal ones) — the decimal inputs are only
-      // "canonical" in the sense that config.yaml stores decimal degrees;
-      // day to day, whichever format is selected is the source of truth
-      // the user is actually looking at.
-      function getManualLatLon(format) {
-        format = format || formatSelect.value;
-        let lat, lon;
-        if (format === 'dms') {
-          lat = parseDMS(document.getElementById('gps-lat-dms').value);
-          lon = parseDMS(document.getElementById('gps-lon-dms').value);
-          if (lat === null || lon === null) return null;
-        } else if (format === 'maidenhead') {
-          const parsed = parseMaidenhead(document.getElementById('gps-grid').value);
-          if (!parsed) return null;
-          lat = parsed.lat;
-          lon = parsed.lon;
-        } else {
-          lat = parseFloat(document.getElementById('gps-lat').value);
-          lon = parseFloat(document.getElementById('gps-lon').value);
-          if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-        }
-        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
-        return { lat, lon };
-      }
-
       function setManualFields(format, latLon) {
         if (!latLon) return;
         if (format === 'dms') {
@@ -1909,6 +2015,8 @@
           document.getElementById('gps-lon-dms').value = formatDMS(latLon.lon, false);
         } else if (format === 'maidenhead') {
           document.getElementById('gps-grid').value = formatMaidenhead(latLon.lat, latLon.lon);
+        } else if (format === 'pluscode') {
+          document.getElementById('gps-pluscode').value = formatPlusCode(latLon.lat, latLon.lon);
         } else {
           document.getElementById('gps-lat').value = latLon.lat.toFixed(6);
           document.getElementById('gps-lon').value = latLon.lon.toFixed(6);
@@ -1920,20 +2028,36 @@
         document.getElementById('gps-loc-decimal').classList.toggle('hidden', format !== 'decimal');
         document.getElementById('gps-loc-dms').classList.toggle('hidden', format !== 'dms');
         document.getElementById('gps-loc-maidenhead').classList.toggle('hidden', format !== 'maidenhead');
+        document.getElementById('gps-loc-pluscode').classList.toggle('hidden', format !== 'pluscode');
       }
 
       // A live "≈ decimal" readout for DMS/grid square, so there's some
       // confirmation of what's actually being entered before Next — the
       // decimal fields show the value directly, so they don't need this.
       function updateLocPreview() {
-        if (formatSelect.value === 'decimal') {
+        const format = formatSelect.value;
+        if (format === 'decimal') {
+          locMsg.textContent = '';
+          locMsg.className = 'msg';
+          return;
+        }
+        // Nothing typed yet (e.g. just switched formats with no prior
+        // position to carry over) isn't a parse failure — stay quiet
+        // rather than greeting an empty field with an error.
+        const isEmpty = format === 'dms'
+          ? !document.getElementById('gps-lat-dms').value.trim() && !document.getElementById('gps-lon-dms').value.trim()
+          : format === 'pluscode'
+          ? !document.getElementById('gps-pluscode').value.trim()
+          : !document.getElementById('gps-grid').value.trim();
+        if (isEmpty) {
           locMsg.textContent = '';
           locMsg.className = 'msg';
           return;
         }
         const latLon = getManualLatLon();
         if (!latLon) {
-          locMsg.textContent = 'Could not parse — check the format.';
+          const example = format === 'dms' ? `e.g. 36°50'54.5"S` : format === 'pluscode' ? 'e.g. 8FVC9G8F+6X' : 'e.g. RF80qh';
+          locMsg.textContent = `Could not parse — check the format (${example}).`;
           locMsg.className = 'msg error';
           return;
         }
@@ -1953,7 +2077,7 @@
         updateLocPreview();
       });
       formatSelect.dataset.prev = 'decimal';
-      ['gps-lat-dms', 'gps-lon-dms', 'gps-grid'].forEach(id => {
+      ['gps-lat-dms', 'gps-lon-dms', 'gps-grid', 'gps-pluscode'].forEach(id => {
         document.getElementById(id).addEventListener('input', updateLocPreview);
       });
 
