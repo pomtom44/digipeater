@@ -18,15 +18,17 @@ async def reboot() -> None:
 
 _DIREWOLF_UNIT = "direwolf"
 
-# In-memory fallback used only when there's no real answer available (no
-# systemctl at all (developing off a real Linux box) or systemctl exists
-# but the direwolf.service unit doesn't yet, see TODO.md's direwolf.conf
-# generator gap). Lets the dashboard's start/stop UX (confirm modal,
-# login gating, badge state) actually be clicked through and tested
-# before that gap is closed. Every response built from this path sets
+# In-memory fallback used only when there's no real answer available: no
+# systemctl at all (e.g. this project's own dev sandbox, which can't run
+# Linux binaries), or a real Linux box that hasn't run install.sh yet (no
+# direwolf.service unit installed). On a normally-installed Pi this is
+# dead code in practice, since both the unit and systemctl are always
+# there, but it's what let the dashboard's start/stop UX (confirm modal,
+# login gating, badge state) get built and tested before install.sh
+# actually created the unit. Every response built from this path sets
 # "simulated": True so the frontend can label it clearly rather than
-# imply real control that doesn't exist; a real systemd answer, once
-# there's a real unit to ask about, always takes priority over this.
+# imply real control that doesn't exist; a real systemd answer always
+# takes priority over this.
 _simulated_running = False
 
 

@@ -11,6 +11,6 @@ pyyaml
 pyserial
 httpx
 # Needed for FastAPI/Starlette to parse the login page's form POST (see
-# web/server.py's /api/auth/login) — required even for plain
+# web/server.py's /api/auth/login): required even for plain
 # application/x-www-form-urlencoded bodies, not just multipart/file uploads.
 python-multipart

@@ -908,6 +908,10 @@
         powerSelect.value = wizardData.radio.power_level ?? powerSelect.value;
         document.getElementById('radio-frequency').value = wizardData.radio.frequency_mhz ?? '';
       }
+      // GPIO is the recommended default PTT method (a fixed, hardcoded
+      // pin, see RADIO_DEFAULT_PTT_GPIO_PIN) unless something else was
+      // already picked earlier this session.
+      document.getElementById('radio-ptt').value = wizardData.radio?.ptt_method ?? 'gpio';
 
       loadAudioDevices();
       loadCm108PttOptions();
@@ -962,7 +966,21 @@
       }
     }
 
-    function saveRadioStep() {
+    async function saveRadioStep() {
+      // No frequency programmed at all is easy to miss (it's just an
+      // empty field, nothing visually flags it the way a wrong default
+      // would), and Direwolf needs a real one to transmit on: worth a
+      // confirm rather than silently moving on, without blocking it
+      // outright for anyone genuinely deciding this later.
+      const frequency = document.getElementById('radio-frequency').value;
+      if (!frequency) {
+        const proceed = await confirmModal(
+          "Initial frequency is still blank, are you sure? Direwolf needs a real frequency to transmit on.",
+          "Yes, I'm sure", 'No, go back and change'
+        );
+        if (!proceed) return false;
+      }
+
       const pttMethod = document.getElementById('radio-ptt').value;
       wizardData.radio = {
         model: document.getElementById('radio-model').value,

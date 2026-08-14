@@ -108,7 +108,6 @@ run_with_spinner "Updating package lists..." sudo apt-get update -qq
 ok "Package lists updated"
 
 # ── Install system packages ───────────────────
-# More packages get added here as later parts (direwolf, etc.) come online.
 run_with_spinner "Installing system packages..." sudo apt-get install -y -qq \
     git \
     python3 \
@@ -120,6 +119,7 @@ run_with_spinner "Installing system packages..." sudo apt-get install -y -qq \
     gpsd \
     gpsd-clients \
     chrony \
+    direwolf \
     curl
 ok "System packages installed"
 
@@ -354,6 +354,39 @@ run_with_spinner "Installing systemd service..." bash -c "
     sudo systemctl enable ${SERVICE_NAME} --quiet
 "
 ok "Systemd service installed and enabled; it will start automatically on boot"
+
+# ── Install direwolf systemd service ──────────
+# Deliberately NOT enabled here (no `systemctl enable`): whether it should
+# be running at all is a config.yaml setting (aprs's mode plus
+# startup.autostart), decided by main.py's own boot sequence each time
+# (which regenerates direwolf.conf fresh from config.yaml and then starts
+# or stops this unit accordingly, via the sudoers-scoped systemctl access
+# above), not something systemd should unconditionally do on its own.
+# ExecStart points at $APP_DIR/direwolf.conf: a plain file the app already
+# owns and regenerates directly (see services/direwolf_config.py), not
+# /etc/direwolf/ like ORIGINAL used, so no root access is needed just to
+# write it, only to start/stop the service itself.
+sudo tee /etc/systemd/system/direwolf.service > /dev/null <<EOF
+[Unit]
+Description=Direwolf (APRS soundcard TNC/digipeater)
+After=network.target sound.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$APP_DIR
+ExecStart=/usr/bin/direwolf -c $APP_DIR/direwolf.conf -t 0
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+run_with_spinner "Installing direwolf systemd service..." sudo systemctl daemon-reload
+ok "direwolf systemd service installed (not started; the app controls it based on config.yaml)"
 
 # ── Install scheduled map auto-update ─────────
 # Off by default (see scripts/auto_tile_update.py and config.yaml's

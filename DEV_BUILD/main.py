@@ -7,7 +7,7 @@ import uvicorn
 import yaml
 
 from display.driver_none import NullDriver
-from services import gpsconfig, network
+from services import direwolf_config, gpsconfig, network, system
 from web.server import create_app
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 CONFIG_PATH = Path("config.yaml")
 # Written by install.sh's display-selection prompt (the display is needed during
 # first boot, before any web-based config wizard exists, so it can't wait for
-# the wizard — see DEV_BUILD/SETUP.md). Defaults to no display if absent.
+# the wizard: see DEV_BUILD/SETUP.md). Defaults to no display if absent.
 DISPLAY_CONFIG_PATH = Path("display_config.json")
 # Written by web/server.py's /api/network/wifi during first-boot setup.
-# Consumed once here — see _apply_pending_wifi — then deleted.
+# Consumed once here (see _apply_pending_wifi), then deleted.
 WIFI_PENDING_PATH = Path("wifi_pending.json")
 
 HOTSPOT_SSID = "Digipeater"
@@ -39,7 +39,7 @@ def _load_display_config() -> tuple[str, str]:
         data = json.loads(DISPLAY_CONFIG_PATH.read_text())
         return data.get("driver", "none"), data.get("model", "")
     except Exception as e:
-        logger.error("Failed to read %s: %s — defaulting to no display", DISPLAY_CONFIG_PATH, e)
+        logger.error("Failed to read %s: %s, defaulting to no display", DISPLAY_CONFIG_PATH, e)
         return "none", ""
 
 
@@ -51,23 +51,23 @@ def _load_display_driver(name: str, model: str):
             from display.driver_waveshare import WaveshareDriver
             return WaveshareDriver(model)
         except Exception as e:
-            logger.error("Failed to load Waveshare driver for model '%s': %s — falling back to NullDriver", model, e)
+            logger.error("Failed to load Waveshare driver for model '%s': %s, falling back to NullDriver", model, e)
             return NullDriver()
-    logger.warning("Unknown display driver '%s' — using NullDriver", name)
+    logger.warning("Unknown display driver '%s', using NullDriver", name)
     return NullDriver()
 
 
 async def _render(driver, draw_fn, *args, fast: bool = False) -> None:
-    """Render via draw_fn(driver, *args) off the event loop thread — a hardware
+    """Render via draw_fn(driver, *args) off the event loop thread: a hardware
     hang here (e.g. a stuck BUSY pin) must not freeze the whole web server with it.
 
     fast=True uses a partial/fast refresh (no full-screen flash) where the
-    driver supports one — for routine updates. Leave fast=False (full
+    driver supports one, for routine updates. Leave fast=False (full
     refresh) for the first draw of a session, to clear any prior ghosting."""
     try:
-        from PIL import Image, ImageDraw, ImageFont  # noqa: F401 — import check before threading
+        from PIL import Image, ImageDraw, ImageFont  # noqa: F401 (import check before threading)
     except ImportError:
-        logger.warning("Pillow not installed — skipping display render")
+        logger.warning("Pillow not installed, skipping display render")
         return
     try:
         image = await asyncio.to_thread(draw_fn, driver, *args)
@@ -78,7 +78,7 @@ async def _render(driver, draw_fn, *args, fast: bool = False) -> None:
 
 
 async def _wait_for_existing_connection():
-    """Poll for an ethernet or WiFi-client IP for a short window — DHCP/
+    """Poll for an ethernet or WiFi-client IP for a short window: DHCP/
     association can take a few seconds, so checking once immediately would
     too easily miss a connection that's about to come up on its own. Must be
     called before the hotspot is started, so a wlan0 IP here can only mean
@@ -106,7 +106,7 @@ async def _apply_pending_wifi() -> bool:
     One-time: the pending file is deleted after a successful connection so
     it's never retried or left sitting on disk on future boots. Once
     connected, NetworkManager's own autoconnect keeps this WiFi network
-    coming back on its own from here on — see network.connect_wifi.
+    coming back on its own from here on: see network.connect_wifi.
     """
     if not WIFI_PENDING_PATH.exists():
         return False
@@ -122,10 +122,10 @@ async def _apply_pending_wifi() -> bool:
 
 
 async def _resolve_network() -> tuple[str, str]:
-    """Core network policy — runs on every boot, first-time or normal alike,
+    """Core network policy: runs on every boot, first-time or normal alike,
     not just during initial setup. Checked in priority order: ethernet, an
     existing WiFi client connection, WiFi credentials saved (but not yet
-    applied) by the setup wizard, then — only if none of those pan out —
+    applied) by the setup wizard, then, only if none of those pan out,
     our own hotspot as a last resort. This is deliberate: the device should
     never silently strand itself with no way to reach it, but it also
     shouldn't start broadcasting a hotspot just because ethernet dropped
@@ -176,11 +176,11 @@ async def main() -> None:
     kind, ip = await _resolve_network()
 
     if first_boot:
-        logger.info("No config.yaml found — running first-boot sequence")
+        logger.info("No config.yaml found, running first-boot sequence")
         await _show_network_status(display_driver, template, "Initial config", kind, ip, fast=True)
     else:
         # Normal boot has nothing left to confirm to the user beyond "it's
-        # up" — network detail lives on the web UI now, not the screen.
+        # up": network detail lives on the web UI now, not the screen.
         await _render(display_driver, template.draw_loading_page, "Digipeater", fast=True)
         try:
             config = yaml.safe_load(CONFIG_PATH.read_text()) or {}
@@ -188,6 +188,18 @@ async def main() -> None:
             logger.error("Failed to read %s: %s", CONFIG_PATH, e)
             config = {}
         await gpsconfig.apply(config.get("gps", {}))
+
+        # Regenerated fresh on every boot (idempotent, same pattern as
+        # gpsconfig.apply above) so a manually edited config.yaml still
+        # takes effect, not just what the wizard collected at first boot.
+        try:
+            direwolf_config.write(config)
+        except OSError as e:
+            logger.error("Failed to write direwolf.conf: %s", e)
+        want_running = (config.get("startup", {}) or {}).get("autostart", True)
+        result = await system.set_direwolf_running(want_running)
+        if not result["ok"]:
+            logger.error("Failed to %s direwolf: %s", "start" if want_running else "stop", result["reason"])
 
     network_status = {"kind": kind, "ip": ip, "hotspot_ssid": HOTSPOT_SSID}
     app = create_app(display_driver, first_boot, network_status)

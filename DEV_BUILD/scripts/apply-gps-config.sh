@@ -1,14 +1,14 @@
 #!/bin/bash
 # Applies the GPS device / system-time-sync settings collected by the setup
 # wizard. Root-only actions (editing /etc/default/gpsd, chrony config,
-# system timezone) that the app itself can't do as a normal user — invoked
+# system timezone) that the app itself can't do as a normal user, invoked
 # via a sudoers NOPASSWD rule scoped to exactly this script path
 # (see install.sh), not blanket root access.
 #
 # Deliberately does NOT touch direwolf.conf or any APRS beacon position
-# source — that's a separate, not-yet-built piece (no direwolf.conf
-# generator exists yet). This script only makes gpsd/chrony/the system
-# clock actually use the GPS; see TODO.md.
+# source: that's services/direwolf_config.py's job, called separately from
+# main.py's own boot sequence. This script only makes gpsd/chrony/the
+# system clock actually use the GPS.
 set -e
 
 DEVICE="$1"      # a /dev/... path, or "none"
@@ -28,7 +28,7 @@ if [ -n "$TIMEZONE" ] && ! [[ "$TIMEZONE" =~ ^[A-Za-z0-9_+/-]+$ ]]; then
 fi
 
 # ── gpsd device ──
-# gpsd.socket (on-demand, USB auto-detect only — installed enabled by
+# gpsd.socket (on-demand, USB auto-detect only, installed enabled by
 # install.sh) and gpsd.service (always running, explicit device) are
 # alternate activation paths for the same daemon and shouldn't both be
 # enabled at once. Switch between them based on whether a device was
@@ -40,7 +40,7 @@ if [ "$DEVICE" != "none" ]; then
         echo "DEVICES=\"$DEVICE\"" >> "$GPSD_DEFAULT"
     fi
     # -n: start reading the device immediately at boot rather than waiting
-    # for a client to connect first — needed for chrony's SHM refclock
+    # for a client to connect first: needed for chrony's SHM refclock
     # below to ever see data, and keeps live GPS status always fresh.
     if grep -q "^GPSD_OPTIONS=" "$GPSD_DEFAULT" 2>/dev/null; then
         sed -i -E 's#^GPSD_OPTIONS=.*#GPSD_OPTIONS="-n"#' "$GPSD_DEFAULT"
@@ -65,12 +65,12 @@ fi
 
 # ── System time sync from GPS ──
 # No PPS wiring in this project (see PINOUT.md), so NMEA-over-SHM time is
-# only accurate to ~0.2-0.5s — plenty for a digipeater's own clock, not a
+# only accurate to ~0.2-0.5s, plenty for a digipeater's own clock, not a
 # precision reference. Still genuinely useful: it's the only time source
 # available at all for a station deployed somewhere with no internet.
 if [ "$TIME_SYNC" = "on" ] && [ "$DEVICE" != "none" ]; then
     cat > "$CHRONY_GPS_CONF" <<EOF
-# Written by the digipeater setup wizard — GPS time sync enabled.
+# Written by the digipeater setup wizard: GPS time sync enabled.
 refclock SHM 0 refid GPS precision 1e-1 offset 0.0 delay 0.2
 EOF
 else

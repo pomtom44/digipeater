@@ -62,6 +62,8 @@
     #sidebar {
       width: 320px;
       flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
       background: var(--panel);
       border-right: 1px solid var(--border);
       overflow-y: auto;
@@ -89,15 +91,6 @@
       padding: 24px;
       color: var(--muted);
     }
-    h1 {
-      font-size: 16px;
-      margin: 0 0 16px;
-      font-weight: 700;
-      letter-spacing: 0.02em;
-      color: var(--muted);
-      text-transform: uppercase;
-    }
-
     .card {
       background: var(--panel-2);
       border: 1px solid var(--border);
@@ -228,7 +221,10 @@
     .auth-row {
       display: flex;
       gap: 8px;
-      margin-bottom: 16px;
+      /* Pinned to the bottom of the flex-column sidebar, whatever the
+         card content above adds up to. */
+      margin-top: auto;
+      padding-top: 16px;
     }
 
     button.badge {
@@ -301,14 +297,6 @@
 <body>
   <div id="app">
     <aside id="sidebar">
-      <h1>APRS Digipeater</h1>
-
-      <div class="auth-row">
-        <button type="button" id="btn-config" class="btn hidden">Config</button>
-        <button type="button" id="btn-login" class="btn hidden">Log in</button>
-        <button type="button" id="btn-logout" class="btn hidden">Log out</button>
-      </div>
-
       <div class="card" id="station-card">
         <div class="station-header">
           <div class="station-symbol" id="station-symbol"></div>
@@ -318,11 +306,7 @@
         </div>
         <div class="station-comment" id="station-comment"></div>
         <div class="badge-row" id="station-badges"></div>
-      </div>
-
-      <div class="card">
-        <h2>System status</h2>
-        <div id="system-status-body"></div>
+        <p class="msg" id="direwolf-msg"></p>
       </div>
 
       <div class="card">
@@ -338,6 +322,12 @@
       <div class="card">
         <h2>Heard stations</h2>
         <div id="heard-list"></div>
+      </div>
+
+      <div class="auth-row">
+        <button type="button" id="btn-config" class="btn hidden">Config</button>
+        <button type="button" id="btn-login" class="btn hidden">Log in</button>
+        <button type="button" id="btn-logout" class="btn hidden">Log out</button>
       </div>
     </aside>
 
@@ -388,7 +378,19 @@
       const bgH = Math.round(SPRITE_SHEET_H * scale);
       const bgX = -Math.round(col * SPRITE_CELL_W * scale);
       const bgY = -Math.round(row * SPRITE_CELL_H * scale);
-      const style = `width:${displayW}px;height:${displayH}px;background-image:url('${SPRITE_BASE}${sheet}');background-repeat:no-repeat;background-size:${bgW}px ${bgH}px;background-position:${bgX}px ${bgY}px;`;
+      // display:inline-block + flex-shrink:0: a bare <span> is
+      // display:inline, so width/height are spec-ignored entirely unless
+      // something blockifies it: which happened to work by accident
+      // wherever the parent was itself display:flex (e.g. .station-symbol),
+      // but left the icon at 0x0 (invisible) in a plain block parent like
+      // .heard-icon or the map markers below. Even where it did get
+      // blockified via a flex parent, the default flex-shrink:1 let a
+      // parent's own border (with global box-sizing:border-box eating into
+      // its content box) squish the icon a couple pixels narrower than
+      // tall, a real visible misalignment: confirmed both bugs live via
+      // Playwright (getComputedStyle/bounding boxes), not just by reading
+      // the CSS.
+      const style = `display:inline-block;flex-shrink:0;width:${displayW}px;height:${displayH}px;background-image:url('${SPRITE_BASE}${sheet}');background-repeat:no-repeat;background-size:${bgW}px ${bgH}px;background-position:${bgX}px ${bgY}px;`;
       return `<span style="${style}"></span>`;
     }
 
@@ -513,10 +515,12 @@
       });
     }
 
-    // ── System status card: real Direwolf status/control. No such
-    // systemd service exists yet (see TODO.md's direwolf.conf generator
-    // gap), so services/system.py honestly reports "not set up" until it
-    // does; this just displays and acts on whatever that says. ─────────
+    // ── Direwolf status/control badge, living in the station card's own
+    // badge row next to Digipeat/IGate (no separate "System status" card
+    // anymore). No systemd service exists yet (see TODO.md's
+    // direwolf.conf generator gap), so services/system.py honestly
+    // reports "not set up" until it does; this just displays and acts on
+    // whatever that says. ────────────────────────────────────────────
     async function toggleDirewolf(status) {
       const wantRunning = !status.running;
       // A login was already required to reach this control at all under
@@ -545,13 +549,18 @@
     }
 
     async function renderSystemStatusBody() {
-      const body = document.getElementById('system-status-body');
+      const badgeRow = document.getElementById('station-badges');
+      // Idempotent: drop any previous Direwolf badge before appending a
+      // fresh one, since this re-runs after every start/stop (see
+      // toggleDirewolf above) as well as once at boot.
+      const existing = document.getElementById('direwolf-toggle');
+      if (existing) existing.remove();
+
       let status;
       try {
         status = await (await fetch('/api/system/direwolf/status')).json();
       } catch (e) {
-        body.innerHTML = `<div class="note">Could not reach the server.</div>`;
-        return;
+        return; // one missing badge isn't worth a dedicated error state
       }
       const canControl = authState.mode === 'none' || authState.logged_in;
       // "simulated" means there's no real direwolf.service to ask/control
@@ -559,15 +568,10 @@
       // control's UX (confirm modal, login gating, badge state) can
       // actually be clicked through and tested. Labelled, not hidden, so
       // it's never mistaken for real control once a real service exists.
-      const label = (status.running ? 'Running' : 'Stopped') + (status.simulated ? ' (sim)' : '');
+      const label = 'Direwolf: ' + (status.running ? 'Running' : 'Stopped') + (status.simulated ? ' (sim)' : '');
       const title = status.simulated ? 'No direwolf.service installed yet. This toggles an in-memory simulated state for UI testing only.' : '';
       const badgeClass = `badge${status.running ? ' on' : ''}`;
-      body.innerHTML = `
-        <div class="kv"><span class="k">Direwolf</span><span class="v">
-          <button type="button" class="${badgeClass}" id="direwolf-toggle" title="${title}" ${!canControl ? 'disabled' : ''}>${label}</button>
-        </span></div>
-        <p class="msg" id="direwolf-msg"></p>
-      `;
+      badgeRow.insertAdjacentHTML('beforeend', `<button type="button" class="${badgeClass}" id="direwolf-toggle" title="${title}" ${!canControl ? 'disabled' : ''}>${label}</button>`);
       if (canControl) {
         document.getElementById('direwolf-toggle').addEventListener('click', () => toggleDirewolf(status));
       }

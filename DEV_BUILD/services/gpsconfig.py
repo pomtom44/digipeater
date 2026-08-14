@@ -2,9 +2,9 @@
 device, system timezone, and chrony's GPS time refclock.
 
 Deliberately does NOT touch direwolf.conf or an APRS beacon's position
-source; that's a separate, not-yet-built piece (no direwolf.conf generator
-exists in DEV_BUILD yet; see TODO.md). This only makes gpsd/chrony/the
-system clock actually use the GPS.
+source; that's services/direwolf_config.py's job, called separately from
+main.py's own boot sequence, right after this. This module only makes
+gpsd/chrony/the system clock actually use the GPS.
 
 The actual root-level work (editing /etc/default/gpsd, chrony config,
 timedatectl) happens in scripts/apply-gps-config.sh, run via a sudoers
