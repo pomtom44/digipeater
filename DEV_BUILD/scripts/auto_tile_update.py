@@ -4,7 +4,7 @@ whatever is currently cached, and re-extracts the world map (and the saved
 region, if one was ever downloaded) when there is one.
 
 Invoked frequently by a systemd timer (digipeater-tile-update.timer, see
-install.sh) rather than run as a long-lived daemon — each invocation reads
+install.sh) rather than run as a long-lived daemon; each invocation reads
 config.yaml fresh and mostly no-ops, same "apply from disk on a schedule"
 pattern as scripts/apply-gps-config.sh. A marker file
 (map_data/.auto_update_last_run) caps this to one real attempt per day, at
@@ -26,7 +26,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from services import tiles  # noqa: E402 — after sys.path fix-up above
+from services import tiles  # noqa: E402, after sys.path fix-up above
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -79,7 +79,7 @@ async def _refresh(bounds: dict, zoom_max: int, output_path: Path, label: str) -
     if status["error"]:
         logger.error("%s refresh failed: %s", label, status["error"])
         return False
-    logger.info("%s refreshed — %d bytes", label, status["bytes"])
+    logger.info("%s refreshed: %d bytes", label, status["bytes"])
     return True
 
 
@@ -87,26 +87,26 @@ async def main() -> None:
     map_config = _load_map_config()
     auto_update = map_config.get("auto_update", {}) or {}
     if not auto_update.get("enabled"):
-        logger.info("Auto-update is disabled — nothing to do.")
+        logger.info("Auto-update is disabled, nothing to do.")
         return
 
     hh, mm = _parse_check_time(auto_update.get("time", DEFAULT_CHECK_TIME))
     now = datetime.now()
     if (now.hour, now.minute) < (hh, mm):
-        logger.info("Configured check time %02d:%02d hasn't passed yet today — skipping.", hh, mm)
+        logger.info("Configured check time %02d:%02d hasn't passed yet today, skipping.", hh, mm)
         return
     if _already_ran_today():
-        logger.info("Already checked today — skipping.")
+        logger.info("Already checked today, skipping.")
         return
 
     if not await tiles.has_internet():
-        logger.info("No internet reachable — will retry on the next check.")
+        logger.info("No internet reachable, will retry on the next check.")
         return
 
     try:
         _, latest_date = await tiles.find_source_url()
     except RuntimeError as e:
-        logger.warning("Could not determine the latest build — will retry: %s", e)
+        logger.warning("Could not determine the latest build, will retry: %s", e)
         return
 
     any_failure = False
@@ -131,10 +131,10 @@ async def main() -> None:
         else:
             logger.info("Region map already up to date (%s).", region_current)
     else:
-        logger.info("No region was ever downloaded — nothing to refresh there.")
+        logger.info("No region was ever downloaded, nothing to refresh there.")
 
     if any_failure:
-        logger.warning("At least one refresh failed — not marking today as checked, will retry on the next tick.")
+        logger.warning("At least one refresh failed; not marking today as checked, will retry on the next tick.")
         return
 
     _mark_ran_today()

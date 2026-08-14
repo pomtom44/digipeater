@@ -2,7 +2,7 @@
 set -e
 
 # ─────────────────────────────────────────────
-# APRS Digipeater — Install Script
+# APRS Digipeater: Install Script
 # ─────────────────────────────────────────────
 
 INSTALL_DIR="/opt/digipeater"
@@ -21,7 +21,7 @@ ok()   { echo -e "${GREEN}  ✓ $1${NC}"; }
 info() { echo -e "${YELLOW}  → $1${NC}"; }
 fail() { echo -e "${RED}  ✗ $1${NC}"; exit 1; }
 
-# Internal — shows a spinner while running a command with output captured
+# Internal: shows a spinner while running a command with output captured
 # to $_SPIN_LOG, restoring the cursor line when done. Returns the command's
 # exit status; the two wrappers below decide what to do with a failure.
 _spin() {
@@ -58,7 +58,7 @@ run_with_spinner() {
 }
 
 # Same spinner UI, but a failure is just a warning (with the captured
-# output) instead of aborting the whole install — for steps like the world
+# output) instead of aborting the whole install, for steps like the world
 # map pre-cache, where a flaky connection at that exact moment shouldn't
 # sink the rest of setup the way a failed apt/git step should. Returns 1 on
 # failure so the caller can skip its own success message.
@@ -68,7 +68,7 @@ run_with_spinner_soft() {
         rm -f "$_SPIN_LOG"
         return 0
     fi
-    echo -e "${YELLOW}  ⚠ $msg failed — continuing:${NC}"
+    echo -e "${YELLOW}  ⚠ $msg failed, continuing:${NC}"
     cat "$_SPIN_LOG"
     rm -f "$_SPIN_LOG"
     return 1
@@ -76,7 +76,7 @@ run_with_spinner_soft() {
 
 echo ""
 echo "╔══════════════════════════════════════╗"
-echo "║    APRS Digipeater — Installer       ║"
+echo "║    APRS Digipeater: Installer        ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
@@ -96,7 +96,7 @@ ok "OS check passed"
 
 # ── Prime sudo ─────────────────────────────────
 # Ask for the sudo password up front, in the foreground, before any spinner
-# backgrounds a sudo call — an interactive password prompt doesn't mix well
+# backgrounds a sudo call; an interactive password prompt doesn't mix well
 # with a backgrounded command. This also keeps the credential cached for the
 # rest of the script (sudo's default timeout comfortably covers the install).
 info "This installer needs sudo access..."
@@ -125,7 +125,7 @@ ok "System packages installed"
 
 # ── Use chrony for system time, not systemd-timesyncd ──
 # chrony is what lets the GPS setup step's "update system time from GPS"
-# option actually work (via a GPS refclock, see services/gpsconfig.py) —
+# option actually work (via a GPS refclock, see services/gpsconfig.py);
 # systemd-timesyncd has no equivalent. Swapped in as a straight 1:1
 # replacement for normal internet NTP too, so this isn't a downgrade for
 # anyone who leaves GPS time sync off.
@@ -143,7 +143,7 @@ ok "chrony configured"
 # on-demand/USB-auto-detect mode; if the wizard's GPS step picks an
 # explicit device (needed for a UART-wired GPS), services/gpsconfig.py
 # switches gpsd over to always-running mode pointed at that device on the
-# next boot — see scripts/apply-gps-config.sh.
+# next boot (see scripts/apply-gps-config.sh).
 run_with_spinner "Configuring gpsd..." bash -c "
     sudo systemctl enable gpsd.socket --quiet &&
     sudo systemctl start gpsd.socket
@@ -159,7 +159,7 @@ ok "Directories created"
 
 # ── Clone or update repository ────────────────
 if [ -d "$INSTALL_DIR/.git" ]; then
-    run_with_spinner "Existing install found — updating..." git -C "$INSTALL_DIR" pull --quiet
+    run_with_spinner "Existing install found, updating..." git -C "$INSTALL_DIR" pull --quiet
     ok "Application updated"
 else
     run_with_spinner "Downloading application..." git clone --quiet "$REPO_URL" "$INSTALL_DIR"
@@ -180,7 +180,7 @@ ok "NetworkManager configured"
 # ── Grant nmcli access for the app's hotspot management ──────
 # The digipeater service runs as a normal user (see the systemd unit below),
 # but creating/managing NetworkManager connections (e.g. the first-boot WiFi
-# hotspot) requires root. Scoped narrowly to nmcli only — not blanket sudo.
+# hotspot) requires root. Scoped narrowly to nmcli only, not blanket sudo.
 NMCLI_PATH="$(command -v nmcli)"
 SUDOERS_TMP="$(mktemp)"
 echo "$USER ALL=(root) NOPASSWD: $NMCLI_PATH" > "$SUDOERS_TMP"
@@ -190,11 +190,11 @@ if sudo visudo -c -f "$SUDOERS_TMP" > /dev/null 2>&1; then
     ok "nmcli permissions configured"
 else
     rm -f "$SUDOERS_TMP"
-    fail "Generated sudoers rule failed validation — aborting for safety"
+    fail "Generated sudoers rule failed validation, aborting for safety"
 fi
 
 # ── Grant reboot access for the setup wizard's "Finish & Reboot" step ──
-# Separate sudoers file from nmcli's above — one rule per binary, so each
+# Separate sudoers file from nmcli's above: one rule per binary, so each
 # stays scoped to exactly what it needs and nothing more.
 REBOOT_PATH="$(command -v reboot)"
 SUDOERS_TMP2="$(mktemp)"
@@ -205,12 +205,12 @@ if sudo visudo -c -f "$SUDOERS_TMP2" > /dev/null 2>&1; then
     ok "reboot permissions configured"
 else
     rm -f "$SUDOERS_TMP2"
-    fail "Generated sudoers rule failed validation — aborting for safety"
+    fail "Generated sudoers rule failed validation, aborting for safety"
 fi
 
 # ── Grant access to the GPS config helper for the GPS setup step ──
 # Root-only actions (gpsd/chrony config, timezone) live in this one script
-# rather than being run ad hoc — scoped to exactly this path, same pattern
+# rather than being run ad hoc, scoped to exactly this path, same pattern
 # as nmcli/reboot above, not blanket root access. Must be executable for
 # sudo to run it directly.
 chmod +x "$APP_DIR/scripts/apply-gps-config.sh"
@@ -223,13 +223,13 @@ if sudo visudo -c -f "$SUDOERS_TMP3" > /dev/null 2>&1; then
     ok "GPS config permissions configured"
 else
     rm -f "$SUDOERS_TMP3"
-    fail "Generated sudoers rule failed validation — aborting for safety"
+    fail "Generated sudoers rule failed validation, aborting for safety"
 fi
 
 # ── Grant systemctl start/stop access for the dashboard's Direwolf control ──
 # Scoped to exactly these two commands, not blanket systemctl access (which
-# could stop/restart any unit, including this app's own service) — same
-# one-rule-per-purpose pattern as nmcli/reboot/gpsconfig above. The
+# could stop/restart any unit, including this app's own service), following
+# the same one-rule-per-purpose pattern as nmcli/reboot/gpsconfig above. The
 # direwolf.service unit itself doesn't exist yet (see TODO.md's
 # direwolf.conf generator gap), so these will just fail cleanly ("unit not
 # found") until it does, same as gpsd before it was wired up.
@@ -242,12 +242,12 @@ if sudo visudo -c -f "$SUDOERS_TMP4" > /dev/null 2>&1; then
     ok "Direwolf start/stop permissions configured"
 else
     rm -f "$SUDOERS_TMP4"
-    fail "Generated sudoers rule failed validation — aborting for safety"
+    fail "Generated sudoers rule failed validation, aborting for safety"
 fi
 
 # ── Python virtual environment ────────────────
 # --system-site-packages so the venv can see the apt-installed RPi.GPIO/spidev
-# (those build native extensions against the Pi's kernel headers — pip-installing
+# (those build native extensions against the Pi's kernel headers; pip-installing
 # them inside an isolated venv is unreliable, so apt is the source of truth).
 run_with_spinner "Setting up Python environment..." bash -c "
     python3 -m venv '$VENV_DIR' --system-site-packages &&
@@ -260,17 +260,17 @@ run_with_spinner "Installing Python packages..." "$VENV_DIR/bin/pip" install --q
 ok "Python packages installed"
 
 # ── Install go-pmtiles (offline map region downloads) ──────
-# A single static binary, not available via apt — fetched directly from
+# A single static binary, not available via apt, fetched directly from
 # its latest GitHub release. services/tiles.py shells out to it to extract
 # one region's worth of map data from Protomaps' hosted planet build, the
 # legitimate way to get OSM map data for offline use. This replaced an
 # earlier design that scraped individual raster tiles from a live tile
-# server — OpenStreetMap's own tile usage policy is explicit that offline
+# server. OpenStreetMap's own tile usage policy is explicit that offline
 # use and bulk/pre-emptive tile fetching aren't just discouraged, they're
-# not permitted at all (operations.osmfoundation.org/policies/tiles/) —
-# see TODO.md. Soft/non-fatal: the digipeater's actual RF/APRS function
+# not permitted at all (operations.osmfoundation.org/policies/tiles/).
+# See TODO.md. Soft/non-fatal: the digipeater's actual RF/APRS function
 # doesn't depend on this, so a flaky connection here shouldn't block the
-# rest of setup — the Map caching wizard step just reports it's missing
+# rest of setup: the Map caching wizard step just reports it's missing
 # if this didn't succeed, same as any other missing optional dependency.
 PMTILES_ARCH="$(uname -m)"
 case "$PMTILES_ARCH" in
@@ -279,7 +279,7 @@ case "$PMTILES_ARCH" in
     *) PMTILES_ARCH="" ;;
 esac
 if [ -z "$PMTILES_ARCH" ]; then
-    echo -e "${YELLOW}  ⚠ Unrecognised CPU architecture ($(uname -m)) — skipping go-pmtiles, map caching won't work. Continuing.${NC}"
+    echo -e "${YELLOW}  ⚠ Unrecognised CPU architecture ($(uname -m)): skipping go-pmtiles, map caching won't work. Continuing.${NC}"
 else
     if run_with_spinner_soft "Installing go-pmtiles..." bash -c "
         PMTILES_URL=\$(curl -sL https://api.github.com/repos/protomaps/go-pmtiles/releases/latest | grep -o '\"browser_download_url\": *\"[^\"]*Linux_${PMTILES_ARCH}[^\"]*\"' | grep -o 'https://[^\"]*') &&
@@ -293,7 +293,7 @@ else
 fi
 
 # ── Install map basemap assets (fonts + sprites) ──────
-# ~19MB uncompressed (~6MB download) — the label fonts and icon sprites
+# ~19MB uncompressed (~6MB download): the label fonts and icon sprites
 # MapLibre needs to render the local map data, vendored from Protomaps'
 # own hosted asset bundle the same way the go-pmtiles binary above is.
 # Soft/non-fatal for the same reason: without these the wizard's map step
@@ -307,7 +307,7 @@ if run_with_spinner_soft "Installing map basemap assets (fonts, icons)..." bash 
 fi
 
 # ── Pre-cache the whole world map (zoom 0-8) ──────
-# Soft version of run_with_spinner — a coarse ~1GB whole-world PMTiles
+# Soft version of run_with_spinner: a coarse ~1GB whole-world PMTiles
 # layer, so the wizard's Map caching step always has a real offline
 # basemap to show and pick a region on, whether or not there's internet
 # at setup time. Only runs if go-pmtiles installed successfully above
@@ -318,7 +318,7 @@ if [ -x "$APP_DIR/bin/pmtiles" ]; then
         ok "World map cached"
     fi
 else
-    info "Skipping world map pre-cache (go-pmtiles not installed) — re-run scripts/precache_world.py later once it is."
+    info "Skipping world map pre-cache (go-pmtiles not installed); re-run scripts/precache_world.py later once it is."
 fi
 
 # ── Install systemd service ───────────────────
@@ -336,11 +336,11 @@ Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-# Binding port 80 needs root normally — grant just that one capability
+# Binding port 80 needs root normally: grant just that one capability
 # instead of running the whole service as root. Deliberately no
 # CapabilityBoundingSet here: that directive caps the maximum capabilities
 # of every child process too, including the `sudo nmcli` calls this service
-# shells out to for hotspot management — restricting it broke sudo's own
+# shells out to for hotspot management; restricting it broke sudo's own
 # privilege escalation ("unable to change to root gid: Operation not
 # permitted"), silently killing the hotspot feature.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
@@ -353,20 +353,20 @@ run_with_spinner "Installing systemd service..." bash -c "
     sudo systemctl daemon-reload &&
     sudo systemctl enable ${SERVICE_NAME} --quiet
 "
-ok "Systemd service installed and enabled — it will start automatically on boot"
+ok "Systemd service installed and enabled; it will start automatically on boot"
 
 # ── Install scheduled map auto-update ─────────
 # Off by default (see scripts/auto_tile_update.py and config.yaml's
-# map.auto_update — set from the Map caching wizard step). The timer runs
+# map.auto_update, set from the Map caching wizard step). The timer runs
 # every 15 minutes, well below any sane check-time granularity, rather
-# than being pointed at the user's configured time directly — that way
+# than being pointed at the user's configured time directly: that way
 # changing the time in the web UI later doesn't require regenerating or
 # reloading any systemd unit; the script just reads config.yaml fresh each
 # time and mostly no-ops (see its own docstring for the once-a-day marker
 # file that keeps this cheap).
 sudo tee /etc/systemd/system/${SERVICE_NAME}-tile-update.service > /dev/null <<EOF
 [Unit]
-Description=APRS Digipeater — scheduled map tile update check
+Description=APRS Digipeater: scheduled map tile update check
 After=network.target
 
 [Service]
@@ -399,30 +399,30 @@ ok "Map auto-update timer installed (checks every 15 min; actual updates stay of
 
 # ── WiFi country ───────────────────────────────
 # Without this set, the WiFi radio is soft-blocked by rfkill and the hotspot
-# can never come up — bites anyone who left WiFi blank in Raspberry Pi Imager
+# can never come up. This bites anyone who left WiFi blank in Raspberry Pi Imager
 # (e.g. ethernet-only setups). Only asked once; re-run raspi-config directly
 # to change it later.
-# Checked via rfkill directly, not `raspi-config nonint get_wifi_country` —
+# Checked via rfkill directly, not `raspi-config nonint get_wifi_country`:
 # that returns a non-empty sentinel ("00") even when no country is actually
 # set, which made the old version of this check skip the prompt incorrectly.
 if ! rfkill list wifi | grep -q "Soft blocked: yes"; then
-    info "WiFi radio already unblocked — skipping."
+    info "WiFi radio already unblocked, skipping."
 else
     echo ""
-    read -p "  WiFi country code not set (needed for the hotspot to work) — enter a 2-letter code (e.g. NZ, US, GB): " wifi_country < /dev/tty
+    read -p "  WiFi country code not set (needed for the hotspot to work), enter a 2-letter code (e.g. NZ, US, GB): " wifi_country < /dev/tty
     wifi_country="$(echo "$wifi_country" | tr '[:lower:]' '[:upper:]')"
     if [[ "$wifi_country" =~ ^[A-Z]{2}$ ]]; then
         sudo raspi-config nonint do_wifi_country "$wifi_country"
         sudo rfkill unblock wifi
         ok "WiFi country set to $wifi_country"
     else
-        echo -e "${YELLOW}  Skipped (invalid or blank) — the WiFi hotspot won't work until this is set:${NC}"
+        echo -e "${YELLOW}  Skipped (invalid or blank); the WiFi hotspot won't work until this is set:${NC}"
         echo -e "${YELLOW}  sudo raspi-config nonint do_wifi_country XX && sudo rfkill unblock wifi${NC}"
     fi
 fi
 
 # ── Select e-ink display ──────────────────────
-# Everything unattended is done by this point — this is the one thing that
+# Everything unattended is done by this point; this is the one thing that
 # needs a human, so it's asked last, right alongside the reboot confirmation
 # below. The display is needed during first boot, before any web-based config
 # wizard exists to ask this question, so it's a fixed pre-boot choice, not
@@ -431,7 +431,7 @@ fi
 # modules get added to display/waveshare/.
 DISPLAY_CONFIG="$APP_DIR/display_config.json"
 if [ -f "$DISPLAY_CONFIG" ]; then
-    info "Display already configured ($(cat "$DISPLAY_CONFIG")) — skipping."
+    info "Display already configured ($(cat "$DISPLAY_CONFIG")), skipping."
     echo "  Delete $DISPLAY_CONFIG and re-run this script to change it."
 else
     info "Detecting available e-ink display drivers..."
@@ -443,7 +443,7 @@ for k, v in MODELS.items():
 
     echo ""
     echo "  Which e-ink display is connected?"
-    echo "    0) None — no display connected"
+    echo "    0) None (no display connected)"
     declare -A MODEL_KEYS
     i=1
     for line in "${MODEL_LINES[@]}"; do
@@ -483,5 +483,5 @@ echo ""
 echo "Logs after reboot: journalctl -u ${SERVICE_NAME} -f"
 echo "Re-run this script any time to pull the latest changes and redeploy."
 echo ""
-read -t 30 -p "Rebooting in 30 seconds — press Enter to reboot now, or Ctrl+C to cancel..." < /dev/tty || true
+read -t 30 -p "Rebooting in 30 seconds: press Enter to reboot now, or Ctrl+C to cancel..." < /dev/tty || true
 sudo reboot

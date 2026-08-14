@@ -2,7 +2,7 @@
 count) over its JSON protocol on localhost:2947.
 
 gpsd isn't installed by install.sh yet, so this will gracefully report
-"unavailable" until that's added and a real GPS device is attached — this
+"unavailable" until that's added and a real GPS device is attached; this
 is real client code waiting on that infrastructure, not a stub.
 """
 
@@ -17,7 +17,7 @@ _GPSD_PORT = 2947
 _CONNECT_TIMEOUT_S = 1.5
 _READ_TIMEOUT_S = 2.0
 
-# gpsd_json(5): TPV.mode — 0=unknown, 1=no fix, 2=2D, 3=3D
+# gpsd_json(5): TPV.mode (0=unknown, 1=no fix, 2=2D, 3=3D)
 _FIX_MODES = {0: "unknown", 1: "no fix", 2: "2D fix", 3: "3D fix"}
 
 
@@ -64,7 +64,7 @@ async def get_status() -> dict:
         writer.close()
 
     if tpv is None:
-        return {"available": False, "reason": "gpsd is running, but no GPS data received — check the device is connected"}
+        return {"available": False, "reason": "gpsd is running, but no GPS data received; check the device is connected"}
 
     mode = tpv.get("mode", 0)
     return {

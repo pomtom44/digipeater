@@ -39,7 +39,7 @@
     function refreshDisplayStatus() {
       fetch('/api/display/status')
         .then(r => r.json())
-        .then(d => document.getElementById('display-status').textContent = `${d.driver} — ${d.width}x${d.height}`)
+        .then(d => document.getElementById('display-status').textContent = `${d.driver} (${d.width}x${d.height})`)
         .catch(() => document.getElementById('display-status').textContent = 'Could not reach display status.');
     }
 

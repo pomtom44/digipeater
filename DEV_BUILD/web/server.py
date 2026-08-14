@@ -8,8 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Form, HTTPException, Request, Response
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from display.base import DisplayDriver
@@ -18,26 +18,26 @@ from services import aprs, auth, gps, hardware, network, system, tiles
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
-# Session cookie for the web UI's security mode (none/readonly/full — see
+# Session cookie for the web UI's security mode (none/readonly/full; see
 # services/auth.py and TODO.md's "User management" section). Sessions live
-# in memory only (see `sessions` below) — a restart forces re-login, which
+# in memory only (see `sessions` below); a restart forces re-login, which
 # is an acceptable trade-off for a single-admin embedded device that
 # doesn't restart often, and avoids needing any persistent token storage.
 # Not marked Secure: this device is typically reached over plain HTTP on a
 # LAN or its own setup hotspot, no TLS anywhere in this project.
 SESSION_COOKIE_NAME = "digi_session"
 SESSION_TTL_S = 7 * 24 * 3600
-# Saved but not connected to yet — actually applying this is part of the
+# Saved but not connected to yet; actually applying this is part of the
 # "normal boot" network flow, which is separate/later work. First boot only
 # ever stores the intent here.
 WIFI_PENDING_PATH = Path("wifi_pending.json")
-# Its mere existence is what main.py's first_boot check looks for — see
+# Its mere existence is what main.py's first_boot check looks for: see
 # CONFIG_PATH there. Written only by the wizard's final "Finish & Reboot"
 # step, once all setup steps have been completed.
 CONFIG_PATH = Path("config.yaml")
 # Written by install.sh's display-selection prompt, read by main.py on
 # every boot (see main.py: _load_display_config). The E-Ink display wizard
-# step reads this to preset its dropdown, and can overwrite it — unlike
+# step reads this to preset its dropdown, and can overwrite it; unlike
 # most of the wizard, this one takes effect for real, since Finish always
 # reboots right after.
 DISPLAY_CONFIG_PATH = Path("display_config.json")
@@ -68,17 +68,17 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     app = FastAPI(title="APRS Digipeater")
 
     # Static assets referenced by URL from within the served HTML (e.g. the
-    # APRS symbol sprite sheets) — separate from the explicit FileResponse
+    # APRS symbol sprite sheets), separate from the explicit FileResponse
     # routes below, which serve the HTML pages themselves at clean paths.
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-    # Holds the in-progress region download, if any — one at a time. A
+    # Holds the in-progress region download, if any: one at a time. A
     # plain closure-local dict rather than a module global, since this is
     # runtime state scoped to this app instance, not app configuration.
     map_download_state = {"downloader": None}
 
     # token -> expiry (unix time). Closure-local for the same reason as
-    # map_download_state above — one process's worth of runtime state.
+    # map_download_state above: one process's worth of runtime state.
     sessions: dict[str, float] = {}
 
     def _read_security() -> dict:
@@ -113,7 +113,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         if first_boot:
             return FileResponse(STATIC_DIR / "first_run.html")
         # "Full" security means viewing needs a password too, not just
-        # changes (see TODO.md's User management section) — everything
+        # changes (see TODO.md's User management section): everything
         # else (none/readonly) leaves the dashboard itself open.
         if _read_security().get("mode") == "full" and not _is_logged_in(request):
             return FileResponse(STATIC_DIR / "login.html")
@@ -126,7 +126,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     @app.get("/config")
     async def config_page(request: Request):
         # Config changes need a password under both readonly and full (see
-        # TODO.md) — unlike root() above, which only gates full.
+        # TODO.md), unlike root() above, which only gates full.
         mode = _read_security().get("mode", "none")
         if mode != "none" and not _is_logged_in(request):
             return FileResponse(STATIC_DIR / "login.html")
@@ -136,22 +136,35 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     async def auth_status(request: Request):
         return {"mode": _read_security().get("mode", "none"), "logged_in": _is_logged_in(request)}
 
+    # A native <form> POST, not a fetch()-then-redirect: verified live
+    # (real Chromium, not just reasoning about it) that a cookie set by a
+    # fetch() response is reliably visible to a same-tab *fetch* made
+    # right after, but NOT to a subsequent top-level navigation
+    # (location.href, or even a fresh page load moments later): the
+    # cookie sat in the browser's own jar the whole time, just never got
+    # attached to the navigation request, bouncing straight back to the
+    # login page despite the password having been accepted. A real
+    # browser's native form submission goes through its own
+    # navigation-with-body machinery, where the redirect this returns and
+    # the Set-Cookie on it are part of the same round trip: this is the
+    # standard, battle-tested pattern for exactly this reason, not a
+    # workaround. 303 (not a plain redirect default) so the browser
+    # reissues the follow-up as GET rather than replaying the POST.
     @app.post("/api/auth/login")
-    async def auth_login(request: Request, response: Response):
+    async def auth_login(password: str = Form("")):
         security = _read_security()
         mode = security.get("mode", "none")
         if mode == "none":
-            raise HTTPException(status_code=400, detail="Login is not enabled")
-        body = await request.json()
-        password = body.get("password") or ""
+            return RedirectResponse(url="/login?error=disabled", status_code=303)
         if not auth.verify_password(password, security.get("salt", ""), security.get("hash", "")):
-            raise HTTPException(status_code=401, detail="Incorrect password")
+            return RedirectResponse(url="/login?error=1", status_code=303)
         token = _create_session()
-        response.set_cookie(
+        redirect = RedirectResponse(url="/", status_code=303)
+        redirect.set_cookie(
             SESSION_COOKIE_NAME, token, max_age=SESSION_TTL_S,
             httponly=True, samesite="lax",
         )
-        return {"ok": True}
+        return redirect
 
     @app.post("/api/auth/logout")
     async def auth_logout(request: Request, response: Response):
@@ -186,11 +199,11 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             raise HTTPException(status_code=400, detail="SSID is required")
         if password and len(password) < 8:
             raise HTTPException(status_code=400, detail="WiFi password must be at least 8 characters")
-        # Saved only — not connected now. Applying this is part of the normal
+        # Saved only: not connected now. Applying this is part of the normal
         # boot network flow, so the hotspot this request likely arrived over
         # isn't interrupted mid-setup.
         #
-        # Written owner-only (0600) from the moment it's created — the
+        # Written owner-only (0600) from the moment it's created: the
         # password has to be stored in plaintext (nmcli needs it verbatim to
         # actually connect later, unlike a login credential that could be
         # hashed), so the file permission is the only protection it gets.
@@ -234,14 +247,14 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
 
     @app.get("/api/system/direwolf/status")
     async def direwolf_status():
-        # Read-only, not gated — same as everything else "viewing is open"
+        # Read-only, not gated: same as everything else "viewing is open"
         # covers, and under "full" mode the dashboard itself already
         # required login before this could ever be called anyway.
         return await system.get_direwolf_status()
 
     def _require_login_for_action(request: Request) -> None:
         # Starting/stopping Direwolf is a change, so both "readonly" and
-        # "full" gate it (unlike viewing, where only "full" does) — same
+        # "full" gate it (unlike viewing, where only "full" does): same
         # split TODO.md describes for the (not yet built) config-editing
         # endpoints this will eventually sit alongside.
         if _read_security().get("mode", "none") != "none" and not _is_logged_in(request):
@@ -276,10 +289,10 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         return {"available": tiles.REGION_PATH.exists()}
 
     # Range-request serving (needed by the PMTiles JS reader, which reads
-    # chunks of the archive on demand rather than the whole file at once —
+    # chunks of the archive on demand rather than the whole file at once;
     # Starlette's FileResponse has supported Range since 0.39, see
     # requirements.txt) for whichever local map data exists. 404 rather
-    # than a partial/placeholder response if a file isn't there yet — the
+    # than a partial/placeholder response if a file isn't there yet: the
     # frontend checks availability via world-status/cache-status first and
     # shouldn't be requesting a path that can't exist.
     @app.get("/map-data/world.pmtiles")
@@ -294,12 +307,12 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             raise HTTPException(status_code=404, detail="No region downloaded yet")
         return FileResponse(tiles.REGION_PATH, media_type="application/octet-stream")
 
-    # No size/tile-count estimate endpoint — unlike the old per-tile raster
+    # No size/tile-count estimate endpoint: unlike the old per-tile raster
     # approach, a PMTiles region extract's size depends on how much actual
     # map data exists in the area (a dense city vs. open countryside at the
     # same bbox/zoom can differ by an order of magnitude), not a clean
     # geometric formula. Better to say so honestly than show a fake-precise
-    # number — see TODO.md.
+    # number. See TODO.md.
 
     @app.post("/api/map/cache/start")
     async def map_cache_start(request: Request):
@@ -343,8 +356,8 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             raise HTTPException(status_code=400, detail="Setup has already been completed")
         body = await request.json()
         # Radio/APRS config (and GPS's beacon-position piece) have no
-        # dedicated backend yet — nothing generates direwolf.conf from this
-        # in DEV_BUILD — saved here as-is so it's not lost, ready for
+        # dedicated backend yet: nothing generates direwolf.conf from this
+        # in DEV_BUILD. It's saved here as-is so it's not lost, ready for
         # whatever actually consumes it once that lands. GPS's device/time-
         # sync/timezone settings are applied for real on the next boot (see
         # services/gpsconfig.py); map tiles are already downloaded live
@@ -352,9 +365,9 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         display_cfg = body.get("display", {})
         user_cfg = body.get("user", {})
         security_mode = user_cfg.get("mode", "none")
-        # Only ever a hash + salt on disk, never the password itself — see
+        # Only ever a hash + salt on disk, never the password itself: see
         # services/auth.py. Enforced by root()/get_config()/config_page()
-        # and Direwolf start/stop above once this is written — nothing
+        # and Direwolf start/stop above once this is written; nothing
         # retroactively re-checks pages/endpoints added before this
         # config existed, since first_boot gates them out entirely anyway.
         security = {"mode": security_mode}
@@ -368,7 +381,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             "gps": body.get("gps", {}),
             "map": body.get("map", {}),
             "startup": body.get("startup", {}),
-            # Only the page-rotation list — driver/model live in
+            # Only the page-rotation list: driver/model live in
             # display_config.json instead (see below), not duplicated here.
             "display": {"pages": display_cfg.get("pages", [])},
             "security": security,
@@ -385,7 +398,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             "# Its existence is what marks first-boot setup as complete.\n"
             + yaml.safe_dump(config, sort_keys=False)
         )
-        # Reboot is fired off in the background rather than awaited here —
+        # Reboot is fired off in the background rather than awaited here:
         # awaiting it would mean the process (and the connection carrying
         # this response) gets killed by the reboot itself before the client
         # ever sees a reply. The short delay gives the response time to
@@ -400,14 +413,28 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     async def status():
         return {"ok": True, "first_boot": first_boot}
 
+    # Deliberately unauthenticated even under "full" security mode: a
+    # callsign is public information by regulation, not a secret, so the
+    # login page can show it in its title without needing a session first.
+    @app.get("/api/station-id")
+    async def station_id():
+        if not CONFIG_PATH.exists():
+            return {"callsign": None, "ssid": None}
+        try:
+            config = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+        except Exception:
+            return {"callsign": None, "ssid": None}
+        aprs_cfg = config.get("aprs", {}) or {}
+        return {"callsign": aprs_cfg.get("callsign") or None, "ssid": aprs_cfg.get("ssid") or None}
+
     @app.get("/api/config")
     async def get_config(request: Request):
-        # Only meaningful once setup's actually run — the dashboard that
+        # Only meaningful once setup's actually run: the dashboard that
         # calls this only renders post-setup anyway (see root() above), but
         # guard it directly rather than relying on that.
         if not CONFIG_PATH.exists():
             raise HTTPException(status_code=404, detail="Setup has not been completed yet")
-        # Mirrors root()'s gating — "full" mode means viewing needs a
+        # Mirrors root()'s gating: "full" mode means viewing needs a
         # password too, not just changes. Defense in depth: root() already
         # keeps normal.html's JS from ever calling this unauthenticated,
         # but this endpoint shouldn't rely on that alone.
@@ -418,7 +445,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         except Exception as e:
             logger.error("Failed to read %s: %s", CONFIG_PATH, e)
             raise HTTPException(status_code=500, detail="Failed to read config")
-        # Never hand the password hash/salt back to the frontend — nothing
+        # Never hand the password hash/salt back to the frontend: nothing
         # legitimate needs them client-side (login posts a plaintext
         # password for the server to check, see auth.verify_password),
         # only a reason to leak crackable material for no benefit.
@@ -450,7 +477,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             return {"driver": "none", "model": ""}
         return {"driver": data.get("driver", "none"), "model": data.get("model", "")}
 
-    # Display calls run in a worker thread, not on the event loop — a hardware
+    # Display calls run in a worker thread, not on the event loop: a hardware
     # hang (e.g. a stuck BUSY pin) would otherwise freeze every other request
     # the server is handling, not just the display endpoint.
 
@@ -466,7 +493,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     @app.post("/api/display/test")
     async def display_test():
         try:
-            from PIL import Image, ImageDraw  # noqa: F401 — import check before threading
+            from PIL import Image, ImageDraw  # noqa: F401 (import check before threading)
         except ImportError:
             raise HTTPException(status_code=500, detail="Pillow not installed")
         try:

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APRS Digipeater</title>
-  <!-- Vendored locally (no CDN) — see web/static/maplibre/ and
+  <!-- Vendored locally (no CDN): see web/static/maplibre/ and
        first_run.html's Map caching step, which uses the exact same
        MapLibre + PMTiles setup this page reuses for the home-location map. -->
   <link rel="stylesheet" href="/static/maplibre/maplibre-gl.css">
@@ -37,7 +37,7 @@
 
     * { box-sizing: border-box; }
 
-    /* !important — otherwise an ID selector like #map-unavailable's own
+    /* !important: otherwise an ID selector like #map-unavailable's own
        display:flex below (or any later-declared single-class rule at a
        specificity tie, e.g. .field-row's display:flex) would beat this
        regardless of source order, silently un-hiding the element. A
@@ -249,7 +249,7 @@
       justify-content: center;
       padding: 16px;
     }
-    /* Not folded into .hidden{display:none} directly — a plain .hidden
+    /* Not folded into .hidden{display:none} directly: a plain .hidden
        rule and this one would tie on specificity, and whichever is
        declared later in the stylesheet would win regardless of which is
        actually applied last in markup. Scoping the "show" state to
@@ -313,7 +313,7 @@
         <div class="station-header">
           <div class="station-symbol" id="station-symbol"></div>
           <div>
-            <div class="station-callsign" id="station-callsign">—</div>
+            <div class="station-callsign" id="station-callsign">-</div>
           </div>
         </div>
         <div class="station-comment" id="station-comment"></div>
@@ -369,7 +369,7 @@
   <script>
     // ── APRS symbol glyph rendering ──────────────────────────────────
     // Same sprite sheet / cell math as first_run.html's symbol picker
-    // (web/static/aprs-symbols/, hessu/aprs-symbols, CC BY-SA 4.0) —
+    // (web/static/aprs-symbols/, hessu/aprs-symbols, CC BY-SA 4.0),
     // display-only here, no picker interactivity needed.
     const SPRITE_CELL_W = 64;
     const SPRITE_CELL_H = 64;
@@ -424,7 +424,7 @@
     }
 
     // ── GPS card ──────────────────────────────────────────────────────
-    // The one sidebar section backed by real data — services/gps.py's
+    // The one sidebar section backed by real data: services/gps.py's
     // gpsd client already reports fix/satellites/position live, nothing
     // here is a placeholder.
     let gpsPollTimer = null;
@@ -443,13 +443,13 @@
       const title = document.getElementById('gps-title');
       const body = document.getElementById('gps-body');
       if (gpsCfg.position_source === 'manual') {
-        title.textContent = 'GPS — Manual';
+        title.textContent = 'GPS: Manual';
         const hasPos = gpsCfg.latitude !== undefined && gpsCfg.longitude !== undefined && gpsCfg.latitude !== '' && gpsCfg.longitude !== '';
-        const pos = hasPos ? `${parseFloat(gpsCfg.latitude).toFixed(5)}, ${parseFloat(gpsCfg.longitude).toFixed(5)}` : '—';
+        const pos = hasPos ? `${parseFloat(gpsCfg.latitude).toFixed(5)}, ${parseFloat(gpsCfg.longitude).toFixed(5)}` : '-';
         body.innerHTML = `<div class="kv"><span class="k">Position</span><span class="v">${pos}</span></div>`;
         return;
       }
-      title.textContent = 'GPS — Live';
+      title.textContent = 'GPS: Live';
       if (!status || !status.available) {
         body.innerHTML = `<div class="note">${(status && status.reason) || 'GPS not available.'}</div>`;
         return;
@@ -459,14 +459,14 @@
       body.innerHTML = `
         <div class="kv"><span class="k">Position</span><span class="v">${pos}</span></div>
         <div class="kv"><span class="k">Fix</span><span class="v">${status.fix}</span></div>
-        <div class="kv"><span class="k">Signal</span><span class="v">${status.satellites_used ?? '—'} / ${status.satellites_visible ?? '—'} sats</span></div>
+        <div class="kv"><span class="k">Signal</span><span class="v">${status.satellites_used ?? '-'} / ${status.satellites_visible ?? '-'} sats</span></div>
         <div class="kv"><span class="k">Last update</span><span class="v">${timeSinceLabel(lastGpsUpdateAt)}</span></div>
       `;
     }
 
     // ── Auth (login/config/logout buttons, and gating the Direwolf
     // control below) ─────────────────────────────────────────────────
-    // Populated once at boot from /api/auth/status — see the boot IIFE.
+    // Populated once at boot from /api/auth/status: see the boot IIFE.
     // mode 'full' never actually shows this page logged-out at all
     // (server.py's root() redirects to /login first), so the only
     // logged-out case this page itself ever has to render is 'readonly'.
@@ -492,7 +492,7 @@
     });
 
     // ── Confirm modal (used only when there's no login gate already
-    // acting as an "are you sure" — see toggleDirewolf below) ──────────
+    // acting as an "are you sure": see toggleDirewolf below) ──────────
     function confirmModal(text) {
       return new Promise((resolve) => {
         const overlay = document.getElementById('confirm-modal');
@@ -513,14 +513,14 @@
       });
     }
 
-    // ── System status card — real Direwolf status/control. No such
+    // ── System status card: real Direwolf status/control. No such
     // systemd service exists yet (see TODO.md's direwolf.conf generator
     // gap), so services/system.py honestly reports "not set up" until it
     // does; this just displays and acts on whatever that says. ─────────
     async function toggleDirewolf(status) {
       const wantRunning = !status.running;
       // A login was already required to reach this control at all under
-      // readonly/full (see the disabled state below) — that in itself is
+      // readonly/full (see the disabled state below); that in itself is
       // the "are you sure", so only mode 'none' (no gate at all) also
       // needs a confirm modal as its own safety net against a stray click.
       if (authState.mode === 'none') {
@@ -555,12 +555,12 @@
       }
       const canControl = authState.mode === 'none' || authState.logged_in;
       // "simulated" means there's no real direwolf.service to ask/control
-      // yet (see services/system.py) — an in-memory stand-in so this
+      // yet (see services/system.py): an in-memory stand-in so this
       // control's UX (confirm modal, login gating, badge state) can
       // actually be clicked through and tested. Labelled, not hidden, so
       // it's never mistaken for real control once a real service exists.
       const label = (status.running ? 'Running' : 'Stopped') + (status.simulated ? ' (sim)' : '');
-      const title = status.simulated ? 'No direwolf.service installed yet — this toggles an in-memory simulated state for UI testing only.' : '';
+      const title = status.simulated ? 'No direwolf.service installed yet. This toggles an in-memory simulated state for UI testing only.' : '';
       const badgeClass = `badge${status.running ? ' on' : ''}`;
       body.innerHTML = `
         <div class="kv"><span class="k">Direwolf</span><span class="v">
@@ -573,7 +573,7 @@
       }
     }
 
-    // ── Beacon stats card (sample data — no packet source exists yet to
+    // ── Beacon stats card (sample data: no packet source exists yet to
     // report real transmit times from) ──────────────────────────────────
     function renderBeaconStatsBody(cfg) {
       const card = document.getElementById('beacon-stats-card');
@@ -589,10 +589,10 @@
       `;
     }
 
-    // ── Heard stations card (sample data — no packet source exists yet to
+    // ── Heard stations card (sample data: no packet source exists yet to
     // list real heard stations from) ─────────────────────────────────────
     // dLat/dLon are small offsets from the home point, not absolute
-    // coordinates — the home point itself isn't known until config/GPS
+    // coordinates; the home point itself isn't known until config/GPS
     // has loaded (see initDashboardMap), so sample markers are placed
     // relative to wherever that ends up being, not hardcoded to one spot.
     const SAMPLE_HEARD_STATIONS = [
@@ -660,7 +660,7 @@
       const styleUrl = `/static/maplibre/style-${prefersDark ? 'dark' : 'light'}.json`;
       const style = await (await fetch(styleUrl)).json();
       // Region data is finer detail (higher max zoom, user-picked bounds)
-      // than the coarse whole-world precache — prefer it when available.
+      // than the coarse whole-world precache; prefer it when available.
       const pmtilesFile = regionAvailable ? 'region.pmtiles' : 'world.pmtiles';
       style.sources.protomaps.url = `pmtiles://${location.origin}/map-data/${pmtilesFile}`;
 
@@ -683,7 +683,7 @@
         new maplibregl.Marker({ element: el }).setLngLat(center).addTo(map);
 
         // Same sample data as the Heard stations sidebar card, plotted
-        // nearby (see SAMPLE_HEARD_STATIONS' dLat/dLon) — confirms the
+        // nearby (see SAMPLE_HEARD_STATIONS' dLat/dLon): confirms the
         // whole icon-rendering pipeline works for more than just the one
         // home marker, ahead of a real packet source existing to place
         // these from real heard-station positions instead.
@@ -712,9 +712,9 @@
         const res = await fetch('/api/config');
         if (res.ok) cfg = await res.json();
       } catch (e) {
-        // Falls through — every card below handles a missing/partial cfg.
+        // Falls through: every card below handles a missing/partial cfg.
         // Under mode 'full' while logged out this 401s (see server.py's
-        // get_config) — unreachable in practice since root() would have
+        // get_config); unreachable in practice since root() would have
         // redirected to /login before this page's JS ever ran, but this
         // still degrades to an empty cfg rather than throwing either way.
       }

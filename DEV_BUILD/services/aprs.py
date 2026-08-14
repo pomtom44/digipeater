@@ -1,10 +1,10 @@
-"""APRS protocol helpers — currently just the APRS-IS login passcode."""
+"""APRS protocol helpers: currently just the APRS-IS login passcode."""
 
 
 def calculate_passcode(callsign: str) -> int:
     """Calculate the APRS-IS login passcode from a callsign (official algorithm).
 
-    Ported from ORIGINAL/core/config_gen.py — same algorithm, same result,
+    Ported from ORIGINAL/core/config_gen.py, same algorithm, same result,
     kept here since DEV_BUILD doesn't share code with ORIGINAL.
     """
     call = callsign.upper().split("-")[0]

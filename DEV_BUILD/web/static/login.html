@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>APRS Digipeater — Login</title>
+  <title>APRS Digipeater: Login</title>
   <style>
     :root {
       color-scheme: dark light;
@@ -104,51 +104,49 @@
 </head>
 <body>
   <div class="card">
-    <h1>APRS Digipeater</h1>
+    <h1 id="title">APRS Digipeater</h1>
     <p class="hint">Enter the password to continue.</p>
-    <input type="password" id="password" placeholder="Password" autofocus>
-    <button type="button" id="btn-login">Log in</button>
+    <!-- A native form POST, not fetch()+JS redirect: see the long comment
+         on web/server.py's /api/auth/login for why. The browser's own
+         navigation-with-body handling keeps the Set-Cookie and the
+         resulting page load in the same round trip, which a JS-driven
+         fetch-then-location.href sequence turned out not to reliably do
+         (confirmed live: the cookie was set and sat in the browser's own
+         jar the whole time, it just never made it onto the follow-up
+         navigation request). -->
+    <form method="POST" action="/api/auth/login">
+      <input type="password" name="password" id="password" placeholder="Password" autofocus autocomplete="current-password" required>
+      <button type="submit" id="btn-login">Log in</button>
+    </form>
     <p class="msg" id="msg"></p>
   </div>
 
   <script>
-    const passwordInput = document.getElementById('password');
-    const loginBtn = document.getElementById('btn-login');
-    const msg = document.getElementById('msg');
-
-    async function submit() {
-      const password = passwordInput.value;
-      loginBtn.disabled = true;
-      msg.textContent = '';
-      msg.className = 'msg';
-      try {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          msg.textContent = body.detail || 'Login failed.';
-          msg.className = 'msg error';
-          loginBtn.disabled = false;
-          return;
-        }
-        // Reload rather than push a fixed path — whichever page redirected
-        // here (dashboard or config) is the one that should load next, and
-        // the server now has a valid session to serve it with.
-        location.href = '/';
-      } catch (e) {
-        msg.textContent = 'Could not reach the server.';
-        msg.className = 'msg error';
-        loginBtn.disabled = false;
-      }
+    // Backend redirects here with ?error=... on a failed attempt (see
+    // /api/auth/login) rather than the page itself knowing why, since a
+    // native form submission is a fresh page load either way.
+    const params = new URLSearchParams(location.search);
+    const error = params.get('error');
+    if (error === '1') {
+      document.getElementById('msg').textContent = 'Incorrect password.';
+      document.getElementById('msg').className = 'msg error';
+    } else if (error === 'disabled') {
+      document.getElementById('msg').textContent = 'Login is not enabled.';
+      document.getElementById('msg').className = 'msg error';
     }
 
-    loginBtn.addEventListener('click', submit);
-    passwordInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') submit();
-    });
+    // Non-essential: shows the station's callsign in the title if it's
+    // reachable without logging in first (see /api/station-id). Silently
+    // stays generic if not: the actual login form works either way.
+    fetch('/api/station-id')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.callsign) {
+          const suffix = data.ssid ? `${data.callsign}-${data.ssid}` : data.callsign;
+          document.getElementById('title').textContent = `${suffix} APRS Digipeater`;
+        }
+      })
+      .catch(() => {});
   </script>
 </body>
 </html>

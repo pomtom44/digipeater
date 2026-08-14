@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 async def reboot() -> None:
     """Reboot the Pi. Needs its own narrowly-scoped sudoers rule (separate
-    from network.py's nmcli rule, since it's a different binary) — installed
+    from network.py's nmcli rule, since it's a different binary), installed
     by install.sh as /etc/sudoers.d/digipeater-reboot.
     """
     logger.info("Rebooting...")
@@ -19,10 +19,10 @@ async def reboot() -> None:
 _DIREWOLF_UNIT = "direwolf"
 
 # In-memory fallback used only when there's no real answer available (no
-# systemctl at all — developing off a real Linux box — or systemctl exists
+# systemctl at all (developing off a real Linux box) or systemctl exists
 # but the direwolf.service unit doesn't yet, see TODO.md's direwolf.conf
-# generator gap). Lets the dashboard's start/stop UX — confirm modal,
-# login gating, badge state — actually be clicked through and tested
+# generator gap). Lets the dashboard's start/stop UX (confirm modal,
+# login gating, badge state) actually be clicked through and tested
 # before that gap is closed. Every response built from this path sets
 # "simulated": True so the frontend can label it clearly rather than
 # imply real control that doesn't exist; a real systemd answer, once
@@ -31,14 +31,14 @@ _simulated_running = False
 
 
 async def get_direwolf_status() -> dict:
-    """Whether the direwolf systemd service is running — or, absent a
+    """Whether the direwolf systemd service is running. Or, absent a
     real service to ask, the simulated in-memory state (see
     _simulated_running above).
 
     `systemctl is-active` on a completely unknown unit still prints
     "inactive" on the systemd versions this was checked against (rather
     than an unambiguous "not found" state), so a missing unit and a real
-    stopped one aren't perfectly distinguishable from stdout alone —
+    stopped one aren't perfectly distinguishable from stdout alone;
     stderr is checked too for the "could not be found" wording systemd
     prints in that case. Not verified against a real system in this
     sandbox (no systemd here); worth confirming on real hardware.
@@ -60,12 +60,12 @@ async def get_direwolf_status() -> dict:
 
 
 async def set_direwolf_running(running: bool) -> dict:
-    """Starts or stops the direwolf systemd service — or, absent a real
+    """Starts or stops the direwolf systemd service. Or, absent a real
     service to control, flips the simulated in-memory state instead (see
     _simulated_running above). Needs its own narrowly-scoped sudoers rule
-    for the real path — exactly these two commands, not blanket systemctl
+    for the real path: exactly these two commands, not blanket systemctl
     access (which could stop/restart any unit, including this app's own
-    service) — installed by install.sh as
+    service), installed by install.sh as
     /etc/sudoers.d/digipeater-direwolf-control.
     """
     global _simulated_running
@@ -92,7 +92,7 @@ async def set_direwolf_running(running: bool) -> dict:
 
 
 # Only used if the real system lookup below comes up empty (e.g. tzdata
-# missing) — a small set of major zones so the picker is never completely
+# missing): a small set of major zones so the picker is never completely
 # empty, not the primary source of truth.
 _TIMEZONE_FALLBACK = [
     "UTC", "Pacific/Auckland", "Australia/Sydney", "Asia/Tokyo",
@@ -104,7 +104,7 @@ _TIMEZONE_FALLBACK = [
 
 
 async def list_timezones() -> list[str]:
-    """Real IANA timezone names from Python's own tzdata — same list the OS
+    """Real IANA timezone names from Python's own tzdata, same list the OS
     itself would offer, not a hand-picked guess."""
     def _list():
         from zoneinfo import available_timezones

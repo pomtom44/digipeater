@@ -13,7 +13,7 @@ _CARD_LINE_RE = re.compile(r"^\s*(\d+)\s*\[([^\]]*)\]:\s*(.*)$")
 
 
 async def list_audio_devices() -> list[dict]:
-    """List ALSA sound cards straight from /proc/asound/cards — a
+    """List ALSA sound cards straight from /proc/asound/cards, a
     kernel-exposed file, so no extra package (e.g. alsa-utils) is needed."""
     if not _ASOUND_CARDS.exists():
         return []
@@ -28,7 +28,7 @@ async def list_audio_devices() -> list[dict]:
 
 
 async def list_serial_devices() -> list[dict]:
-    """List serial ports — USB-serial CAT cables, etc. Run in a thread since
+    """List serial ports: USB-serial CAT cables, etc. Run in a thread since
     pyserial's enumeration does blocking udev/sysfs queries."""
     def _list():
         from serial.tools import list_ports
@@ -76,7 +76,7 @@ def _read_hex(path: Path):
 
 def _find_usb_device_dir(start: Path, max_depth: int = 6):
     """Walk up from a hidraw device's sysfs entry to the enclosing USB
-    device directory (the one with idVendor/idProduct files) — the hidraw
+    device directory (the one with idVendor/idProduct files); the hidraw
     node itself is nested a few levels under it (hidraw -> hid -> usb
     interface -> usb device), and the exact depth varies by kernel/driver."""
     current = start.resolve()
@@ -91,7 +91,7 @@ def _find_usb_device_dir(start: Path, max_depth: int = 6):
 
 async def list_cm108_devices() -> list[dict]:
     """List connected CM108/CM119-family USB adapters usable for Direwolf's
-    `PTT CM108 /dev/hidrawN` — matched by USB VID/PID against the same list
+    `PTT CM108 /dev/hidrawN`; matched by USB VID/PID against the same list
     Direwolf itself recognizes, not just any hidraw device."""
     def _list():
         base = Path("/sys/class/hidraw")
