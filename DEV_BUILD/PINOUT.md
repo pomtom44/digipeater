@@ -1,35 +1,33 @@
 # GPIO Pinout
 
-**BCM numbering** shown first, physical pin number in parentheses. All pins below can be changed after setup on the dashboard's **Config → GPIO** tab if you need to wire something differently.
+**BCM numbering** shown first, physical pin number in parentheses. All GPIO signal pins below can be changed after setup on the dashboard's **Config → GPIO** tab if you need to wire something differently.
 
 ## Raspberry Pi 3 GPIO Header
 
-Looking at the header with pin 1 at the top-left (the corner nearest the SD card):
+Physical pin numbers down the middle, matching the two columns of the actual header (pin 1 at the top-left, nearest the SD card). `---` means that pin isn't used by this project.
 
-| Left column | | Right column |
-|---|---|---|
-| 1 &nbsp; 3.3V | | 5V &nbsp; 2 |
-| 3 &nbsp; GPIO2 (SDA) | | 5V &nbsp; 4 |
-| 5 &nbsp; GPIO3 (SCL) | | GND &nbsp; 6 |
-| 7 &nbsp; GPIO4 | | **GPIO14 (TXD): GPS UART, if used** &nbsp; 8 |
-| GND &nbsp; 9 | | **GPIO15 (RXD): GPS UART, if used** &nbsp; 10 |
-| **GPIO17: E-Ink RST** &nbsp; 11 | | GPIO18 &nbsp; 12 |
-| **GPIO27: Relay control** &nbsp; 13 | | GND &nbsp; 14 |
-| **GPIO22: PTT** &nbsp; 15 | | GPIO23 &nbsp; 16 |
-| 3.3V &nbsp; 17 | | **GPIO24: E-Ink BUSY** &nbsp; 18 |
-| **GPIO10 (MOSI): E-Ink DIN** &nbsp; 19 | | GND &nbsp; 20 |
-| GPIO9 (MISO) &nbsp; 21 | | **GPIO25: E-Ink DC** &nbsp; 22 |
-| **GPIO11 (SCLK): E-Ink CLK** &nbsp; 23 | | **GPIO8 (CE0): E-Ink CS** &nbsp; 24 |
-| GND &nbsp; 25 | | GPIO7 (CE1) &nbsp; 26 |
-| ID_SD &nbsp; 27 | | ID_SC &nbsp; 28 |
-| GPIO5 &nbsp; 29 | | GND &nbsp; 30 |
-| GPIO6 &nbsp; 31 | | GPIO12 &nbsp; 32 |
-| GPIO13 &nbsp; 33 | | GND &nbsp; 34 |
-| GPIO19 &nbsp; 35 | | GPIO16 &nbsp; 36 |
-| GPIO26 &nbsp; 37 | | GPIO20 &nbsp; 38 |
-| GND &nbsp; 39 | | GPIO21 &nbsp; 40 |
-
-**Bold** = used by this project. Any GND pin can supply ground for the components below; the wiring diagrams pick a convenient nearby one, but any of them works.
+| | Pin | Pin | |
+|---|---|---|---|
+| E-Ink VCC | 1 | 2 | Relay 5V |
+| --- | 3 | 4 | --- |
+| --- | 5 | 6 | Relay GND |
+| --- | 7 | 8 | GPS UART TX |
+| E-Ink GND | 9 | 10 | GPS UART RX |
+| E-Ink RST | 11 | 12 | --- |
+| Relay control | 13 | 14 | PTT GND |
+| PTT control | 15 | 16 | --- |
+| GPS 3.3V | 17 | 18 | E-Ink BUSY |
+| E-Ink DIN | 19 | 20 | GPS GND |
+| --- | 21 | 22 | E-Ink DC |
+| E-Ink CLK | 23 | 24 | E-Ink CS |
+| --- | 25 | 26 | --- |
+| --- | 27 | 28 | --- |
+| --- | 29 | 30 | --- |
+| --- | 31 | 32 | --- |
+| --- | 33 | 34 | --- |
+| --- | 35 | 36 | --- |
+| --- | 37 | 38 | --- |
+| --- | 39 | 40 | --- |
 
 ---
 
@@ -39,8 +37,8 @@ These are the pins you will use:
 
 | Display pin | Pi pin |
 |---|---|
-| VCC | 3.3V (pin 1 or 17) |
-| GND | GND (pin 9, or any other GND) |
+| VCC | 3.3V (pin 1) |
+| GND | GND (pin 9) |
 | DIN (MOSI) | GPIO10 (pin 19) |
 | CLK (SCLK) | GPIO11 (pin 23) |
 | CS | GPIO8 / CE0 (pin 24) |
@@ -64,9 +62,9 @@ This is the pin you will use if PTT is set to GPIO pin mode (see [SUPPORTED_HARD
 | Signal | Pi pin |
 |---|---|
 | PTT control | GPIO22 (pin 15) |
-| Return | GND (any GND pin) |
+| PTT return | GND (pin 14) |
 
-Wired through an **optocoupler**, not directly into the radio: GPIO22 and a GND pin drive the optocoupler's input LED, and the optocoupler's output switches the radio's PTT line to ground to key it. This electrically isolates the Pi from the radio's PTT circuit, so a fault on the radio side can't damage the Pi's GPIO.
+Wired through an **optocoupler**, not directly into the radio: GPIO22 and pin 14 drive the optocoupler's input LED, and the optocoupler's output switches the radio's PTT line to ground to key it. This electrically isolates the Pi from the radio's PTT circuit, so a fault on the radio side can't damage the Pi's GPIO.
 
 ---
 
@@ -77,8 +75,8 @@ This is the pin you will use:
 | Signal | Pi pin |
 |---|---|
 | Relay control signal | GPIO27 (pin 13) |
-| Relay module power | 5V (pin 2 or 4) |
-| Relay module ground | GND (any GND pin) |
+| Relay module power | 5V (pin 2) |
+| Relay module ground | GND (pin 6) |
 
 Powers the radio on before the digipeater software starts and off after it stops.
 
@@ -92,11 +90,11 @@ Only relevant if wiring a GPS module directly to the Pi's UART instead of using 
 |---|---|
 | GPS TX → Pi RX | GPIO15 / RXD (pin 10) |
 | GPS RX → Pi TX | GPIO14 / TXD (pin 8) |
-| GPS power | 3.3V or 5V, per your GPS module's spec |
-| GPS ground | GND (any GND pin) |
+| GPS power | 3.3V (pin 17) |
+| GPS ground | GND (pin 20) |
 
 ---
 
 ## Changing pins after setup
 
-The GPIO tab under **Config** in the dashboard is the one place the PTT, relay, and e-ink pins above become editable. It warns if two pins end up set to the same value. Relay and e-ink pin changes need a reboot to take effect; a PTT pin change applies immediately.
+The GPIO tab under **Config** in the dashboard is the one place the PTT, relay, and e-ink signal pins above become editable. It warns if two pins end up set to the same value. Relay and e-ink pin changes need a reboot to take effect; a PTT pin change applies immediately.
