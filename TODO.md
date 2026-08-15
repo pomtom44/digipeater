@@ -11,7 +11,7 @@ Start sequence: confirm a GPS fix exists (manual position needs lat/lon set; liv
 Known gaps:
 - Not tested against the real `direwolf` binary (sandbox can't run Linux binaries), only checked for well-formed config syntax.
 - Serial PTT (`serial:/dev/ttyUSBx`) always uses RTS, no field to pick DTR instead.
-- `startup.autorestart`/`restart_attempts`/`restart_delay_s` aren't wired to the `direwolf.service` unit's `Restart=`/`RestartSec=`; only plain on/off autostart is applied.
+- `startup.autorestart`/`restart_attempts`/`restart_delay_s` aren't wired to the `direwolf.service` unit's `Restart=`/`RestartSec=`; only plain on/off autostart is applied. (`ORIGINAL` managed Direwolf directly as a supervised Python subprocess with its own backoff-restart logic and live stdout streaming; `DEV_BUILD` uses systemd instead, a deliberate simplification, but these three settings were carried over from that design and still aren't connected to anything.)
 - `AGWPORT`/`KISSPORT`, CSMA radio timing (`TXDELAY`/`TXTAIL`/`DWAIT`/`PERSIST`/`SLOTTIME`), and digipeat `NOID`/preemptive options aren't exposed in the wizard.
 - A manual dashboard "Start" click can take 15+ seconds before Direwolf is actually running, with no progress feedback.
 - If `gpsd` was just reconfigured this same boot, a cold GPS fix may not exist yet, so a fresh boot can fail the start gate with no retry (a logged error, not surfaced to the UI); the dashboard's manual Start button is the way to recover.
@@ -43,7 +43,7 @@ GPIO pins (relay, e-ink RST/DC/CS/BUSY) are now config-driven (`config.yaml`'s `
 ## GPS
 
 - Device selection, time sync, and timezone are applied at every boot.
-- Manual position supports 4 entry formats (decimal, DMS/DDM, Maidenhead, Plus Code), all pure client-side arithmetic, no network call needed. A short Plus Code needs a nearby reference position (a live fix or a previously-entered position) to resolve.
+- Manual position supports 3 entry formats (decimal, DMS/DDM, Maidenhead grid square), all pure client-side arithmetic, no network call needed. Plus Codes were removed: Google Maps' short-code form (e.g. `57RM+R8F`) can't be resolved offline without already knowing roughly where you are, which defeats the point for anyone entering a position from scratch with no GPS fix yet.
 
 ## Network
 
@@ -64,7 +64,7 @@ GPIO pins (relay, e-ink RST/DC/CS/BUSY) are now config-driven (`config.yaml`'s `
 - A running region download doesn't survive a reboot and can't be resumed.
 - The dashboard streams the live planet build when the Pi has internet (via a same-origin proxy, `GET /map-data/live.pmtiles`), so panning outside the cached region doesn't show blank tiles. Needs the **Pi's own** internet, not just the viewer's browser, since Protomaps' hosted archive has no CORS headers and can't be range-requested directly from a browser.
 - Independent light/dark theme toggles exist for the page UI and the map itself (tracked separately, since they're unrelated).
-- Beacon stats and Heard stations on the dashboard are hardcoded sample data (flagged as such in code, `SAMPLE_HEARD_STATIONS` etc. in `normal.html`): no packet source exists yet to populate them for real.
+- Beacon stats and Heard stations on the dashboard are hardcoded sample data (flagged as such in code, `SAMPLE_HEARD_STATIONS` etc. in `normal.html`): no packet source exists yet to populate them for real. `ORIGINAL` had this working (`core/log_parser.py` parsed Direwolf's live stdout via `aprslib` into position/weather packets; `core/packet_store.py` deduplicated and persisted them to a JSON history file); neither has been ported. This is the single biggest missing piece of real functionality carried over from `ORIGINAL`.
 - Auto-update: a daily-build check (`digipeater-tile-update.timer`, runs every 15 min but only does real work once/day) re-downloads the world map and any saved region if a newer Protomaps build exists.
 
 ## User management
@@ -74,6 +74,7 @@ GPIO pins (relay, e-ink RST/DC/CS/BUSY) are now config-driven (`config.yaml`'s `
 
 ## Not yet ported from `ORIGINAL/` at all
 
+- **Real heard-stations / packet history** (see Map section above): parsing Direwolf's live output into position/weather packets and a persisted history, currently faked with sample data.
 - Radio CAT control (Hamlib rig control, live frequency polling/display).
 - Radio channel programmer's actual serial protocol (Alinco DR-138T specific): the capability-registry shape exists, the protocol itself doesn't.
-- E-ink display page rotation (multi-page cycling through status/config/location/etc.).
+- E-ink display page rotation: cycling through status pages on a timer, with startup/error states that pause rotation to show a full-screen message. The wizard collects the page list and durations; nothing renders it yet.

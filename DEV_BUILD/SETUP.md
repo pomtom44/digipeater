@@ -1,5 +1,7 @@
 # APRS Digipeater: Setup Guide
 
+See [OVERVIEW.md](OVERVIEW.md) for how it all works under the hood, plus troubleshooting commands.
+
 ---
 
 ## Part 1: Wire Up Hardware

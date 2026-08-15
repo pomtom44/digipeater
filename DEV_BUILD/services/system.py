@@ -32,12 +32,32 @@ _DIREWOLF_UNIT = "direwolf"
 # imply real control that doesn't exist; a real systemd answer always
 # takes priority over this.
 _simulated_running = False
+# "starting"/"stopping" while a set_direwolf_running() call is actively in
+# flight (see its own docstring): systemd has no notion of this multi-step
+# app-level sequence (GPS confirmation, relay timing, channel programming)
+# being in progress, only "active"/"inactive" for the unit itself, which
+# covers a much narrower span of time than the badge needs to reflect.
+_transition: str | None = None
+# The reason the most recently *completed* start/stop attempt failed, if
+# it did; cleared on the next successful one. Lets a fresh page load (or a
+# second browser tab) show "Error" too, not just the tab that made the
+# failed attempt.
+_last_error: str | None = None
+
+
+def _idle_status(simulated: bool) -> dict:
+    if simulated and _simulated_running:
+        return {"available": True, "state": "running", "running": True, "reason": None, "simulated": True}
+    state = "error" if _last_error else "standby"
+    return {"available": True, "state": state, "running": False, "reason": _last_error, "simulated": simulated}
 
 
 async def get_direwolf_status() -> dict:
-    """Whether the direwolf systemd service is running. Or, absent a
-    real service to ask, the simulated in-memory state (see
-    _simulated_running above).
+    """The direwolf systemd service's state, or absent a real service to
+    ask, the simulated in-memory state (see _simulated_running above).
+    `state` is one of "running"/"starting"/"standby"/"stopping"/"error";
+    `running` (bool) is kept alongside it for existing callers that only
+    care about the binary question.
 
     `systemctl is-active` on a completely unknown unit still prints
     "inactive" on the systemd versions this was checked against (rather
@@ -47,6 +67,8 @@ async def get_direwolf_status() -> dict:
     prints in that case. Not verified against a real system in this
     sandbox (no systemd here); worth confirming on real hardware.
     """
+    if _transition:
+        return {"available": True, "state": _transition, "running": False, "reason": None, "simulated": False}
     try:
         proc = await asyncio.create_subprocess_exec(
             "systemctl", "is-active", _DIREWOLF_UNIT,
@@ -54,13 +76,13 @@ async def get_direwolf_status() -> dict:
         )
         stdout, stderr = await proc.communicate()
     except FileNotFoundError:
-        return {"available": True, "running": _simulated_running, "reason": None, "simulated": True}
+        return _idle_status(simulated=True)
     state = stdout.decode(errors="replace").strip()
     if state == "active":
-        return {"available": True, "running": True, "reason": None, "simulated": False}
+        return {"available": True, "state": "running", "running": True, "reason": None, "simulated": False}
     if b"could not be found" in stderr or b"not been loaded" in stderr:
-        return {"available": True, "running": _simulated_running, "reason": None, "simulated": True}
-    return {"available": True, "running": False, "reason": None, "simulated": False}
+        return _idle_status(simulated=True)
+    return _idle_status(simulated=False)
 
 
 async def _confirm_gps_ready(gps_config: dict) -> tuple[bool, str | None]:
@@ -132,38 +154,49 @@ async def set_direwolf_running(running: bool, config: dict | None = None) -> dic
     path: exactly these two commands, not blanket systemctl access (which
     could stop/restart any unit, including this app's own service),
     installed by install.sh as /etc/sudoers.d/digipeater-direwolf-control.
+
+    Sets the module-level _transition flag ("starting"/"stopping") for
+    the full duration of this call, cleared via `finally` no matter which
+    return path executes below, so get_direwolf_status() can report it
+    even from a different request/tab than the one that triggered it.
     """
+    global _transition, _last_error
     config = config or {}
     action = "start" if running else "stop"
+    _transition = "starting" if running else "stopping"
+    try:
+        if running:
+            gps_ok, gps_reason = await _confirm_gps_ready(config.get("gps", {}))
+            if not gps_ok:
+                logger.error("Direwolf start blocked: %s", gps_reason)
+                _last_error = f"Cannot start Direwolf: {gps_reason}"
+                return {"ok": False, "reason": _last_error}
 
-    if running:
-        gps_ok, gps_reason = await _confirm_gps_ready(config.get("gps", {}))
-        if not gps_ok:
-            logger.error("Direwolf start blocked: %s", gps_reason)
-            return {"ok": False, "reason": f"Cannot start Direwolf: {gps_reason}"}
+            await relay.power_on()
 
-        await relay.power_on()
+            radio_config = config.get("radio", {})
+            prog_result = await radio_programmer.program_channel(radio_config)
+            if not prog_result["ok"]:
+                await relay.power_off()
+                _last_error = f"Radio programming failed: {prog_result['reason']}"
+                logger.error(_last_error)
+                return {"ok": False, "reason": _last_error}
+            await asyncio.sleep(radio_programmer.PROGRAM_SETTLE_DELAY_S)
 
-        radio_config = config.get("radio", {})
-        prog_result = await radio_programmer.program_channel(radio_config)
-        if not prog_result["ok"]:
+        result = await _run_systemctl(action)
+
+        if running and not result["ok"]:
+            # Powered the relay on for nothing; don't leave the radio
+            # powered with no Direwolf process actually using it.
             await relay.power_off()
-            reason = f"Radio programming failed: {prog_result['reason']}"
-            logger.error(reason)
-            return {"ok": False, "reason": reason}
-        await asyncio.sleep(radio_programmer.PROGRAM_SETTLE_DELAY_S)
+        elif not running and result["ok"]:
+            await asyncio.sleep(relay.SHUTDOWN_DELAY_S)
+            await relay.power_off()
 
-    result = await _run_systemctl(action)
-
-    if running and not result["ok"]:
-        # Powered the relay on for nothing; don't leave the radio
-        # powered with no Direwolf process actually using it.
-        await relay.power_off()
-    elif not running and result["ok"]:
-        await asyncio.sleep(relay.SHUTDOWN_DELAY_S)
-        await relay.power_off()
-
-    return result
+        _last_error = None if result["ok"] else result["reason"]
+        return result
+    finally:
+        _transition = None
 
 
 # Only used if the real system lookup below comes up empty (e.g. tzdata

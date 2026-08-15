@@ -232,6 +232,10 @@
       color: var(--accent);
       border-color: var(--accent);
     }
+    .badge.error {
+      color: var(--error);
+      border-color: var(--error);
+    }
 
     .kv {
       display: flex;
@@ -464,10 +468,10 @@
       const badges = [];
       if (aprs.digipeat_mode === 'digipeater') {
         const rules = (aprs.digipeat && aprs.digipeat.rules) || '';
-        const label = rules === 'widearea' ? 'Digipeat: Wide-area' : rules === 'fillin' ? 'Digipeat: Fill-in' : 'Digipeat: Custom';
-        badges.push(`<span class="badge on">${label}</span>`);
+        const suffix = rules === 'widearea' ? 'Wide' : rules === 'fillin' ? 'Fill in' : 'Custom';
+        badges.push(`<span class="badge on">Digi: RX &amp; TX - ${suffix}</span>`);
       } else {
-        badges.push(`<span class="badge">Digipeat: RX only</span>`);
+        badges.push(`<span class="badge">Digi: RX only</span>`);
       }
       const igateLabels = { off: 'IGate: Off', rxonly: 'IGate: RX only', rxtx: 'IGate: RX &amp; TX' };
       const igateOn = (aprs.igate_mode || 'off') !== 'off';
@@ -481,6 +485,14 @@
     // here is a placeholder.
     let gpsPollTimer = null;
     let lastGpsUpdateAt = null;
+    // Direwolf's "Starting"/"Stopping" states only exist for the duration
+    // of a set_direwolf_running() call on the server (see services/
+    // system.py's _transition), which this tab might not itself have
+    // triggered (another tab's click, or main.py's own boot sequence):
+    // polling, not just re-rendering after this tab's own click, is what
+    // lets the badge actually show those live rather than jumping
+    // straight from Standby to Running with nothing in between.
+    const DIREWOLF_POLL_MS = 3000;
     const GPS_POLL_MS = 5000;
 
     function timeSinceLabel(date) {
@@ -599,6 +611,14 @@
     // direwolf.service state where one is installed, falling back to an
     // in-memory simulated state otherwise; this just displays and acts
     // on whatever that says. ──────────────────────────────────────────
+    const DIREWOLF_STATE_LABELS = {
+      running: 'Running',
+      starting: 'Starting',
+      standby: 'Standby',
+      stopping: 'Stopping',
+      error: 'Error',
+    };
+
     async function toggleDirewolf(status) {
       const wantRunning = !status.running;
       // Not logged in under readonly/full gets a "log in first" modal
@@ -646,9 +666,12 @@
       // control's UX (confirm modal, login gating, badge state) can
       // actually be clicked through and tested. Labelled, not hidden, so
       // it's never mistaken for real control once a real service exists.
-      const label = 'Direwolf: ' + (status.running ? 'Running' : 'Stopped') + (status.simulated ? ' (sim)' : '');
-      const title = status.simulated ? 'No direwolf.service installed yet. This toggles an in-memory simulated state for UI testing only.' : '';
-      const badgeClass = `badge${status.running ? ' on' : ''}`;
+      const stateLabel = DIREWOLF_STATE_LABELS[status.state] || status.state || 'Standby';
+      const label = 'System: ' + stateLabel + (status.simulated ? ' (sim)' : '');
+      const title = status.state === 'error' && status.reason
+        ? status.reason
+        : status.simulated ? 'No direwolf.service installed yet. This toggles an in-memory simulated state for UI testing only.' : '';
+      const badgeClass = `badge${status.state === 'running' ? ' on' : ''}${status.state === 'error' ? ' error' : ''}`;
       // Always clickable, even when not logged in: readonly/full mode
       // without a session gets an explicit "log in first" modal instead
       // of a disabled, unexplained button.
@@ -804,7 +827,18 @@
           this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
           const btn = document.createElement('button');
           btn.type = 'button';
-          btn.style.cssText = 'width:auto;padding:0 10px;font-size:12px;font-family:inherit;white-space:nowrap;';
+          // Explicit black-on-white, not inherited from the page's own
+          // --panel/--text theme vars: this button lives inside MapLibre's
+          // own control chrome (built-in zoom/attribution controls are
+          // always a fixed white/black, unaffected by page dark mode), and
+          // the page's :root sets color-scheme: dark light, which makes an
+          // unstyled <button>'s native text color follow that in dark
+          // mode; MapLibre's CSS forces the background white regardless,
+          // so the two together were rendering invisible white-on-white
+          // text whenever the sidebar's UI theme (independent of this map
+          // control) was dark. Fixed values keep this control visually
+          // consistent with the map's other native controls instead.
+          btn.style.cssText = 'width:auto;padding:0 10px;font-size:12px;font-family:inherit;white-space:nowrap;color:#333;background:#fff;';
           btn.textContent = MAP_THEME_LABELS[mapTheme];
           btn.addEventListener('click', async () => {
             mapTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(mapTheme) + 1) % THEME_CYCLE.length];
@@ -825,15 +859,15 @@
       await new Promise(resolve => map.on('load', resolve));
 
       if (homeLat !== null) {
-        // A ring around the icon, not just the icon alone, so the home
-        // station reads as distinct from the (same-sized-or-larger, once
-        // real data replaces SAMPLE_HEARD_STATIONS) heard-station markers
-        // below rather than blending in as just another dot on the map.
+        // A ring outline around the icon, not just the icon alone, so the
+        // home station reads as distinct from the heard-station markers
+        // below, same icon size as those (28px) with just a thin
+        // transparent-backed outline added, not a bigger solid badge.
         const el = document.createElement('div');
-        el.style.cssText = 'width:48px;height:48px;border-radius:50%;border:3px solid var(--accent);box-sizing:border-box;display:flex;align-items:center;justify-content:center;background:var(--panel);filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));';
+        el.style.cssText = 'width:34px;height:34px;border-radius:50%;border:3px solid var(--accent);box-sizing:border-box;display:flex;align-items:center;justify-content:center;background:transparent;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));';
         const aprs = cfg.aprs || {};
         const sym = (aprs.symbol && aprs.symbol.table && aprs.symbol.symbol) ? aprs.symbol : { table: '/', symbol: '#' };
-        el.innerHTML = symbolGlyphHTML(sym, 36);
+        el.innerHTML = symbolGlyphHTML(sym, 28);
         new maplibregl.Marker({ element: el }).setLngLat(center).addTo(map);
 
         // Same sample data as the Heard stations sidebar card, plotted
@@ -875,6 +909,7 @@
 
       renderStationCard(cfg);
       renderSystemStatusBody();
+      setInterval(renderSystemStatusBody, DIREWOLF_POLL_MS);
       renderBeaconStatsBody(cfg);
       renderHeardStations();
 

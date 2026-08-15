@@ -14,7 +14,8 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from display.base import DisplayDriver
-from services import aprs, auth, direwolf_config, gps, gpsconfig, hardware, network, system, tiles
+from display.waveshare import epdconfig
+from services import aprs, auth, direwolf_config, gps, gpsconfig, hardware, network, relay, system, tiles
 
 logger = logging.getLogger(__name__)
 
@@ -549,6 +550,26 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         config["security"] = {"mode": security.get("mode", "none")}
         return config
 
+    def _normalize_gpio(gpio_cfg: dict | None) -> dict:
+        """Fills in the same fixed defaults services/relay.py and
+        display/waveshare/epdconfig.py themselves fall back to when a key
+        is absent, so "the section was never written" and "the section
+        was written with exactly the default values" compare as equal.
+        Without this, the very first save through this page (any
+        config.yaml the wizard produced has no gpio section at all, since
+        first_run.html has no GPIO tab) would always report a reboot as
+        needed even though the effective pin values, and therefore actual
+        post-reboot behavior, haven't changed at all.
+        """
+        gpio_cfg = gpio_cfg or {}
+        return {
+            "relay_pin": gpio_cfg.get("relay_pin", relay.DEFAULT_RELAY_PIN),
+            "eink_rst": gpio_cfg.get("eink_rst", epdconfig.DEFAULT_RST_PIN),
+            "eink_dc": gpio_cfg.get("eink_dc", epdconfig.DEFAULT_DC_PIN),
+            "eink_cs": gpio_cfg.get("eink_cs", epdconfig.DEFAULT_CS_PIN),
+            "eink_busy": gpio_cfg.get("eink_busy", epdconfig.DEFAULT_BUSY_PIN),
+        }
+
     @app.post("/api/config/save")
     async def config_save(request: Request):
         """The config page's global "Save all changes" button: unlike
@@ -603,7 +624,15 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
                     "driver": display_cfg.get("driver", "none"),
                     "model": display_cfg.get("model", ""),
                 }
-                if new_display_config != before_display_config:
+                # Same "missing == explicit default" normalization as
+                # _normalize_gpio below: a brand new install with no
+                # display_config.json yet (main.py's own _load_display_
+                # config() falls back to exactly "none"/"") shouldn't
+                # report a reboot as needed just because this file didn't
+                # exist before, if what's being written matches that same
+                # fallback anyway.
+                before_normalized = before_display_config or {"driver": "none", "model": ""}
+                if new_display_config != before_normalized:
                     DISPLAY_CONFIG_PATH.write_text(json.dumps(new_display_config))
                     display_driver_changed = True
 
@@ -669,7 +698,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             if aprs_changed:
                 applied.append("aprs")
 
-        if config.get("gpio") != before["gpio"]:
+        if _normalize_gpio(config.get("gpio")) != _normalize_gpio(before["gpio"]):
             # Relay/e-ink pins are claimed once at process start (see
             # services/relay.py's init() and display/waveshare/
             # epdconfig.py's configure(), both called from main.py before

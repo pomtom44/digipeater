@@ -81,11 +81,7 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
-    #theme-toggle {
-      position: fixed;
-      top: 12px;
-      right: 12px;
-      z-index: 60;
+    #theme-toggle, #btn-back-dashboard {
       min-height: 0;
       padding: 6px 10px;
       font-size: 12px;
@@ -95,7 +91,7 @@
       color: var(--text);
       cursor: pointer;
     }
-    #theme-toggle:hover { border-color: var(--accent); }
+    #theme-toggle:hover, #btn-back-dashboard:hover { border-color: var(--accent); }
 
     header.page-header {
       max-width: 960px;
@@ -104,21 +100,9 @@
     }
     header.page-header h1 {
       font-size: 20px;
-      margin: 0 0 4px;
+      margin: 0;
       font-weight: 700;
     }
-    header.page-header p {
-      color: var(--muted);
-      font-size: 13px;
-      margin: 0;
-    }
-    header.page-header a {
-      color: var(--accent);
-      font-size: 13px;
-      text-decoration: none;
-      font-weight: 600;
-    }
-    header.page-header a:hover { text-decoration: underline; }
 
     /* Sticky so the tab bar and the global Save action stay reachable no
        matter how far down a tab's own fields scroll: this page has no
@@ -139,7 +123,13 @@
       display: flex;
       gap: 6px;
       overflow-x: auto;
+      /* Scrollable (narrow screens can't fit all 9 tabs), but without
+         showing a visible scrollbar bar sitting under the tab row: still
+         drag/swipe/trackpad-scrollable, just not visually cluttered. */
+      scrollbar-width: none;
+      -ms-overflow-style: none;
     }
+    .tabbar::-webkit-scrollbar { display: none; }
     .tab-btn {
       flex-shrink: 0;
       min-height: 36px;
@@ -509,17 +499,16 @@
   </style>
 </head>
 <body>
-  <button type="button" id="theme-toggle" aria-label="Toggle color theme"></button>
-
   <header class="page-header">
     <h1>Station settings</h1>
-    <p>Change any of the first-boot setup wizard's settings. <a href="/">&larr; Back to dashboard</a></p>
   </header>
 
   <div class="tabbar-wrap">
     <nav class="tabbar" id="tabbar"></nav>
     <div class="savebar">
+      <button type="button" id="theme-toggle" aria-label="Toggle color theme"></button>
       <button type="button" class="primary" id="btn-save-all">Save all changes</button>
+      <button type="button" id="btn-back-dashboard">&larr; Back to dashboard</button>
       <span class="msg" id="save-all-msg"></span>
       <div class="spacer"></div>
     </div>
@@ -777,7 +766,7 @@
         <section>
           <div class="status-box"><span class="dot"></span><span id="network-status">Checking...</span></div>
         </section>
-        <section id="wifi-connect-section">
+        <section id="wifi-connect-section" class="hidden">
           <label>Connect to WiFi</label>
           <div class="row">
             <input type="text" id="wifi-ssid" placeholder="Scan or type SSID manually">
@@ -800,12 +789,16 @@
       try {
         const res = await fetch('/api/network/status');
         const data = await res.json();
+        const wifiSection = document.getElementById('wifi-connect-section');
         if (data.kind === 'ethernet') {
           el.textContent = `Connected via Ethernet: ${data.ip}`;
+          wifiSection.classList.add('hidden');
         } else if (data.kind === 'wifi') {
           el.textContent = `Connected via WiFi: ${data.ip}`;
+          wifiSection.classList.add('hidden');
         } else {
           el.textContent = `Hotspot mode: devices connect to "${data.hotspot_ssid}"`;
+          wifiSection.classList.remove('hidden');
         }
       } catch (e) {
         el.textContent = 'Could not reach the server.';
@@ -1858,178 +1851,6 @@
       return { lat, lon };
     }
 
-    // Open Location Code / Plus Codes: ported from Google's own reference
-    // implementation (github.com/google/open-location-code, Apache-2.0).
-    // Output verified to match Google's own reference implementation
-    // exactly (byte-for-byte) across more than a dozen test points
-    // spanning both hemispheres, the antimeridian, and longitude
-    // wraparound. See first_run.html's copy of this block for the full
-    // provenance notes; ported here unchanged.
-    const OLC_ALPHABET = '23456789CFGHJMPQRVWX';
-    const OLC_BASE = OLC_ALPHABET.length;
-    const OLC_SEPARATOR_POSITION = 8;
-    const OLC_PAIR_CODE_LENGTH = 10;
-    const OLC_MAX_DIGIT_COUNT = 15;
-    const OLC_PAIR_PRECISION = Math.pow(OLC_BASE, 3);
-    const OLC_PAIR_FIRST_PLACE_VALUE = Math.pow(OLC_BASE, 5 - 1);
-    const OLC_GRID_ROWS = 5;
-    const OLC_GRID_COLUMNS = 4;
-    const OLC_GRID_CODE_LENGTH = OLC_MAX_DIGIT_COUNT - OLC_PAIR_CODE_LENGTH; // 5
-    const OLC_FINAL_LAT_PRECISION = OLC_PAIR_PRECISION * Math.pow(OLC_GRID_ROWS, OLC_GRID_CODE_LENGTH);
-    const OLC_FINAL_LNG_PRECISION = OLC_PAIR_PRECISION * Math.pow(OLC_GRID_COLUMNS, OLC_GRID_CODE_LENGTH);
-    const OLC_GRID_LAT_FIRST_PLACE_VALUE = Math.pow(OLC_GRID_ROWS, OLC_GRID_CODE_LENGTH - 1);
-    const OLC_GRID_LNG_FIRST_PLACE_VALUE = Math.pow(OLC_GRID_COLUMNS, OLC_GRID_CODE_LENGTH - 1);
-
-    function olcClipLat(lat) { return Math.min(90, Math.max(-90, lat)); }
-    function olcNormLon(lon) {
-      while (lon < -180) lon += 360;
-      while (lon >= 180) lon -= 360;
-      return lon;
-    }
-
-    function formatPlusCode(lat, lon, codeLength) {
-      codeLength = codeLength || OLC_PAIR_CODE_LENGTH;
-      lat = olcClipLat(lat);
-      const lonNorm = olcNormLon(lon);
-      if (lat === 90) {
-        const precision = codeLength <= 10
-          ? Math.pow(20, Math.floor(codeLength / -2 + 2))
-          : Math.pow(20, -3) / Math.pow(OLC_GRID_ROWS, codeLength - 10);
-        lat -= 0.9 * precision;
-      }
-
-      let latVal = Math.floor(lat * OLC_FINAL_LAT_PRECISION) + 90 * OLC_FINAL_LAT_PRECISION;
-      latVal = Math.min(Math.max(latVal, 0), 2 * 90 * OLC_FINAL_LAT_PRECISION - 1);
-      let lngVal = Math.floor(lonNorm * OLC_FINAL_LNG_PRECISION) + 180 * OLC_FINAL_LNG_PRECISION;
-      const lngRange = 2 * 180 * OLC_FINAL_LNG_PRECISION;
-      lngVal = ((lngVal % lngRange) + lngRange) % lngRange;
-
-      const code = new Array(OLC_MAX_DIGIT_COUNT + 1);
-      code[OLC_SEPARATOR_POSITION] = '+';
-
-      if (codeLength > OLC_PAIR_CODE_LENGTH) {
-        for (let i = OLC_MAX_DIGIT_COUNT - OLC_PAIR_CODE_LENGTH; i >= 1; i--) {
-          const latDigit = latVal % OLC_GRID_ROWS;
-          const lngDigit = lngVal % OLC_GRID_COLUMNS;
-          code[OLC_SEPARATOR_POSITION + 2 + i] = OLC_ALPHABET[latDigit * OLC_GRID_COLUMNS + lngDigit];
-          latVal = Math.floor(latVal / OLC_GRID_ROWS);
-          lngVal = Math.floor(lngVal / OLC_GRID_COLUMNS);
-        }
-      } else {
-        latVal = Math.floor(latVal / Math.pow(OLC_GRID_ROWS, OLC_GRID_CODE_LENGTH));
-        lngVal = Math.floor(lngVal / Math.pow(OLC_GRID_COLUMNS, OLC_GRID_CODE_LENGTH));
-      }
-
-      code[OLC_SEPARATOR_POSITION + 1] = OLC_ALPHABET[latVal % OLC_BASE];
-      code[OLC_SEPARATOR_POSITION + 2] = OLC_ALPHABET[lngVal % OLC_BASE];
-      latVal = Math.floor(latVal / OLC_BASE);
-      lngVal = Math.floor(lngVal / OLC_BASE);
-      for (let i = OLC_PAIR_CODE_LENGTH / 2 + 1; i >= 0; i -= 2) {
-        code[i] = OLC_ALPHABET[latVal % OLC_BASE];
-        code[i + 1] = OLC_ALPHABET[lngVal % OLC_BASE];
-        latVal = Math.floor(latVal / OLC_BASE);
-        lngVal = Math.floor(lngVal / OLC_BASE);
-      }
-
-      if (codeLength >= OLC_SEPARATOR_POSITION) {
-        return code.slice(0, codeLength + 1).join('');
-      }
-      return code.slice(0, codeLength).join('') + Array(OLC_SEPARATOR_POSITION - codeLength + 1).join('0') + '+';
-    }
-
-    function decodePlusCode(rawCode) {
-      const code = rawCode.replace('+', '').replace(/0/g, '').toUpperCase();
-      let normalLat = -90 * OLC_PAIR_PRECISION;
-      let normalLng = -180 * OLC_PAIR_PRECISION;
-      let gridLat = 0, gridLng = 0;
-      let digits = Math.min(code.length, OLC_PAIR_CODE_LENGTH);
-      let pv = OLC_PAIR_FIRST_PLACE_VALUE;
-      for (let i = 0; i < digits; i += 2) {
-        const latDigit = OLC_ALPHABET.indexOf(code[i]);
-        const lngDigit = OLC_ALPHABET.indexOf(code[i + 1]);
-        if (latDigit === -1 || lngDigit === -1) return null;
-        normalLat += latDigit * pv;
-        normalLng += lngDigit * pv;
-        if (i < digits - 2) pv /= OLC_BASE;
-      }
-      let latPrecision = pv / OLC_PAIR_PRECISION;
-      let lngPrecision = pv / OLC_PAIR_PRECISION;
-      if (code.length > OLC_PAIR_CODE_LENGTH) {
-        let rowpv = OLC_GRID_LAT_FIRST_PLACE_VALUE;
-        let colpv = OLC_GRID_LNG_FIRST_PLACE_VALUE;
-        digits = Math.min(code.length, OLC_MAX_DIGIT_COUNT);
-        for (let i = OLC_PAIR_CODE_LENGTH; i < digits; i++) {
-          const digitVal = OLC_ALPHABET.indexOf(code[i]);
-          if (digitVal === -1) return null;
-          gridLat += Math.floor(digitVal / OLC_GRID_COLUMNS) * rowpv;
-          gridLng += (digitVal % OLC_GRID_COLUMNS) * colpv;
-          if (i < digits - 1) {
-            rowpv /= OLC_GRID_ROWS;
-            colpv /= OLC_GRID_COLUMNS;
-          }
-        }
-        latPrecision = rowpv / OLC_FINAL_LAT_PRECISION;
-        lngPrecision = colpv / OLC_FINAL_LNG_PRECISION;
-      }
-      const lat = normalLat / OLC_PAIR_PRECISION + gridLat / OLC_FINAL_LAT_PRECISION;
-      const lon = normalLng / OLC_PAIR_PRECISION + gridLng / OLC_FINAL_LNG_PRECISION;
-      return {
-        latCenter: Math.min(lat + latPrecision / 2, 90),
-        lonCenter: Math.min(lon + lngPrecision / 2, 180),
-      };
-    }
-
-    function isShortPlusCode(raw) {
-      const s = (raw || '').trim().toUpperCase();
-      const sepIdx = s.indexOf('+');
-      return sepIdx >= 2 && sepIdx < OLC_SEPARATOR_POSITION && sepIdx % 2 === 0;
-    }
-
-    function recoverPlusCode(shortCode, refLat, refLon) {
-      refLat = olcClipLat(refLat);
-      refLon = olcNormLon(refLon);
-      const s = shortCode.trim().toUpperCase();
-      const paddingLength = OLC_SEPARATOR_POSITION - s.indexOf('+');
-      const resolution = Math.pow(20, 2 - paddingLength / 2);
-      const halfResolution = resolution / 2.0;
-      const refFull = formatPlusCode(refLat, refLon, OLC_PAIR_CODE_LENGTH);
-      const area = decodePlusCode(refFull.slice(0, paddingLength) + s);
-      if (!area) return null;
-      let lat = area.latCenter, lon = area.lonCenter;
-      if (refLat + halfResolution < lat && lat - resolution >= -90) {
-        lat -= resolution;
-      } else if (refLat - halfResolution > lat && lat + resolution <= 90) {
-        lat += resolution;
-      }
-      if (refLon + halfResolution < lon) {
-        lon -= resolution;
-      } else if (refLon - halfResolution > lon) {
-        lon += resolution;
-      }
-      return { lat, lon };
-    }
-
-    function parsePlusCode(raw, reference) {
-      if (!raw) return null;
-      const match = raw.trim().toUpperCase().match(/^((?:[23456789CFGHJMPQRVWX]{2}){1,4}\+[23456789CFGHJMPQRVWX]{2,3})/);
-      if (!match) return null;
-      const code = match[1];
-      if (isShortPlusCode(code)) {
-        if (!reference) return null;
-        return recoverPlusCode(code, reference.lat, reference.lon);
-      }
-      const area = decodePlusCode(code);
-      if (!area) return null;
-      const lat = area.latCenter, lon = area.lonCenter;
-      if (lat < -90 || lat > 90 || lon < -180 || lon >= 180) return null;
-      return { lat, lon };
-    }
-
-    // A live GPS fix, or the last position resolved from any manual
-    // format, kept around purely as a reference point for recovering a
-    // *short* Plus Code (see parsePlusCode/recoverPlusCode above).
-    let lastKnownPosition = null;
-
     function getManualLatLon(format) {
       format = format || document.getElementById('gps-loc-format').value;
       let lat, lon;
@@ -2042,18 +1863,12 @@
         if (!parsed) return null;
         lat = parsed.lat;
         lon = parsed.lon;
-      } else if (format === 'pluscode') {
-        const parsed = parsePlusCode(document.getElementById('gps-pluscode').value, lastKnownPosition);
-        if (!parsed) return null;
-        lat = parsed.lat;
-        lon = parsed.lon;
       } else {
         lat = parseFloat(document.getElementById('gps-lat').value);
         lon = parseFloat(document.getElementById('gps-lon').value);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
       }
       if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
-      if (format !== 'pluscode') lastKnownPosition = { lat, lon };
       return { lat, lon };
     }
 
@@ -2083,7 +1898,6 @@
                 <option value="decimal">Decimal degrees</option>
                 <option value="dms">Degrees / minutes / seconds</option>
                 <option value="maidenhead">Maidenhead grid square</option>
-                <option value="pluscode">Plus Code</option>
               </select>
             </div>
 
@@ -2112,11 +1926,6 @@
             <div class="field hidden" id="gps-loc-maidenhead">
               <label for="gps-grid">Grid square ${helpIcon("Maidenhead locator, the standard ham radio grid square system, e.g. RF80qh (6 characters, roughly 4km precision). The position used is the center of that square, not an exact point.")}</label>
               <input type="text" id="gps-grid" maxlength="6" placeholder="e.g. RF80qh">
-            </div>
-
-            <div class="field hidden" id="gps-loc-pluscode">
-              <label for="gps-pluscode">Plus Code ${helpIcon("Open Location Code, Google's open, offline standard (no account or API key needed). Find one by dropping a pin on Google Maps. A full code (e.g. 8FVC9G8F+6X, about 14x14m precision) works on its own; a short code (e.g. 57QW+PXQ) needs a GPS fix or a previously-entered position nearby to resolve. The position used is the center of that square.")}</label>
-              <input type="text" id="gps-pluscode" placeholder="e.g. 8FVC9G8F+6X">
             </div>
 
             <p class="msg" id="gps-loc-msg"></p>
@@ -2163,8 +1972,6 @@
           document.getElementById('gps-lon-dms').value = formatDMS(latLon.lon, false);
         } else if (format === 'maidenhead') {
           document.getElementById('gps-grid').value = formatMaidenhead(latLon.lat, latLon.lon);
-        } else if (format === 'pluscode') {
-          document.getElementById('gps-pluscode').value = formatPlusCode(latLon.lat, latLon.lon);
         } else {
           document.getElementById('gps-lat').value = latLon.lat.toFixed(6);
           document.getElementById('gps-lon').value = latLon.lon.toFixed(6);
@@ -2176,7 +1983,6 @@
         document.getElementById('gps-loc-decimal').classList.toggle('hidden', format !== 'decimal');
         document.getElementById('gps-loc-dms').classList.toggle('hidden', format !== 'dms');
         document.getElementById('gps-loc-maidenhead').classList.toggle('hidden', format !== 'maidenhead');
-        document.getElementById('gps-loc-pluscode').classList.toggle('hidden', format !== 'pluscode');
       }
 
       function updateLocPreview() {
@@ -2188,8 +1994,6 @@
         }
         const isEmpty = format === 'dms'
           ? !document.getElementById('gps-lat-dms').value.trim() && !document.getElementById('gps-lon-dms').value.trim()
-          : format === 'pluscode'
-          ? !document.getElementById('gps-pluscode').value.trim()
           : !document.getElementById('gps-grid').value.trim();
         if (isEmpty) {
           locMsg.textContent = '';
@@ -2198,14 +2002,8 @@
         }
         const latLon = getManualLatLon();
         if (!latLon) {
-          if (format === 'pluscode' && isShortPlusCode(document.getElementById('gps-pluscode').value)) {
-            locMsg.textContent = lastKnownPosition
-              ? 'Could not resolve this short code near the last known position.'
-              : "This is a short Plus Code. Paste the full code instead, or get a GPS fix first so it can be resolved relative to that.";
-          } else {
-            const example = format === 'dms' ? `e.g. 36°50'54.5"S` : format === 'pluscode' ? 'e.g. 8FVC9G8F+6X' : 'e.g. RF80qh';
-            locMsg.textContent = `Could not parse: check the format (${example}).`;
-          }
+          const example = format === 'dms' ? `e.g. 36°50'54.5"S` : 'e.g. RF80qh';
+          locMsg.textContent = `Could not parse: check the format (${example}).`;
           locMsg.className = 'msg error';
           return;
         }
@@ -2222,7 +2020,7 @@
         updateLocPreview();
       });
       formatSelect.dataset.prev = 'decimal';
-      ['gps-lat-dms', 'gps-lon-dms', 'gps-grid', 'gps-pluscode'].forEach(id => {
+      ['gps-lat-dms', 'gps-lon-dms', 'gps-grid'].forEach(id => {
         document.getElementById(id).addEventListener('input', updateLocPreview);
       });
 
@@ -2254,8 +2052,7 @@
           const res = await fetch('/api/gps/position');
           const data = await res.json();
           if (data.available) {
-            lastKnownPosition = { lat: data.latitude, lon: data.longitude };
-            setManualFields(formatSelect.value, lastKnownPosition);
+            setManualFields(formatSelect.value, { lat: data.latitude, lon: data.longitude });
             updateLocPreview();
             msg.textContent = 'Position filled in from GPS.';
             msg.className = 'msg success';
@@ -2284,7 +2081,6 @@
             box.textContent = data.reason || 'GPS not available.';
             return;
           }
-          if (data.has_fix) lastKnownPosition = { lat: data.latitude, lon: data.longitude };
           const sats = `${data.satellites_used ?? '?'} used / ${data.satellites_visible ?? '?'} visible`;
           const pos = data.has_fix ? `${data.latitude.toFixed(6)}, ${data.longitude.toFixed(6)}` : 'N/A';
           box.innerHTML = '';
@@ -2338,7 +2134,6 @@
         document.getElementById('gps-lat').value = latLon.lat.toFixed(6);
         document.getElementById('gps-lon').value = latLon.lon.toFixed(6);
         setManualFields(savedFormat, latLon);
-        lastKnownPosition = latLon;
       }
       timeSyncCheckbox.checked = !!g.time_sync;
 
@@ -3337,6 +3132,7 @@
       renderGpioTab();
 
       document.getElementById('btn-save-all').addEventListener('click', saveAll);
+      document.getElementById('btn-back-dashboard').addEventListener('click', () => { location.href = '/'; });
     })();
   </script>
 </body>

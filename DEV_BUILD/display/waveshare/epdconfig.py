@@ -22,10 +22,22 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-RST_PIN  = 17
-DC_PIN   = 25
-CS_PIN   = 8
-BUSY_PIN = 24
+# Immutable reference defaults, separate from the mutable RST_PIN etc.
+# below (which configure() overwrites at boot): used by web/server.py's
+# /api/config/save to tell "the value is still the default" apart from
+# "the value was explicitly changed away from it", regardless of what
+# configure() has already done to the mutable ones earlier in this same
+# process's lifetime. Mirrors services/relay.py's DEFAULT_RELAY_PIN vs.
+# mutable RELAY_PIN split.
+DEFAULT_RST_PIN = 17
+DEFAULT_DC_PIN = 25
+DEFAULT_CS_PIN = 8
+DEFAULT_BUSY_PIN = 24
+
+RST_PIN  = DEFAULT_RST_PIN
+DC_PIN   = DEFAULT_DC_PIN
+CS_PIN   = DEFAULT_CS_PIN
+BUSY_PIN = DEFAULT_BUSY_PIN
 
 try:
     import RPi.GPIO as GPIO
