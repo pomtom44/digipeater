@@ -7,6 +7,7 @@ import uvicorn
 import yaml
 
 from display.driver_none import NullDriver
+from display.rotation import RotationManager, load_pages
 from services import direwolf_config, gpsconfig, network, relay, restart_policy, system
 from web.server import create_app
 
@@ -205,7 +206,9 @@ async def main() -> None:
 
     await _render(display_driver, template.draw_loading_page)
     kind, ip = await _resolve_network()
+    network_status = {"kind": kind, "ip": ip, "hotspot_ssid": HOTSPOT_SSID}
 
+    rotation = None
     if first_boot:
         logger.info("No config.yaml found, running first-boot sequence")
         await _show_network_status(display_driver, template, "Initial config", kind, ip, fast=True)
@@ -214,7 +217,18 @@ async def main() -> None:
         # up": network detail lives on the web UI now, not the screen.
         # config was already read above, before the display driver was
         # constructed (needed there for GPIO pin overrides).
-        await _render(display_driver, template.draw_loading_page, "Digipeater", fast=True)
+        #
+        # No static idle render here (see display/rotation.py): the
+        # rotation manager's own first tick takes over within moments, and
+        # since it runs concurrently with the sequence below (a background
+        # task, not awaited), it naturally shows the real
+        # starting -> waiting_gps -> running progression live instead of a
+        # frozen placeholder.
+        rotation = RotationManager(
+            display_driver, template, load_pages(config.get("display", {})), network_status,
+        )
+        rotation.start()
+
         await gpsconfig.apply(config.get("gps", {}))
         await restart_policy.apply(config.get("startup", {}))
 
@@ -230,8 +244,7 @@ async def main() -> None:
         if not result["ok"]:
             logger.error("Failed to %s direwolf: %s", "start" if want_running else "stop", result["reason"])
 
-    network_status = {"kind": kind, "ip": ip, "hotspot_ssid": HOTSPOT_SSID}
-    app = create_app(display_driver, first_boot, network_status)
+    app = create_app(display_driver, first_boot, network_status, rotation)
 
     server_config = uvicorn.Config(app, host="0.0.0.0", port=80, log_level="warning")
     server = uvicorn.Server(server_config)

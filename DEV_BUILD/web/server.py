@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from display.base import DisplayDriver
+from display.rotation import load_pages
 from display.waveshare import epdconfig
 from services import aprs, auth, direwolf_config, gps, gpsconfig, hardware, network, relay, restart_policy, system, tiles
 
@@ -66,7 +67,9 @@ def _build_test_image(display_driver: DisplayDriver):
     return image
 
 
-def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: dict) -> FastAPI:
+def create_app(
+    display_driver: DisplayDriver, first_boot: bool, network_status: dict, rotation=None,
+) -> FastAPI:
     app = FastAPI(title="APRS Digipeater")
 
     # Static assets referenced by URL from within the served HTML (e.g. the
@@ -133,10 +136,17 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
 
     @app.get("/login")
     async def login_page():
+        # No security config exists yet during first boot (there's nothing
+        # to log into), and the wizard is the only page that should be
+        # reachable at all then: see root()'s own first_boot check above.
+        if first_boot:
+            return RedirectResponse(url="/")
         return FileResponse(STATIC_DIR / "login.html")
 
     @app.get("/config")
     async def config_page(request: Request):
+        if first_boot:
+            return RedirectResponse(url="/")
         # Config changes need a password under both readonly and full (see
         # TODO.md), unlike root() above, which only gates full.
         mode = _read_security().get("mode", "none")
@@ -185,10 +195,6 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             sessions.pop(token, None)
         response.delete_cookie(SESSION_COOKIE_NAME)
         return {"ok": True}
-
-    @app.get("/test")
-    async def test_page():
-        return FileResponse(STATIC_DIR / "test.html")
 
     @app.get("/api/network/status")
     async def network_status_endpoint():
@@ -611,6 +617,7 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
             if key in body:
                 config[key] = body[key]
 
+        before_pages = (config.get("display") or {}).get("pages", [])
         display_driver_changed = False
         if "display" in body:
             display_cfg = body["display"] or {}
@@ -708,6 +715,15 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
                 applied.append("radio")
             if aprs_changed:
                 applied.append("aprs")
+
+        if rotation is not None and config.get("display", {}).get("pages") != before_pages:
+            # Unlike driver/model (see display_driver_changed below), the
+            # page-rotation list has a live re-apply path: it's just data
+            # RotationManager reads, not a GPIO pin claimed once at process
+            # start, so no reboot is needed for an edited page list to
+            # actually take effect.
+            rotation.reload_pages(load_pages(config["display"]))
+            applied.append("display_pages")
 
         if _normalize_gpio(config.get("gpio")) != _normalize_gpio(before["gpio"]):
             # Relay/e-ink pins are claimed once at process start (see

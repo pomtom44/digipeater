@@ -6,6 +6,11 @@ label+value onto one line the way the wide 2.9" panel does.
 """
 
 from ._shared import load_font, fit_font, FONT_BOLD, FONT_REGULAR
+# Column-table, icon+text, and station-card layouts (currently just the
+# Last Beacon, Symbol, and Last Heard pages) aren't worth a bespoke
+# version of on every model yet, only one page each needs them: reuse
+# default.py's generic versions here rather than duplicating them.
+from .default import draw_table_page, draw_symbol_page, draw_station_page  # noqa: F401
 
 MARGIN = 14
 LABEL_ROW_H = 18

@@ -2575,6 +2575,7 @@
       { id: 'status', label: 'Status' },
       { id: 'config_summary', label: 'Config summary' },
       { id: 'location', label: 'Location' },
+      { id: 'symbol', label: 'Symbol & comment' },
       { id: 'last_beacon', label: 'Last beacon' },
       { id: 'last_heard', label: 'Last heard' },
     ];
@@ -2995,7 +2996,7 @@
 
     // ── Save-all (the page's single global save action; Map and Network
     // are excluded, see their own tabs above) ───────────────────────────
-    const APPLIED_LABELS = { gps: 'GPS', radio: 'Radio', aprs: 'APRS', startup: 'Startup (restart policy)' };
+    const APPLIED_LABELS = { gps: 'GPS', radio: 'Radio', aprs: 'APRS', startup: 'Startup (restart policy)', display_pages: 'E-Ink page rotation' };
     const REBOOT_LABELS = { gpio: 'GPIO pins (relay and e-ink)', display: 'E-Ink display driver/model' };
 
     function hideSaveBanner() {

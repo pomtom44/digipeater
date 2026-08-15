@@ -24,3 +24,25 @@ def fit_font(draw, text: str, path: str, max_width: int, start_size: int, min_si
             return font
         size -= 1
     return load_font(path, min_size)
+
+
+def wrap_text(draw, text: str, font, max_width: int) -> list[str]:
+    """Greedy word-wrap: as many words as fit per line at max_width. Used
+    by free-text content (currently just the Symbol page's comment field)
+    that, unlike every label/value elsewhere, isn't expected to fit on
+    one line."""
+    words = text.split()
+    if not words:
+        return []
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}"
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        if bbox[2] - bbox[0] <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines

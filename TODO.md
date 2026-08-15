@@ -7,7 +7,6 @@ Known gaps in `DEV_BUILD`, collected in one place. See `DEV_BUILD/SUPPORTED_HARD
 - **Real heard-stations / packet history**: parsing Direwolf's live output into position/weather packets and a persisted history. `ORIGINAL/core/log_parser.py` (parsed stdout via `aprslib`) and `core/packet_store.py` (deduped/persisted to a JSON history file) did this; `DEV_BUILD`'s dashboard fakes it with hardcoded sample data (`SAMPLE_HEARD_STATIONS` etc. in `normal.html`). The single biggest missing piece of real functionality carried over from `ORIGINAL`.
 - **Radio CAT control** (Hamlib rig control, live frequency polling/display): `ORIGINAL/hardware/radio.py` had it; `DEV_BUILD`'s "Radio model"/"TX power level" dropdowns are placeholders with no behavior behind them.
 - **Radio channel programmer's serial protocol** (Alinco DR-138T specific): `ORIGINAL/hardware/radio_programmer.py` had the real protocol; `DEV_BUILD`'s `services/radio_programmer.py` only has the capability-registry shape (`RADIO_CAPABILITIES`), not the protocol itself.
-- **E-ink display page rotation**: cycling through status pages on a timer, with startup/error states that pause rotation to show a full-screen message. `ORIGINAL/display/manager.py` had it; `DEV_BUILD`'s wizard collects the page list and durations, but nothing renders it.
 
 ## Not fully implemented or broken
 
