@@ -55,9 +55,9 @@ def _idle_status(simulated: bool) -> dict:
 async def get_direwolf_status() -> dict:
     """The direwolf systemd service's state, or absent a real service to
     ask, the simulated in-memory state (see _simulated_running above).
-    `state` is one of "running"/"starting"/"standby"/"stopping"/"error";
-    `running` (bool) is kept alongside it for existing callers that only
-    care about the binary question.
+    `state` is one of "running"/"starting"/"waiting_gps"/"standby"/
+    "stopping"/"error"; `running` (bool) is kept alongside it for existing
+    callers that only care about the binary question.
 
     `systemctl is-active` on a completely unknown unit still prints
     "inactive" on the systemd versions this was checked against (rather
@@ -67,6 +67,7 @@ async def get_direwolf_status() -> dict:
     prints in that case. Not verified against a real system in this
     sandbox (no systemd here); worth confirming on real hardware.
     """
+    global _last_error
     if _transition:
         return {"available": True, "state": _transition, "running": False, "reason": None, "simulated": False}
     try:
@@ -80,29 +81,79 @@ async def get_direwolf_status() -> dict:
     state = stdout.decode(errors="replace").strip()
     if state == "active":
         return {"available": True, "state": "running", "running": True, "reason": None, "simulated": False}
+    if state in ("activating", "deactivating"):
+        # systemd's own auto-restart loop cycling in the background (not
+        # one set_direwolf_running triggered, hence no _transition set
+        # above): reuse the same starting/stopping vocabulary so the badge
+        # shows the same pending state either way.
+        return {
+            "available": True,
+            "state": "starting" if state == "activating" else "stopping",
+            "running": False, "reason": None, "simulated": False,
+        }
+    if state == "failed":
+        # Reached once the restart policy's attempt limit is exhausted (see
+        # services/restart_policy.py); before that fix this never happened
+        # at all, since the unit had no StartLimitBurst and just retried
+        # forever. Sticky until the next start attempt, same as an error
+        # set_direwolf_running() caused directly (which clears this via its
+        # own _last_error assignment).
+        if not _last_error:
+            _last_error = (
+                "Direwolf kept failing to start and exceeded its configured "
+                "restart limit (see the Startup tab). Check journalctl -u "
+                "direwolf for why."
+            )
+        return {"available": True, "state": "error", "running": False, "reason": _last_error, "simulated": False}
     if b"could not be found" in stderr or b"not been loaded" in stderr:
         return _idle_status(simulated=True)
     return _idle_status(simulated=False)
 
 
-async def _confirm_gps_ready(gps_config: dict) -> tuple[bool, str | None]:
+# How often to re-check gpsd while waiting for a live fix, and how long to
+# keep at it before giving up. gpsd was very likely just restarted this
+# same boot (see services/gpsconfig.py), and a cold GPS fix can take
+# anywhere from several seconds to a couple of minutes, so a single
+# point-in-time check (the old behaviour) was failing real, working GPS
+# hardware just because of bad timing. Bounded rather than unlimited so a
+# genuinely absent/broken GPS doesn't leave a Start click hung forever.
+GPS_FIX_POLL_INTERVAL_S = 5
+GPS_FIX_WAIT_TIMEOUT_S = 300
+
+
+async def _wait_for_gps_fix(gps_config: dict) -> tuple[bool, str | None]:
     """Gate before powering the radio on at all: a manual position only
     needs its lat/lon to actually be set (see first_run.html's GPS step),
-    a live-GPS position needs gpsd to currently report an actual fix, not
-    just be running. Checked here rather than left to Direwolf itself,
-    since PBEACON would otherwise happily beacon a stale/missing position
-    with no indication anything's wrong."""
+    checked once and instantly. A live-GPS position needs gpsd to actually
+    report a fix, which this polls for (see the constants above) rather
+    than checking once, setting the module-level _transition to
+    "waiting_gps" for the duration so get_direwolf_status() (and so the
+    dashboard's badge and GPS card) can show it's actively waiting, not
+    just stuck. Checked here rather than left to Direwolf itself, since
+    PBEACON would otherwise happily beacon a stale/missing position with
+    no indication anything's wrong."""
+    global _transition
     if gps_config.get("position_source") == "manual":
         lat, lon = gps_config.get("latitude"), gps_config.get("longitude")
         if lat in (None, "") or lon in (None, ""):
             return False, "No manual position set"
         return True, None
-    status = await gps.get_status()
-    if not status.get("available"):
-        return False, status.get("reason", "GPS not available")
-    if not status.get("has_fix"):
-        return False, "Waiting for GPS fix"
-    return True, None
+
+    deadline = asyncio.get_event_loop().time() + GPS_FIX_WAIT_TIMEOUT_S
+    while True:
+        status = await gps.get_status()
+        if not status.get("available"):
+            # Not just "no fix yet": gpsd itself isn't reachable or has no
+            # device at all. Waiting longer won't fix that (gpsd failed to
+            # start, or the wrong device was picked), so fail immediately
+            # rather than polling for the full timeout pointlessly.
+            return False, status.get("reason", "GPS not available")
+        if status.get("has_fix"):
+            return True, None
+        if asyncio.get_event_loop().time() >= deadline:
+            return False, f"Timed out waiting for a GPS fix after {GPS_FIX_WAIT_TIMEOUT_S}s"
+        _transition = "waiting_gps"
+        await asyncio.sleep(GPS_FIX_POLL_INTERVAL_S)
 
 
 async def _run_systemctl(action: str) -> dict:
@@ -137,13 +188,13 @@ async def set_direwolf_running(running: bool, config: dict | None = None) -> dic
     still going through the same GPS/relay/programmer sequence either way
     so that UX (timing, failure messages) matches what a real Pi would do.
 
-    Starting: confirm GPS fix -> power the radio on (services/relay.py,
-    ~10s boot wait) -> program its channel if the configured model
-    supports it (services/radio_programmer.py, currently a no-op stub,
-    see its own docstring) -> a short settle wait -> only then start
-    Direwolf. A failure at any step before Direwolf actually starts backs
-    the relay off again rather than leaving the radio powered with
-    nothing using it.
+    Starting: wait for a GPS fix, polling rather than a single check (see
+    _wait_for_gps_fix) -> power the radio on (services/relay.py, ~10s boot
+    wait) -> program its channel if the configured model supports it
+    (services/radio_programmer.py, currently a no-op stub, see its own
+    docstring) -> a short settle wait -> only then start Direwolf. A
+    failure at any step before Direwolf actually starts backs the relay
+    off again rather than leaving the radio powered with nothing using it.
 
     Stopping: stop Direwolf first, then wait for it to actually finish
     releasing the audio device / de-keying PTT before cutting power to
@@ -155,10 +206,11 @@ async def set_direwolf_running(running: bool, config: dict | None = None) -> dic
     could stop/restart any unit, including this app's own service),
     installed by install.sh as /etc/sudoers.d/digipeater-direwolf-control.
 
-    Sets the module-level _transition flag ("starting"/"stopping") for
-    the full duration of this call, cleared via `finally` no matter which
-    return path executes below, so get_direwolf_status() can report it
-    even from a different request/tab than the one that triggered it.
+    Sets the module-level _transition flag ("starting"/"waiting_gps"/
+    "stopping") for the full duration of this call, cleared via `finally`
+    no matter which return path executes below, so get_direwolf_status()
+    can report it even from a different request/tab than the one that
+    triggered it.
     """
     global _transition, _last_error
     config = config or {}
@@ -166,7 +218,8 @@ async def set_direwolf_running(running: bool, config: dict | None = None) -> dic
     _transition = "starting" if running else "stopping"
     try:
         if running:
-            gps_ok, gps_reason = await _confirm_gps_ready(config.get("gps", {}))
+            gps_ok, gps_reason = await _wait_for_gps_fix(config.get("gps", {}))
+            _transition = "starting"  # back from _wait_for_gps_fix's "waiting_gps"
             if not gps_ok:
                 logger.error("Direwolf start blocked: %s", gps_reason)
                 _last_error = f"Cannot start Direwolf: {gps_reason}"

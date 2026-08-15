@@ -7,10 +7,15 @@ import uvicorn
 import yaml
 
 from display.driver_none import NullDriver
-from services import direwolf_config, gpsconfig, network, relay, system
+from services import direwolf_config, gpsconfig, network, relay, restart_policy, system
 from web.server import create_app
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# httpx logs one INFO line per request it makes; harmless normally, but the
+# live map proxy (web/server.py's /map-data/live.pmtiles) can fire off
+# dozens of range requests while panning around, flooding journalctl with
+# them. WARNING still surfaces anything that actually goes wrong.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path("config.yaml")
@@ -211,6 +216,7 @@ async def main() -> None:
         # constructed (needed there for GPIO pin overrides).
         await _render(display_driver, template.draw_loading_page, "Digipeater", fast=True)
         await gpsconfig.apply(config.get("gps", {}))
+        await restart_policy.apply(config.get("startup", {}))
 
         # Regenerated fresh on every boot (idempotent, same pattern as
         # gpsconfig.apply above) so a manually edited config.yaml still

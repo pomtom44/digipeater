@@ -30,6 +30,7 @@
       --accent: #4fb3a9;
       --success: #5fbf8e;
       --error: #e08585;
+      --warn: #e0b155;
     }
     /* System preference, only when there's no explicit override below. */
     @media (prefers-color-scheme: light) {
@@ -43,6 +44,7 @@
         --accent: #2e8b7f;
         --success: #2e8b57;
         --error: #b03a3a;
+        --warn: #b0791f;
       }
     }
     /* Explicit override via the theme toggle, wins over system preference
@@ -58,6 +60,7 @@
       --accent: #2e8b7f;
       --success: #2e8b57;
       --error: #b03a3a;
+      --warn: #b0791f;
     }
     :root[data-theme="dark"] {
       color-scheme: dark;
@@ -70,6 +73,7 @@
       --accent: #4fb3a9;
       --success: #5fbf8e;
       --error: #e08585;
+      --warn: #e0b155;
     }
 
     * { box-sizing: border-box; }
@@ -235,6 +239,10 @@
     .badge.error {
       color: var(--error);
       border-color: var(--error);
+    }
+    .badge.pending {
+      color: var(--warn);
+      border-color: var(--warn);
     }
 
     .kv {
@@ -485,6 +493,11 @@
     // here is a placeholder.
     let gpsPollTimer = null;
     let lastGpsUpdateAt = null;
+    // Set by renderSystemStatusBody below (its own independent poll), read
+    // by renderGpsBody so the GPS card can explain *why* it matters that
+    // there's no fix yet, when that's specifically what a pending Direwolf
+    // start is stuck waiting on (services/system.py's "waiting_gps" state).
+    let lastDirewolfState = null;
     // Direwolf's "Starting"/"Stopping" states only exist for the duration
     // of a set_direwolf_running() call on the server (see services/
     // system.py's _transition), which this tab might not itself have
@@ -520,11 +533,15 @@
       }
       const pos = status.has_fix ? `${status.latitude.toFixed(5)}, ${status.longitude.toFixed(5)}` : 'No fix yet';
       lastGpsUpdateAt = new Date();
+      const waitingNote = (!status.has_fix && lastDirewolfState === 'waiting_gps')
+        ? '<div class="note">Direwolf is waiting for this fix to start.</div>'
+        : '';
       body.innerHTML = `
         <div class="kv"><span class="k">Position</span><span class="v">${pos}</span></div>
         <div class="kv"><span class="k">Fix</span><span class="v">${status.fix}</span></div>
         <div class="kv"><span class="k">Signal</span><span class="v">${status.satellites_used ?? '-'} / ${status.satellites_visible ?? '-'} sats</span></div>
         <div class="kv"><span class="k">Last update</span><span class="v">${timeSinceLabel(lastGpsUpdateAt)}</span></div>
+        ${waitingNote}
       `;
     }
 
@@ -614,6 +631,7 @@
     const DIREWOLF_STATE_LABELS = {
       running: 'Running',
       starting: 'Starting',
+      waiting_gps: 'Waiting for GPS fix',
       standby: 'Standby',
       stopping: 'Stopping',
       error: 'Error',
@@ -649,10 +667,6 @@
 
     async function renderSystemStatusBody() {
       const badgeSlot = document.getElementById('direwolf-badge-slot');
-      // Idempotent: drop any previous Direwolf badge before appending a
-      // fresh one, since this re-runs after every start/stop (see
-      // toggleDirewolf above) as well as once at boot.
-      badgeSlot.innerHTML = '';
 
       let status;
       try {
@@ -660,6 +674,7 @@
       } catch (e) {
         return; // one missing badge isn't worth a dedicated error state
       }
+      lastDirewolfState = status.state;
       const canControl = authState.mode === 'none' || authState.logged_in;
       // "simulated" means there's no real direwolf.service to ask/control
       // yet (see services/system.py): an in-memory stand-in so this
@@ -671,7 +686,13 @@
       const title = status.state === 'error' && status.reason
         ? status.reason
         : status.simulated ? 'No direwolf.service installed yet. This toggles an in-memory simulated state for UI testing only.' : '';
-      const badgeClass = `badge${status.state === 'running' ? ' on' : ''}${status.state === 'error' ? ' error' : ''}`;
+      // Replacing badgeSlot's contents in one assignment below (rather than
+      // clearing it first, then filling it in) so the button never
+      // momentarily disappears from the DOM: this function reruns every
+      // DIREWOLF_POLL_MS, and a clear-then-refill was flickering the
+      // button out and back in on every poll.
+      const isPending = status.state === 'starting' || status.state === 'stopping' || status.state === 'waiting_gps';
+      const badgeClass = `badge${status.state === 'running' ? ' on' : ''}${status.state === 'error' ? ' error' : ''}${isPending ? ' pending' : ''}`;
       // Always clickable, even when not logged in: readonly/full mode
       // without a session gets an explicit "log in first" modal instead
       // of a disabled, unexplained button.

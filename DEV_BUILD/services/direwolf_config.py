@@ -53,11 +53,11 @@ def _ptt_lines(radio: dict, can_transmit: bool) -> list[str]:
         return [f"PTT CM108 {method[len('cm108:'):]}"]
     if method.startswith("serial:"):
         # Direwolf needs to know which serial control line actually keys
-        # PTT (RTS or DTR); the wizard's PTT method picker doesn't collect
-        # that (see TODO.md), so this defaults to RTS, the more common of
-        # the two for a simple PTT interface. Worth exposing as a real
-        # field if DTR wiring ever comes up in practice.
-        return [f"PTT {method[len('serial:'):]} RTS"]
+        # PTT: RTS or DTR, picked on the Radio tab (radio.ptt_serial_line),
+        # defaulting to RTS (the more common of the two for a simple PTT
+        # interface) for configs saved before that field existed.
+        line = radio.get("ptt_serial_line") or "RTS"
+        return [f"PTT {method[len('serial:'):]} {line}"]
     return []
 
 

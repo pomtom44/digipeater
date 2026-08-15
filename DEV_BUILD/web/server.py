@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from display.base import DisplayDriver
 from display.waveshare import epdconfig
-from services import aprs, auth, direwolf_config, gps, gpsconfig, hardware, network, relay, system, tiles
+from services import aprs, auth, direwolf_config, gps, gpsconfig, hardware, network, relay, restart_policy, system, tiles
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,16 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
     # token -> expiry (unix time). Closure-local for the same reason as
     # map_download_state above: one process's worth of runtime state.
     sessions: dict[str, float] = {}
+
+    # Reused across every /map-data/live.pmtiles request so TCP/TLS
+    # connections to build.protomaps.com stay alive between range requests
+    # instead of paying a fresh handshake per request: a single viewport can
+    # trigger dozens of small range requests (directory lookups plus tile
+    # data), and that handshake cost, doubled by this proxy's browser-to-Pi
+    # then Pi-to-upstream hop, was the actual source of the slowdown, not
+    # the data volume (cached region/world files skip all of this, served
+    # straight off local disk).
+    live_tile_client = httpx.AsyncClient(timeout=15.0)
 
     def _read_security() -> dict:
         if not CONFIG_PATH.exists():
@@ -360,12 +370,10 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         if range_header:
             upstream_headers["Range"] = range_header
 
-        client = httpx.AsyncClient(timeout=15.0)
-        stream_ctx = client.stream("GET", source_url, headers=upstream_headers)
+        stream_ctx = live_tile_client.stream("GET", source_url, headers=upstream_headers)
         try:
             upstream = await stream_ctx.__aenter__()
         except httpx.HTTPError as e:
-            await client.aclose()
             raise HTTPException(status_code=502, detail=f"Could not reach map source: {e}")
 
         async def body():
@@ -374,7 +382,6 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
                     yield chunk
             finally:
                 await stream_ctx.__aexit__(None, None, None)
-                await client.aclose()
 
         passthrough_headers = {
             h: upstream.headers[h]
@@ -668,6 +675,10 @@ def create_app(display_driver: DisplayDriver, first_boot: bool, network_status: 
         if config.get("gps") != before["gps"]:
             await gpsconfig.apply(config.get("gps", {}))
             applied.append("gps")
+
+        if config.get("startup") != before["startup"]:
+            await restart_policy.apply(config.get("startup", {}))
+            applied.append("startup")
 
         radio_changed = config.get("radio") != before["radio"]
         aprs_changed = config.get("aprs") != before["aprs"]

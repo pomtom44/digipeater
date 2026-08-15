@@ -85,23 +85,63 @@
       min-height: 0;
       padding: 6px 10px;
       font-size: 12px;
-      background: var(--panel);
+      background: var(--panel-2);
       border: 1px solid var(--border);
       border-radius: 6px;
       color: var(--text);
       cursor: pointer;
     }
     #theme-toggle:hover, #btn-back-dashboard:hover { border-color: var(--accent); }
-
-    header.page-header {
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 20px 20px 0;
+    #btn-save-all {
+      font-weight: 700;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
     }
-    header.page-header h1 {
+
+    /* Fixed, not a flex sibling: matches the dashboard's sidebar width and
+       background, but deliberately doesn't push the centered tab/form
+       content over (see .tabbar/.save-banner/main.container below, all still
+       centered on the full viewport via margin:0 auto, same as before this
+       sidebar existed). */
+    #sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 320px;
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      padding: 16px;
+      overflow-y: auto;
+    }
+    #sidebar h1 {
       font-size: 20px;
       margin: 0;
       font-weight: 700;
+    }
+    /* Pinned to the bottom of the sidebar, whatever room the heading above
+       takes up, same treatment as the dashboard's .auth-row. */
+    .sidebar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: auto;
+      padding-top: 16px;
+    }
+    .sidebar-actions .msg { flex-basis: 100%; margin-top: 0; }
+    @media (max-width: 480px) {
+      #sidebar {
+        position: static;
+        width: auto;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+      .sidebar-actions { margin-top: 12px; padding-top: 0; }
     }
 
     /* Sticky so the tab bar and the global Save action stay reachable no
@@ -150,23 +190,6 @@
       border-color: var(--border);
       position: relative;
       top: 1px;
-    }
-
-    .savebar {
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 10px 20px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-    .savebar .spacer { flex: 1; }
-    #btn-save-all {
-      font-weight: 700;
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
     }
 
     .save-banner {
@@ -218,9 +241,7 @@
     @media (max-width: 480px) {
       .tab-panel .panel-card { padding: 16px; border-radius: 10px; }
       main.container { padding: 16px 12px 80px; }
-      header.page-header { padding: 16px 12px 0; }
       .tabbar { padding: 0 12px; }
-      .savebar { padding: 10px 12px; }
       .save-banner { padding: 0 12px 12px; }
     }
 
@@ -499,19 +520,18 @@
   </style>
 </head>
 <body>
-  <header class="page-header">
+  <aside id="sidebar">
     <h1>Station settings</h1>
-  </header>
-
-  <div class="tabbar-wrap">
-    <nav class="tabbar" id="tabbar"></nav>
-    <div class="savebar">
+    <div class="sidebar-actions">
       <button type="button" id="theme-toggle" aria-label="Toggle color theme"></button>
       <button type="button" class="primary" id="btn-save-all">Save all changes</button>
       <button type="button" id="btn-back-dashboard">&larr; Back to dashboard</button>
       <span class="msg" id="save-all-msg"></span>
-      <div class="spacer"></div>
     </div>
+  </aside>
+
+  <div class="tabbar-wrap">
+    <nav class="tabbar" id="tabbar"></nav>
     <div class="save-banner hidden" id="save-banner-wrap">
       <div class="banner" id="save-banner"></div>
     </div>
@@ -925,6 +945,13 @@
             </select>
             <p class="hint hidden" id="radio-ptt-gpio-note"></p>
           </div>
+          <div class="field hidden" id="radio-ptt-serial-line-wrap">
+            <label for="radio-ptt-serial-line">Serial PTT line ${helpIcon("Which serial control line the radio's PTT circuit is wired to. RTS is the more common of the two; try DTR if PTT doesn't key with RTS.")}</label>
+            <select id="radio-ptt-serial-line">
+              <option value="RTS">RTS</option>
+              <option value="DTR">DTR</option>
+            </select>
+          </div>
           <div class="field">
             <label for="radio-audio">Audio device</label>
             <select id="radio-audio"></select>
@@ -944,6 +971,7 @@
       powerSelect.value = d.power_level ?? powerSelect.value;
       document.getElementById('radio-frequency').value = d.frequency_mhz ?? '';
       document.getElementById('radio-ptt').value = d.ptt_method ?? 'gpio';
+      document.getElementById('radio-ptt-serial-line').value = d.ptt_serial_line ?? 'RTS';
 
       function updatePttGpioNote() {
         const note = document.getElementById('radio-ptt-gpio-note');
@@ -955,7 +983,9 @@
         }
       }
       document.getElementById('radio-ptt').addEventListener('change', updatePttGpioNote);
+      document.getElementById('radio-ptt').addEventListener('change', updatePttSerialLineVisibility);
       updatePttGpioNote();
+      updatePttSerialLineVisibility();
 
       function updateFreqWarning() {
         document.getElementById('radio-freq-warning').classList.toggle('hidden', !!document.getElementById('radio-frequency').value);
@@ -966,6 +996,17 @@
       loadAudioDevices();
       loadCm108PttOptions();
       loadSerialPttOptions();
+    }
+
+    // Serial PTT line (RTS/DTR) only means anything once a serial: device
+    // is actually the picked PTT method; hidden otherwise so it doesn't
+    // read as relevant to GPIO/VOX/CM108. Top-level (not nested in
+    // renderRadioTab) so loadCm108PttOptions/loadSerialPttOptions below,
+    // which can change radio-ptt's value once their device lists arrive,
+    // can also call it.
+    function updatePttSerialLineVisibility() {
+      const isSerial = document.getElementById('radio-ptt').value.startsWith('serial:');
+      document.getElementById('radio-ptt-serial-line-wrap').classList.toggle('hidden', !isSerial);
     }
 
     async function loadAudioDevices() {
@@ -998,6 +1039,7 @@
           addOption(select, `cm108:${dev.device}`, `CM108: ${dev.device} (${dev.description})`);
         });
         if (d.ptt_method) select.value = d.ptt_method;
+        updatePttSerialLineVisibility();
       } catch (e) {
         // generic "cm108" auto-detect option still works without this
       }
@@ -1014,6 +1056,7 @@
           addOption(select, `serial:${dev.device}`, label);
         });
         if (d.ptt_method) select.value = d.ptt_method;
+        updatePttSerialLineVisibility();
       } catch (e) {
         // VOX/GPIO options still work without this
       }
@@ -1038,6 +1081,9 @@
         // anything on this tab.
         const pinEl = document.getElementById('gpio-ptt-gpio-pin');
         radio.ptt_gpio_pin = pinEl ? (parseInt(pinEl.value, 10) || RADIO_DEFAULT_PTT_GPIO_PIN) : RADIO_DEFAULT_PTT_GPIO_PIN;
+      }
+      if (pttMethod.startsWith('serial:')) {
+        radio.ptt_serial_line = document.getElementById('radio-ptt-serial-line').value;
       }
       state.radio = radio;
       return radio;
@@ -2949,7 +2995,7 @@
 
     // ── Save-all (the page's single global save action; Map and Network
     // are excluded, see their own tabs above) ───────────────────────────
-    const APPLIED_LABELS = { gps: 'GPS', radio: 'Radio', aprs: 'APRS' };
+    const APPLIED_LABELS = { gps: 'GPS', radio: 'Radio', aprs: 'APRS', startup: 'Startup (restart policy)' };
     const REBOOT_LABELS = { gpio: 'GPIO pins (relay and e-ink)', display: 'E-Ink display driver/model' };
 
     function hideSaveBanner() {
@@ -2981,6 +3027,24 @@
     }
 
     async function rebootNow() {
+      // A region download doesn't survive a reboot and can't be resumed
+      // (see services/tiles.py's RegionDownloader): the wizard's own
+      // Finish step already blocks on this (first_run.html), but this is
+      // a separate, later reboot path (post-setup, from a GPIO/display
+      // save), so it needs its own check. Best-effort: a failed status
+      // check is treated as "can't tell, don't block on it" rather than
+      // trapping the user if the endpoint itself is having trouble.
+      try {
+        const res = await fetch('/api/map/cache/status');
+        const data = await res.json();
+        if (data.active) {
+          showSaveBanner('error', 'A map region download is still running (Map tab). Rebooting now would stop it with no way to resume, wait for it to finish or cancel it first.');
+          return;
+        }
+      } catch (e) {
+        // Unknown either way; fall through rather than blocking on it.
+      }
+
       const proceed = await confirmModal(
         'Reboot the device now? This will briefly take the station and this page offline.',
         'Yes, reboot now', 'Not yet'

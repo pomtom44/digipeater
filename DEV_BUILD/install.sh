@@ -245,6 +245,28 @@ else
     fail "Generated sudoers rule failed validation, aborting for safety"
 fi
 
+# ── Grant access to the restart-policy helper for the Startup tab ──
+# Writes direwolf.service's systemd drop-in override (Restart=/RestartSec=/
+# StartLimitBurst=), same scoped-script pattern as GPSCONFIG_PATH above, not
+# blanket systemd-unit-editing access. Used by main.py's own boot sequence
+# and by /api/config/save whenever the Startup tab changes (see
+# services/restart_policy.py), so the wizard's/config page's "restart
+# automatically if it crashes" setting actually takes effect instead of the
+# fixed Restart=on-failure/RestartSec=10 below being the only thing direwolf
+# ever sees.
+chmod +x "$APP_DIR/scripts/apply-direwolf-restart-policy.sh"
+RESTARTPOLICY_PATH="$APP_DIR/scripts/apply-direwolf-restart-policy.sh"
+SUDOERS_TMP5="$(mktemp)"
+echo "$USER ALL=(root) NOPASSWD: $RESTARTPOLICY_PATH" > "$SUDOERS_TMP5"
+if sudo visudo -c -f "$SUDOERS_TMP5" > /dev/null 2>&1; then
+    sudo install -o root -g root -m 0440 "$SUDOERS_TMP5" /etc/sudoers.d/digipeater-restart-policy
+    rm -f "$SUDOERS_TMP5"
+    ok "Direwolf restart-policy permissions configured"
+else
+    rm -f "$SUDOERS_TMP5"
+    fail "Generated sudoers rule failed validation, aborting for safety"
+fi
+
 # ── Python virtual environment ────────────────
 # --system-site-packages so the venv can see the apt-installed RPi.GPIO/spidev
 # (those build native extensions against the Pi's kernel headers; pip-installing
@@ -366,6 +388,13 @@ ok "Systemd service installed and enabled; it will start automatically on boot"
 # owns and regenerates directly (see services/direwolf_config.py), not
 # /etc/direwolf/ like ORIGINAL used, so no root access is needed just to
 # write it, only to start/stop the service itself.
+# Restart=/RestartSec= below are just install-time fallbacks; the real,
+# user-configured values (Startup tab's "restart automatically if it
+# crashes") are applied on top via a systemd drop-in at
+# /etc/systemd/system/direwolf.service.d/override.conf, written by
+# services/restart_policy.py (see RESTARTPOLICY_PATH above) on every normal
+# boot before direwolf is ever started, so these fallbacks are never
+# actually what a running station sees in practice.
 sudo tee /etc/systemd/system/direwolf.service > /dev/null <<EOF
 [Unit]
 Description=Direwolf (APRS soundcard TNC/digipeater)

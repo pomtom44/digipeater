@@ -959,6 +959,13 @@
               <option value="cm108">CM108 (USB sound card PTT, auto-detect)</option>
             </select>
           </div>
+          <div class="field hidden" id="radio-ptt-serial-line-wrap">
+            <label for="radio-ptt-serial-line">Serial PTT line ${helpIcon("Which serial control line the radio's PTT circuit is wired to. RTS is the more common of the two; try DTR if PTT doesn't key with RTS.")}</label>
+            <select id="radio-ptt-serial-line">
+              <option value="RTS">RTS</option>
+              <option value="DTR">DTR</option>
+            </select>
+          </div>
           <div class="field">
             <label for="radio-audio">Audio device</label>
             <select id="radio-audio"></select>
@@ -986,10 +993,21 @@
       // pin, see RADIO_DEFAULT_PTT_GPIO_PIN) unless something else was
       // already picked earlier this session.
       document.getElementById('radio-ptt').value = wizardData.radio?.ptt_method ?? 'gpio';
+      document.getElementById('radio-ptt-serial-line').value = wizardData.radio?.ptt_serial_line ?? 'RTS';
+      document.getElementById('radio-ptt').addEventListener('change', updatePttSerialLineVisibility);
+      updatePttSerialLineVisibility();
 
       loadAudioDevices();
       loadCm108PttOptions();
       loadSerialPttOptions();
+    }
+
+    // Serial PTT line (RTS/DTR) only means anything once a serial: device
+    // is actually the picked PTT method; hidden otherwise so it doesn't
+    // read as relevant to GPIO/VOX/CM108.
+    function updatePttSerialLineVisibility() {
+      const isSerial = document.getElementById('radio-ptt').value.startsWith('serial:');
+      document.getElementById('radio-ptt-serial-line-wrap').classList.toggle('hidden', !isSerial);
     }
 
     async function loadAudioDevices() {
@@ -1020,6 +1038,7 @@
           addOption(select, `cm108:${d.device}`, `CM108: ${d.device} (${d.description})`);
         });
         if (wizardData.radio?.ptt_method) select.value = wizardData.radio.ptt_method;
+        updatePttSerialLineVisibility();
       } catch (e) {
         // generic "cm108" auto-detect option still works without this
       }
@@ -1035,6 +1054,7 @@
           addOption(select, `serial:${d.device}`, label);
         });
         if (wizardData.radio?.ptt_method) select.value = wizardData.radio.ptt_method;
+        updatePttSerialLineVisibility();
       } catch (e) {
         // VOX/GPIO options still work without this
       }
@@ -1066,6 +1086,9 @@
       // Fixed wiring, not a wizard choice. See RADIO_DEFAULT_PTT_GPIO_PIN.
       if (pttMethod === 'gpio') {
         wizardData.radio.ptt_gpio_pin = RADIO_DEFAULT_PTT_GPIO_PIN;
+      }
+      if (pttMethod.startsWith('serial:')) {
+        wizardData.radio.ptt_serial_line = document.getElementById('radio-ptt-serial-line').value;
       }
       return true;
     }
