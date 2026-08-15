@@ -229,10 +229,10 @@ fi
 # ── Grant systemctl start/stop access for the dashboard's Direwolf control ──
 # Scoped to exactly these two commands, not blanket systemctl access (which
 # could stop/restart any unit, including this app's own service), following
-# the same one-rule-per-purpose pattern as nmcli/reboot/gpsconfig above. The
-# direwolf.service unit itself doesn't exist yet (see TODO.md's
-# direwolf.conf generator gap), so these will just fail cleanly ("unit not
-# found") until it does, same as gpsd before it was wired up.
+# the same one-rule-per-purpose pattern as nmcli/reboot/gpsconfig above. Used
+# both by the dashboard's manual toggle and by main.py's own boot sequence
+# (see services/system.py), which starts or stops direwolf.service itself
+# based on config.yaml rather than leaving it enabled at the systemd level.
 SYSTEMCTL_PATH="$(command -v systemctl)"
 SUDOERS_TMP4="$(mktemp)"
 echo "$USER ALL=(root) NOPASSWD: $SYSTEMCTL_PATH start direwolf, $SYSTEMCTL_PATH stop direwolf" > "$SUDOERS_TMP4"

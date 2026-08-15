@@ -4,6 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APRS Digipeater</title>
+  <!-- Applied before the stylesheet below is parsed, so the page never
+       paints in the wrong theme and then flips: see the matching
+       :root[data-theme] rules in <style> and the theme-toggle wiring
+       further down for how 'ui-theme' gets set. -->
+  <script>
+    (function() {
+      var t = localStorage.getItem('ui-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
   <!-- Vendored locally (no CDN), see web/static/maplibre/. Only actually
        loaded/used by the Map caching step's region picker, which renders
        from the locally-cached PMTiles map data (see services/tiles.py),
@@ -23,8 +33,9 @@
       --success: #5fbf8e;
       --error: #e08585;
     }
+    /* System preference, only when there's no explicit override below. */
     @media (prefers-color-scheme: light) {
-      :root {
+      :root:not([data-theme="dark"]) {
         --bg: #f4f6f6;
         --panel: #ffffff;
         --panel-2: #f0f3f3;
@@ -35,6 +46,32 @@
         --success: #2e8b57;
         --error: #b03a3a;
       }
+    }
+    /* Explicit override via the theme toggle, wins over system preference
+       in both directions. */
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f4f6f6;
+      --panel: #ffffff;
+      --panel-2: #f0f3f3;
+      --border: #dde3e3;
+      --text: #1a2226;
+      --muted: #62726f;
+      --accent: #2e8b7f;
+      --success: #2e8b57;
+      --error: #b03a3a;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0f1416;
+      --panel: #161d20;
+      --panel-2: #1c2427;
+      --border: #263238;
+      --text: #e8edee;
+      --muted: #8a9ba0;
+      --accent: #4fb3a9;
+      --success: #5fbf8e;
+      --error: #e08585;
     }
 
     * { box-sizing: border-box; }
@@ -224,6 +261,17 @@
     }
     button:hover { border-color: var(--accent); }
     button:disabled { opacity: 0.5; cursor: default; }
+
+    #theme-toggle {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 50;
+      min-height: 0;
+      padding: 6px 10px;
+      font-size: 12px;
+      background: var(--panel);
+    }
 
     .scan-results {
       margin-top: 8px;
@@ -494,6 +542,7 @@
   </style>
 </head>
 <body>
+  <button type="button" id="theme-toggle" aria-label="Toggle color theme"></button>
   <div class="card">
     <header>
       <h1>APRS DIGIPEATER - First Boot Config</h1>
@@ -541,6 +590,31 @@
   <script src="/static/maplibre/maplibre-gl.js"></script>
   <script src="/static/maplibre/pmtiles.js"></script>
   <script>
+    // ── UI theme toggle ──────────────────────────────────────────────
+    const UI_THEME_KEY = 'ui-theme';
+    const THEME_CYCLE = [null, 'light', 'dark']; // null = follow system
+    const THEME_LABELS = { null: 'Theme: System', light: 'Theme: Light', dark: 'Theme: Dark' };
+
+    function applyUiTheme(theme) {
+      if (theme === 'light' || theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', theme);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+      document.getElementById('theme-toggle').textContent = THEME_LABELS[theme];
+    }
+
+    let uiTheme = localStorage.getItem(UI_THEME_KEY);
+    if (!THEME_CYCLE.includes(uiTheme)) uiTheme = null;
+    applyUiTheme(uiTheme);
+
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      uiTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(uiTheme) + 1) % THEME_CYCLE.length];
+      if (uiTheme) localStorage.setItem(UI_THEME_KEY, uiTheme);
+      else localStorage.removeItem(UI_THEME_KEY);
+      applyUiTheme(uiTheme);
+    });
+
     // ── Shared help modal ────────────────────────────────────────────
     // helpIcon(text) returns a "?" button carrying its explanation in a
     // data attribute: used inline wherever a field used to have a
@@ -2620,8 +2694,13 @@
           pmtilesProtocolRegistered = true;
         }
 
-        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const styleUrl = `/static/maplibre/style-${prefersDark ? 'dark' : 'light'}.json`;
+        // Follows the page's own UI theme toggle above (no separate map
+        // toggle here, unlike the dashboard's map: this picker only ever
+        // exists for the duration of a one-time setup wizard, not worth a
+        // second independent theme control for), so an explicit override
+        // wins over the raw OS preference the same way the page CSS does.
+        const uiIsDark = uiTheme === 'dark' || (uiTheme !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        const styleUrl = `/static/maplibre/style-${uiIsDark ? 'dark' : 'light'}.json`;
         const style = await (await fetch(styleUrl)).json();
         style.sources.protomaps.url = `pmtiles://${location.origin}/map-data/world.pmtiles`;
 

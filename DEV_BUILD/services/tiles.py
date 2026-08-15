@@ -36,6 +36,18 @@ install-time precache (coarse, fixed zoom, run by
 scripts/precache_world.py) and the wizard's on-demand region extracts
 (finer detail, user-picked bounds/zoom, run from web/server.py). Same
 class, different output path and bounds/zoom.
+
+A third use case, resolve_cached_source_url(), backs the dashboard's live
+map streaming (see web/server.py's /map-data/live.pmtiles): the same
+legitimate PMTiles range-read access pattern as RegionDownloader, just
+proxied live per-viewport instead of extracted once to a local file, so it
+still isn't the bulk/pre-emptive tile scraping the OSM policy above rules
+out. The proxy exists because build.protomaps.com itself has no CORS
+headers (confirmed directly against the live host, not assumed): a browser
+can't range-request it cross-origin, so the Pi relays those requests
+same-origin instead. This means live streaming needs the Pi's own
+internet, not just the viewer's browser's, even when the dashboard itself
+is being viewed from off-site over a tunnel/VPN.
 """
 
 import asyncio
@@ -109,6 +121,38 @@ async def has_internet() -> bool:
     except OSError:
         pass
     return True
+
+
+# Cache for the live-streaming proxy (see web/server.py's /map-data/live.pmtiles):
+# a single dashboard page load can trigger dozens of tile requests, each of
+# which would otherwise re-run find_source_url()'s lookback-day HEAD probing.
+# The daily build only changes once a day, so an hour-old answer is still
+# correct in practice.
+_LIVE_SOURCE_CACHE_TTL_S = 3600
+_live_source_cache: dict = {"url": None, "resolved_at": 0.0}
+
+
+async def resolve_cached_source_url() -> str:
+    """Like find_source_url(), but memoized for _LIVE_SOURCE_CACHE_TTL_S so
+    the live-tile proxy isn't re-probing build.protomaps.com on every single
+    tile request. Falls back to a stale cached URL on a transient
+    re-resolution failure (the daily build rarely changes day-to-day, so a
+    few-hour-old URL is still almost certainly valid) rather than breaking
+    an otherwise-working map over one flaky probe; only raises RuntimeError
+    (same as find_source_url()) if nothing has ever resolved yet."""
+    now = asyncio.get_event_loop().time()
+    cached_url = _live_source_cache["url"]
+    if cached_url and now - _live_source_cache["resolved_at"] < _LIVE_SOURCE_CACHE_TTL_S:
+        return cached_url
+    try:
+        url, _ = await find_source_url()
+    except RuntimeError:
+        if cached_url:
+            return cached_url
+        raise
+    _live_source_cache["url"] = url
+    _live_source_cache["resolved_at"] = now
+    return url
 
 
 async def find_source_url() -> tuple[str, str]:

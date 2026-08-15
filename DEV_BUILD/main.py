@@ -7,7 +7,7 @@ import uvicorn
 import yaml
 
 from display.driver_none import NullDriver
-from services import direwolf_config, gpsconfig, network, system
+from services import direwolf_config, gpsconfig, network, relay, system
 from web.server import create_app
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -161,6 +161,32 @@ async def _show_network_status(driver, template, title: str, kind: str, ip: str,
 async def main() -> None:
     first_boot = not CONFIG_PATH.exists()
 
+    # Read early, before the display driver is constructed below: GPIO pin
+    # overrides (config.yaml's gpio section, see web/server.py's
+    # /api/config/save) have to be applied before module_init() claims
+    # them, which happens inside display_driver.init() a few lines down.
+    # {} on first boot, same as the normal-boot branch's own read further
+    # below, just done sooner here so the display driver sees it too;
+    # first_boot itself never has GPIO overrides to apply since
+    # config.yaml doesn't exist yet, so this is a no-op there.
+    config = {}
+    if not first_boot:
+        try:
+            config = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+        except Exception as e:
+            logger.error("Failed to read %s: %s", CONFIG_PATH, e)
+            config = {}
+
+    gpio_config = config.get("gpio", {}) or {}
+    relay.init(gpio_config.get("relay_pin", relay.DEFAULT_RELAY_PIN))
+    from display.waveshare import epdconfig
+    epdconfig.configure(
+        rst=gpio_config.get("eink_rst"),
+        dc=gpio_config.get("eink_dc"),
+        cs=gpio_config.get("eink_cs"),
+        busy=gpio_config.get("eink_busy"),
+    )
+
     driver_name, driver_model = _load_display_config()
     display_driver = _load_display_driver(driver_name, driver_model)
     try:
@@ -181,12 +207,9 @@ async def main() -> None:
     else:
         # Normal boot has nothing left to confirm to the user beyond "it's
         # up": network detail lives on the web UI now, not the screen.
+        # config was already read above, before the display driver was
+        # constructed (needed there for GPIO pin overrides).
         await _render(display_driver, template.draw_loading_page, "Digipeater", fast=True)
-        try:
-            config = yaml.safe_load(CONFIG_PATH.read_text()) or {}
-        except Exception as e:
-            logger.error("Failed to read %s: %s", CONFIG_PATH, e)
-            config = {}
         await gpsconfig.apply(config.get("gps", {}))
 
         # Regenerated fresh on every boot (idempotent, same pattern as
@@ -197,7 +220,7 @@ async def main() -> None:
         except OSError as e:
             logger.error("Failed to write direwolf.conf: %s", e)
         want_running = (config.get("startup", {}) or {}).get("autostart", True)
-        result = await system.set_direwolf_running(want_running)
+        result = await system.set_direwolf_running(want_running, config)
         if not result["ok"]:
             logger.error("Failed to %s direwolf: %s", "start" if want_running else "stop", result["reason"])
 

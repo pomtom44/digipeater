@@ -4,6 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APRS Digipeater: Login</title>
+  <!-- Applied before the stylesheet below is parsed, so the page never
+       paints in the wrong theme and then flips: see the matching
+       :root[data-theme] rules in <style> and the theme-toggle wiring
+       further down for how 'ui-theme' gets set. -->
+  <script>
+    (function() {
+      var t = localStorage.getItem('ui-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
   <style>
     :root {
       color-scheme: dark light;
@@ -15,8 +25,9 @@
       --accent: #4fb3a9;
       --error: #e08585;
     }
+    /* System preference, only when there's no explicit override below. */
     @media (prefers-color-scheme: light) {
-      :root {
+      :root:not([data-theme="dark"]) {
         --bg: #f4f6f6;
         --panel: #ffffff;
         --border: #dde3e3;
@@ -26,8 +37,48 @@
         --error: #b03a3a;
       }
     }
+    /* Explicit override via the theme toggle, wins over system preference
+       in both directions. */
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f4f6f6;
+      --panel: #ffffff;
+      --border: #dde3e3;
+      --text: #1a2226;
+      --muted: #62726f;
+      --accent: #2e8b7f;
+      --error: #b03a3a;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0f1416;
+      --panel: #161d20;
+      --border: #263238;
+      --text: #e8edee;
+      --muted: #8a9ba0;
+      --accent: #4fb3a9;
+      --error: #e08585;
+    }
 
     * { box-sizing: border-box; }
+
+    #theme-toggle {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 50;
+      width: auto;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 400;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    #theme-toggle:hover { border-color: var(--accent); }
 
     body {
       margin: 0;
@@ -103,6 +154,7 @@
   </style>
 </head>
 <body>
+  <button type="button" id="theme-toggle" aria-label="Toggle color theme"></button>
   <div class="card">
     <h1 id="title">APRS Digipeater</h1>
     <p class="hint">Enter the password to continue.</p>
@@ -122,6 +174,31 @@
   </div>
 
   <script>
+    // ── UI theme toggle ──────────────────────────────────────────────
+    const UI_THEME_KEY = 'ui-theme';
+    const THEME_CYCLE = [null, 'light', 'dark']; // null = follow system
+    const THEME_LABELS = { null: 'Theme: System', light: 'Theme: Light', dark: 'Theme: Dark' };
+
+    function applyUiTheme(theme) {
+      if (theme === 'light' || theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', theme);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+      document.getElementById('theme-toggle').textContent = THEME_LABELS[theme];
+    }
+
+    let uiTheme = localStorage.getItem(UI_THEME_KEY);
+    if (!THEME_CYCLE.includes(uiTheme)) uiTheme = null;
+    applyUiTheme(uiTheme);
+
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      uiTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(uiTheme) + 1) % THEME_CYCLE.length];
+      if (uiTheme) localStorage.setItem(UI_THEME_KEY, uiTheme);
+      else localStorage.removeItem(UI_THEME_KEY);
+      applyUiTheme(uiTheme);
+    });
+
     // Backend redirects here with ?error=... on a failed attempt (see
     // /api/auth/login) rather than the page itself knowing why, since a
     // native form submission is a fresh page load either way.

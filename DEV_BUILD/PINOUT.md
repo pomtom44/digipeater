@@ -1,29 +1,56 @@
 # GPIO Pinout
 
-**BCM numbering** (not physical pin numbers) throughout.
+**BCM numbering** shown first, physical pin number in parentheses. All pins below can be changed after setup on the dashboard's **Config → GPIO** tab if you need to wire something differently.
+
+## Raspberry Pi 3 GPIO Header
+
+Looking at the header with pin 1 at the top-left (the corner nearest the SD card):
+
+| Left column | | Right column |
+|---|---|---|
+| 1 &nbsp; 3.3V | | 5V &nbsp; 2 |
+| 3 &nbsp; GPIO2 (SDA) | | 5V &nbsp; 4 |
+| 5 &nbsp; GPIO3 (SCL) | | GND &nbsp; 6 |
+| 7 &nbsp; GPIO4 | | **GPIO14 (TXD): GPS UART, if used** &nbsp; 8 |
+| GND &nbsp; 9 | | **GPIO15 (RXD): GPS UART, if used** &nbsp; 10 |
+| **GPIO17: E-Ink RST** &nbsp; 11 | | GPIO18 &nbsp; 12 |
+| **GPIO27: Relay control** &nbsp; 13 | | GND &nbsp; 14 |
+| **GPIO22: PTT** &nbsp; 15 | | GPIO23 &nbsp; 16 |
+| 3.3V &nbsp; 17 | | **GPIO24: E-Ink BUSY** &nbsp; 18 |
+| **GPIO10 (MOSI): E-Ink DIN** &nbsp; 19 | | GND &nbsp; 20 |
+| GPIO9 (MISO) &nbsp; 21 | | **GPIO25: E-Ink DC** &nbsp; 22 |
+| **GPIO11 (SCLK): E-Ink CLK** &nbsp; 23 | | **GPIO8 (CE0): E-Ink CS** &nbsp; 24 |
+| GND &nbsp; 25 | | GPIO7 (CE1) &nbsp; 26 |
+| ID_SD &nbsp; 27 | | ID_SC &nbsp; 28 |
+| GPIO5 &nbsp; 29 | | GND &nbsp; 30 |
+| GPIO6 &nbsp; 31 | | GPIO12 &nbsp; 32 |
+| GPIO13 &nbsp; 33 | | GND &nbsp; 34 |
+| GPIO19 &nbsp; 35 | | GPIO16 &nbsp; 36 |
+| GPIO26 &nbsp; 37 | | GPIO20 &nbsp; 38 |
+| GND &nbsp; 39 | | GPIO21 &nbsp; 40 |
+
+**Bold** = used by this project. Any GND pin can supply ground for the components below; the wiring diagrams pick a convenient nearby one, but any of them works.
 
 ---
 
 ## E-Ink Display
 
-All supported displays share the same 8-pin SPI EPD wiring convention and the same pin assignments (set once in `display/waveshare/epdconfig.py`); only one display is wired at a time, selected during install.
+These are the pins you will use:
 
-| Display pin | BCM | Physical pin |
-|---|---|---|
-| VCC | N/A | 1 (or 17) |
-| GND | N/A | 9 (any GND pin works) |
-| DIN (MOSI) | GPIO 10 | 19 |
-| CLK (SCLK) | GPIO 11 | 23 |
-| CS | GPIO 8 (SPI CE0) | 24 |
-| DC | GPIO 25 | 22 |
-| RST | GPIO 17 | 11 |
-| BUSY | GPIO 24 | 18 |
+| Display pin | Pi pin |
+|---|---|
+| VCC | 3.3V (pin 1 or 17) |
+| GND | GND (pin 9, or any other GND) |
+| DIN (MOSI) | GPIO10 (pin 19) |
+| CLK (SCLK) | GPIO11 (pin 23) |
+| CS | GPIO8 / CE0 (pin 24) |
+| DC | GPIO25 (pin 22) |
+| RST | GPIO17 (pin 11) |
+| BUSY | GPIO24 (pin 18) |
 
-**BCM and physical pin numbers are not the same thing**: e.g. physical pin 17 is 3.3V power, not GPIO17. Wiring against the wrong column is a common mistake and will produce a consistent, clean failure (not a flaky one), since every wire is solidly connected, just to the wrong signal. Count physical header holes, not GPIO labels, when in doubt, or run `pinout` over SSH on the Pi for a labeled diagram of the actual header.
+**BCM and physical pin numbers are not the same thing**: e.g. physical pin 17 is 3.3V power, not GPIO17. Count physical header holes, not GPIO labels, when in doubt, or run `pinout` over SSH on the Pi for a labeled diagram.
 
-If you wire to different pins, update the constants at the top of `display/waveshare/epdconfig.py` to match (those are BCM numbers).
-
-Neither of the two currently supported displays is a direct-plug RPi HAT; both need to be wired to the Pi by hand:
+Neither supported display is a direct-plug RPi HAT; both need to be wired to the Pi by hand:
 
 - **Generic 1.54" SPI e-Paper (200×200)**: primary/main hardware target. No direct-plug header at all (bare module), wire by hand.
 - **Waveshare Pico-ePaper-2.9-B (296×128, B/W/R)**: dev/secondary display. Wired for a Pico's header, not a direct-plug RPi HAT.
@@ -32,12 +59,44 @@ Neither of the two currently supported displays is a direct-plug RPi HAT; both n
 
 ## PTT (Push-to-Talk)
 
-Wiring depends on which PTT method is picked in the setup wizard's Radio step; see [SUPPORTED_HARDWARE.md](SUPPORTED_HARDWARE.md) for what's actually been tested:
+This is the pin you will use if PTT is set to GPIO pin mode (see [SUPPORTED_HARDWARE.md](SUPPORTED_HARDWARE.md) for other PTT methods, which don't use GPIO at all):
 
-| Method | GPIO wiring needed? | Notes |
-|---|---|---|
-| VOX | No | Audio-only: the radio keys itself off the transmit audio. No Pi GPIO involved. |
-| GPIO pin | Yes: one wire from **BCM GPIO 22** (physical pin 15) to the radio's PTT input | Fixed pin, not wizard-configurable; this hardware target has one wiring convention, same as the display pins above. Selecting "GPIO pin" in the wizard saves `radio.ptt_gpio_pin: 22` to `config.yaml` automatically, and the dropdown itself shows the pin ("GPIO pin (BCM 22, physical pin 15)") so it's never ambiguous which pin to wire. If you ever need a different pin, edit both `RADIO_DEFAULT_PTT_GPIO_PIN` and `RADIO_DEFAULT_PTT_GPIO_PHYSICAL_PIN` in `web/static/first_run.html` (and this table) to match your wiring; don't just rewire without updating all three. |
-| CM108-family USB adapter | No | PTT is driven entirely over USB by the adapter itself: the adapter's own output (often a radio-specific or 3.5mm connector) goes straight to the radio. No Pi GPIO pin is used at all. |
+| Signal | Pi pin |
+|---|---|
+| PTT control | GPIO22 (pin 15) |
+| Return | GND (any GND pin) |
 
-GPIO 22 was picked because it's free on every currently-supported display wiring (not used by SPI, I2C, or UART); see the E-Ink Display table above and avoid GPIO 14/15 (UART, reserved for a UART-connected GPS) if wiring anything else to this Pi.
+Wired through an **optocoupler**, not directly into the radio: GPIO22 and a GND pin drive the optocoupler's input LED, and the optocoupler's output switches the radio's PTT line to ground to key it. This electrically isolates the Pi from the radio's PTT circuit, so a fault on the radio side can't damage the Pi's GPIO.
+
+---
+
+## Radio Power Relay
+
+This is the pin you will use:
+
+| Signal | Pi pin |
+|---|---|
+| Relay control signal | GPIO27 (pin 13) |
+| Relay module power | 5V (pin 2 or 4) |
+| Relay module ground | GND (any GND pin) |
+
+Powers the radio on before the digipeater software starts and off after it stops.
+
+---
+
+## GPS (UART-wired, optional)
+
+Only relevant if wiring a GPS module directly to the Pi's UART instead of using a USB GPS (USB GPS devices are detected automatically and don't need any of this):
+
+| Signal | Pi pin |
+|---|---|
+| GPS TX → Pi RX | GPIO15 / RXD (pin 10) |
+| GPS RX → Pi TX | GPIO14 / TXD (pin 8) |
+| GPS power | 3.3V or 5V, per your GPS module's spec |
+| GPS ground | GND (any GND pin) |
+
+---
+
+## Changing pins after setup
+
+The GPIO tab under **Config** in the dashboard is the one place the PTT, relay, and e-ink pins above become editable. It warns if two pins end up set to the same value. Relay and e-ink pin changes need a reboot to take effect; a PTT pin change applies immediately.

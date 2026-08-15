@@ -4,6 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APRS Digipeater</title>
+  <!-- Applied before the stylesheet below is parsed, so the page never
+       paints in the wrong theme and then flips: see the matching
+       :root[data-theme] rules in <style> and the theme-toggle wiring
+       further down for how 'ui-theme' gets set. -->
+  <script>
+    (function() {
+      var t = localStorage.getItem('ui-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
   <!-- Vendored locally (no CDN): see web/static/maplibre/ and
        first_run.html's Map caching step, which uses the exact same
        MapLibre + PMTiles setup this page reuses for the home-location map. -->
@@ -21,8 +31,9 @@
       --success: #5fbf8e;
       --error: #e08585;
     }
+    /* System preference, only when there's no explicit override below. */
     @media (prefers-color-scheme: light) {
-      :root {
+      :root:not([data-theme="dark"]) {
         --bg: #f4f6f6;
         --panel: #ffffff;
         --panel-2: #f0f3f3;
@@ -33,6 +44,32 @@
         --success: #2e8b57;
         --error: #b03a3a;
       }
+    }
+    /* Explicit override via the theme toggle, wins over system preference
+       in both directions. */
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f4f6f6;
+      --panel: #ffffff;
+      --panel-2: #f0f3f3;
+      --border: #dde3e3;
+      --text: #1a2226;
+      --muted: #62726f;
+      --accent: #2e8b7f;
+      --success: #2e8b57;
+      --error: #b03a3a;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0f1416;
+      --panel: #161d20;
+      --panel-2: #1c2427;
+      --border: #263238;
+      --text: #e8edee;
+      --muted: #8a9ba0;
+      --accent: #4fb3a9;
+      --success: #5fbf8e;
+      --error: #e08585;
     }
 
     * { box-sizing: border-box; }
@@ -135,6 +172,18 @@
       gap: 10px;
     }
 
+    /* The callsign wrapper shrinks (and its text ellipsizes) before the
+       badge does, so a long callsign never pushes the Direwolf badge off
+       the edge of the sidebar or wraps it onto its own line. */
+    .station-header > div:not(.station-symbol) {
+      min-width: 0;
+      flex-shrink: 1;
+    }
+
+    #direwolf-badge-slot {
+      flex-shrink: 0;
+    }
+
     .station-symbol {
       width: 40px;
       height: 40px;
@@ -152,6 +201,9 @@
       font-size: 18px;
       font-weight: 700;
       line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .station-comment {
@@ -231,10 +283,6 @@
       font-family: inherit;
       cursor: pointer;
     }
-    button.badge:disabled {
-      cursor: default;
-      opacity: 0.6;
-    }
 
     .modal-overlay {
       position: fixed;
@@ -303,6 +351,7 @@
           <div>
             <div class="station-callsign" id="station-callsign">-</div>
           </div>
+          <div id="direwolf-badge-slot" style="margin-left:auto"></div>
         </div>
         <div class="station-comment" id="station-comment"></div>
         <div class="badge-row" id="station-badges"></div>
@@ -325,6 +374,7 @@
       </div>
 
       <div class="auth-row">
+        <button type="button" id="theme-toggle" class="btn" title="UI theme (independent of the map's own theme toggle, top-left on the map itself)"></button>
         <button type="button" id="btn-config" class="btn hidden">Config</button>
         <button type="button" id="btn-login" class="btn hidden">Log in</button>
         <button type="button" id="btn-logout" class="btn hidden">Log out</button>
@@ -337,8 +387,8 @@
       <div id="dashboard-map"></div>
       <div id="map-unavailable" class="hidden">
         <div>
-          <p>No map data cached yet.</p>
-          <p class="note">Run the installer, or check the Map caching step during setup.</p>
+          <p>No map data cached, and no internet available to stream one.</p>
+          <p class="note">Run the installer, check the Map caching step during setup, or connect the Pi to the internet.</p>
         </div>
       </div>
     </main>
@@ -466,6 +516,32 @@
       `;
     }
 
+    // ── UI theme toggle (page chrome only; the map has its own separate
+    // toggle, see initDashboardMap below, so the two can differ) ───────
+    const UI_THEME_KEY = 'ui-theme';
+    const THEME_CYCLE = [null, 'light', 'dark']; // null = follow system
+    const THEME_LABELS = { null: 'Theme: System', light: 'Theme: Light', dark: 'Theme: Dark' };
+
+    function applyUiTheme(theme) {
+      if (theme === 'light' || theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', theme);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+      document.getElementById('theme-toggle').textContent = THEME_LABELS[theme];
+    }
+
+    let uiTheme = localStorage.getItem(UI_THEME_KEY);
+    if (!THEME_CYCLE.includes(uiTheme)) uiTheme = null;
+    applyUiTheme(uiTheme);
+
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      uiTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(uiTheme) + 1) % THEME_CYCLE.length];
+      if (uiTheme) localStorage.setItem(UI_THEME_KEY, uiTheme);
+      else localStorage.removeItem(UI_THEME_KEY);
+      applyUiTheme(uiTheme);
+    });
+
     // ── Auth (login/config/logout buttons, and gating the Direwolf
     // control below) ─────────────────────────────────────────────────
     // Populated once at boot from /api/auth/status: see the boot IIFE.
@@ -493,14 +569,16 @@
       }
     });
 
-    // ── Confirm modal (used only when there's no login gate already
-    // acting as an "are you sure": see toggleDirewolf below) ──────────
-    function confirmModal(text) {
+    // ── Confirm modal (used both as a bare "are you sure" and, with
+    // custom labels, as the Direwolf badge's login-required prompt below) ──
+    function confirmModal(text, { okLabel = 'Confirm', cancelLabel = 'Cancel' } = {}) {
       return new Promise((resolve) => {
         const overlay = document.getElementById('confirm-modal');
         const okBtn = document.getElementById('confirm-modal-ok');
         const cancelBtn = document.getElementById('confirm-modal-cancel');
         document.getElementById('confirm-modal-text').textContent = text;
+        okBtn.textContent = okLabel;
+        cancelBtn.textContent = cancelLabel;
         overlay.classList.remove('hidden');
         function cleanup(result) {
           overlay.classList.add('hidden');
@@ -516,17 +594,18 @@
     }
 
     // ── Direwolf status/control badge, living in the station card's own
-    // badge row next to Digipeat/IGate (no separate "System status" card
-    // anymore). No systemd service exists yet (see TODO.md's
-    // direwolf.conf generator gap), so services/system.py honestly
-    // reports "not set up" until it does; this just displays and acts on
-    // whatever that says. ────────────────────────────────────────────
+    // header row to the right of the callsign (no separate "System
+    // status" card anymore). services/system.py reports the real
+    // direwolf.service state where one is installed, falling back to an
+    // in-memory simulated state otherwise; this just displays and acts
+    // on whatever that says. ──────────────────────────────────────────
     async function toggleDirewolf(status) {
       const wantRunning = !status.running;
-      // A login was already required to reach this control at all under
-      // readonly/full (see the disabled state below); that in itself is
-      // the "are you sure", so only mode 'none' (no gate at all) also
-      // needs a confirm modal as its own safety net against a stray click.
+      // Not logged in under readonly/full gets a "log in first" modal
+      // instead of reaching this at all (see renderSystemStatusBody
+      // below), which is itself an "are you sure"; so only mode 'none'
+      // (no login gate at all) also needs a confirm modal here, as its
+      // own safety net against a stray click.
       if (authState.mode === 'none') {
         const ok = await confirmModal(`${wantRunning ? 'Start' : 'Stop'} Direwolf?`);
         if (!ok) return;
@@ -549,12 +628,11 @@
     }
 
     async function renderSystemStatusBody() {
-      const badgeRow = document.getElementById('station-badges');
+      const badgeSlot = document.getElementById('direwolf-badge-slot');
       // Idempotent: drop any previous Direwolf badge before appending a
       // fresh one, since this re-runs after every start/stop (see
       // toggleDirewolf above) as well as once at boot.
-      const existing = document.getElementById('direwolf-toggle');
-      if (existing) existing.remove();
+      badgeSlot.innerHTML = '';
 
       let status;
       try {
@@ -571,10 +649,18 @@
       const label = 'Direwolf: ' + (status.running ? 'Running' : 'Stopped') + (status.simulated ? ' (sim)' : '');
       const title = status.simulated ? 'No direwolf.service installed yet. This toggles an in-memory simulated state for UI testing only.' : '';
       const badgeClass = `badge${status.running ? ' on' : ''}`;
-      badgeRow.insertAdjacentHTML('beforeend', `<button type="button" class="${badgeClass}" id="direwolf-toggle" title="${title}" ${!canControl ? 'disabled' : ''}>${label}</button>`);
-      if (canControl) {
-        document.getElementById('direwolf-toggle').addEventListener('click', () => toggleDirewolf(status));
-      }
+      // Always clickable, even when not logged in: readonly/full mode
+      // without a session gets an explicit "log in first" modal instead
+      // of a disabled, unexplained button.
+      badgeSlot.innerHTML = `<button type="button" class="${badgeClass}" id="direwolf-toggle" title="${title}">${label}</button>`;
+      document.getElementById('direwolf-toggle').addEventListener('click', async () => {
+        if (!canControl) {
+          const ok = await confirmModal('Log in to change state', { okLabel: 'Log in', cancelLabel: 'Cancel' });
+          if (ok) location.href = '/login';
+          return;
+        }
+        toggleDirewolf(status);
+      });
     }
 
     // ── Beacon stats card (sample data: no packet source exists yet to
@@ -622,9 +708,9 @@
     }
 
     // ── Home-location map ─────────────────────────────────────────────
-    async function initDashboardMap(cfg, worldAvailable, regionAvailable) {
+    async function initDashboardMap(cfg, worldAvailable, regionAvailable, online) {
       const mapUnavailable = document.getElementById('map-unavailable');
-      if (!worldAvailable && !regionAvailable) {
+      if (!online && !worldAvailable && !regionAvailable) {
         mapUnavailable.classList.remove('hidden');
         return;
       }
@@ -660,30 +746,94 @@
       const protocol = new pmtiles.Protocol();
       maplibregl.addProtocol('pmtiles', protocol.tile);
 
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const styleUrl = `/static/maplibre/style-${prefersDark ? 'dark' : 'light'}.json`;
-      const style = await (await fetch(styleUrl)).json();
-      // Region data is finer detail (higher max zoom, user-picked bounds)
-      // than the coarse whole-world precache; prefer it when available.
-      const pmtilesFile = regionAvailable ? 'region.pmtiles' : 'world.pmtiles';
-      style.sources.protomaps.url = `pmtiles://${location.origin}/map-data/${pmtilesFile}`;
+      // When the Pi has internet, stream the live planet archive via the
+      // same-origin proxy (see web/server.py's /map-data/live.pmtiles):
+      // full detail everywhere, no gaps outside the cached region, at the
+      // cost of every tile being a network round trip instead of a local
+      // disk read. Local and remote PMTiles archives address tiles by byte
+      // offset into their own separately-computed directory, so there's no
+      // way to mix "this tile from cache, that one from the proxy" within
+      // a single source; it's whichever one for the whole session. Falls
+      // back to local (region data preferred over the coarser world
+      // precache) when there's no internet.
+      const pmtilesFile = online ? 'live.pmtiles' : (regionAvailable ? 'region.pmtiles' : 'world.pmtiles');
+      const pmtilesUrl = `pmtiles://${location.origin}/map-data/${pmtilesFile}`;
+
+      // The map's own theme toggle (top-left map control below), entirely
+      // separate from the page's UI theme toggle in the sidebar: a station
+      // photo/terrain preference for the map has nothing to do with
+      // whether the sidebar chrome is light or dark, so they're tracked
+      // independently (own localStorage key, own cycle state).
+      const MAP_THEME_KEY = 'map-theme';
+      const MAP_THEME_LABELS = { null: 'Map: System', light: 'Map: Light', dark: 'Map: Dark' };
+      let mapTheme = localStorage.getItem(MAP_THEME_KEY);
+      if (!THEME_CYCLE.includes(mapTheme)) mapTheme = null;
+
+      function resolveMapDark(theme) {
+        if (theme === 'light') return false;
+        if (theme === 'dark') return true;
+        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      }
+
+      async function buildMapStyle(dark) {
+        const styleUrl = `/static/maplibre/style-${dark ? 'dark' : 'light'}.json`;
+        const s = await (await fetch(styleUrl)).json();
+        s.sources.protomaps.url = pmtilesUrl;
+        return s;
+      }
 
       const map = new maplibregl.Map({
         container: 'dashboard-map',
-        style,
+        style: await buildMapStyle(resolveMapDark(mapTheme)),
         center,
         zoom: homeLat !== null ? 12 : 1,
       });
       map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
+      // A small custom control (MapLibre's IControl interface) rather
+      // than a page-level button: keeps it visually and physically
+      // scoped to the map itself, and top-left keeps it clear of the
+      // NavigationControl's zoom/compass buttons at top-right. Doesn't
+      // react to a live OS theme change while set to "System" (would
+      // need its own matchMedia listener re-triggering setStyle); a
+      // minor gap, not worth the extra listener for how rarely that'd
+      // actually happen while the dashboard is open.
+      class MapThemeControl {
+        onAdd(mapInstance) {
+          this._container = document.createElement('div');
+          this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.style.cssText = 'width:auto;padding:0 10px;font-size:12px;font-family:inherit;white-space:nowrap;';
+          btn.textContent = MAP_THEME_LABELS[mapTheme];
+          btn.addEventListener('click', async () => {
+            mapTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(mapTheme) + 1) % THEME_CYCLE.length];
+            if (mapTheme) localStorage.setItem(MAP_THEME_KEY, mapTheme);
+            else localStorage.removeItem(MAP_THEME_KEY);
+            btn.textContent = MAP_THEME_LABELS[mapTheme];
+            mapInstance.setStyle(await buildMapStyle(resolveMapDark(mapTheme)));
+          });
+          this._container.appendChild(btn);
+          return this._container;
+        }
+        onRemove() {
+          this._container.parentNode.removeChild(this._container);
+        }
+      }
+      map.addControl(new MapThemeControl(), 'top-left');
+
       await new Promise(resolve => map.on('load', resolve));
 
       if (homeLat !== null) {
+        // A ring around the icon, not just the icon alone, so the home
+        // station reads as distinct from the (same-sized-or-larger, once
+        // real data replaces SAMPLE_HEARD_STATIONS) heard-station markers
+        // below rather than blending in as just another dot on the map.
         const el = document.createElement('div');
-        el.style.cssText = 'width:40px;height:40px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));';
+        el.style.cssText = 'width:48px;height:48px;border-radius:50%;border:3px solid var(--accent);box-sizing:border-box;display:flex;align-items:center;justify-content:center;background:var(--panel);filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));';
         const aprs = cfg.aprs || {};
         const sym = (aprs.symbol && aprs.symbol.table && aprs.symbol.symbol) ? aprs.symbol : { table: '/', symbol: '#' };
-        el.innerHTML = symbolGlyphHTML(sym, 40);
+        el.innerHTML = symbolGlyphHTML(sym, 36);
         new maplibregl.Marker({ element: el }).setLngLat(center).addTo(map);
 
         // Same sample data as the Heard stations sidebar card, plotted
@@ -744,15 +894,18 @@
         gpsPollTimer = setInterval(pollGps, GPS_POLL_MS);
       }
 
-      let worldAvailable = false, regionAvailable = false;
+      let worldAvailable = false, regionAvailable = false, online = false;
       try {
         worldAvailable = (await (await fetch('/api/map/world-status')).json()).available;
       } catch (e) {}
       try {
         regionAvailable = (await (await fetch('/api/map/region-status')).json()).available;
       } catch (e) {}
+      try {
+        online = (await (await fetch('/api/network/internet')).json()).online;
+      } catch (e) {}
 
-      initDashboardMap(cfg, worldAvailable, regionAvailable);
+      initDashboardMap(cfg, worldAvailable, regionAvailable, online);
     })();
   </script>
 </body>

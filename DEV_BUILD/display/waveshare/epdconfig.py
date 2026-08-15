@@ -34,7 +34,26 @@ try:
     _HW = True
 except ImportError:
     _HW = False
-    logger.info("RPi.GPIO/spidev unavailable — e-ink display running in simulation mode")
+    logger.info("RPi.GPIO/spidev unavailable, e-ink display running in simulation mode")
+
+
+def configure(rst: int = None, dc: int = None, cs: int = None, busy: int = None) -> None:
+    """Overrides the pin constants above (config.yaml's gpio.eink_* fields,
+    see web/server.py's /api/config/save) before module_init() claims
+    them. Must be called before module_init(), i.e. before
+    _load_display_driver() constructs the EPD instance in main.py, since
+    EPD.__init__() snapshots these module-level constants onto itself at
+    construction time; changing them afterward has no effect on an
+    already-constructed EPD. A None argument leaves that pin unchanged."""
+    global RST_PIN, DC_PIN, CS_PIN, BUSY_PIN
+    if rst is not None:
+        RST_PIN = rst
+    if dc is not None:
+        DC_PIN = dc
+    if cs is not None:
+        CS_PIN = cs
+    if busy is not None:
+        BUSY_PIN = busy
 
 
 def module_init() -> int:
@@ -46,11 +65,11 @@ def module_init() -> int:
     GPIO.setup(DC_PIN,  GPIO.OUT)
     GPIO.setup(CS_PIN,  GPIO.OUT)
     # Internal pull-up: BUSY floats and reads a constant LOW without one,
-    # regardless of the panel's real state — confirmed with a multimeter.
+    # regardless of the panel's real state, confirmed with a multimeter.
     GPIO.setup(BUSY_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     _SPI.open(0, 0)
     # Kept at 1MHz (below Waveshare's 4MHz reference) since this board is
-    # driven over breadboard jumper wires rather than a direct HAT connection —
+    # driven over breadboard jumper wires rather than a direct HAT connection,
     # confirmed working at this speed during testing.
     _SPI.max_speed_hz = 1000000
     _SPI.mode = 0b00

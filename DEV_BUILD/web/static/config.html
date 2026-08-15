@@ -4,25 +4,71 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APRS Digipeater: Settings</title>
+  <!-- Applied before the stylesheet below is parsed, so the page never
+       paints in the wrong theme and then flips: see the matching
+       :root[data-theme] rules in <style> and the theme-toggle wiring
+       further down for how 'ui-theme' gets set. -->
+  <script>
+    (function() {
+      var t = localStorage.getItem('ui-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <!-- Vendored locally (no CDN), see web/static/maplibre/. Only actually
+       loaded/used by the Map tab's region picker, ported from
+       first_run.html's Map caching step: it renders from the locally
+       cached PMTiles map data, not a live tile server, so it needs a
+       vector renderer rather than a raster tile layer. -->
+  <link rel="stylesheet" href="/static/maplibre/maplibre-gl.css">
   <style>
     :root {
       color-scheme: dark light;
       --bg: #0f1416;
       --panel: #161d20;
+      --panel-2: #1c2427;
       --border: #263238;
       --text: #e8edee;
       --muted: #8a9ba0;
       --accent: #4fb3a9;
+      --success: #5fbf8e;
+      --error: #e08585;
     }
     @media (prefers-color-scheme: light) {
-      :root {
+      :root:not([data-theme="dark"]) {
         --bg: #f4f6f6;
         --panel: #ffffff;
+        --panel-2: #f0f3f3;
         --border: #dde3e3;
         --text: #1a2226;
         --muted: #62726f;
         --accent: #2e8b7f;
+        --success: #2e8b57;
+        --error: #b03a3a;
       }
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f4f6f6;
+      --panel: #ffffff;
+      --panel-2: #f0f3f3;
+      --border: #dde3e3;
+      --text: #1a2226;
+      --muted: #62726f;
+      --accent: #2e8b7f;
+      --success: #2e8b57;
+      --error: #b03a3a;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0f1416;
+      --panel: #161d20;
+      --panel-2: #1c2427;
+      --border: #263238;
+      --text: #e8edee;
+      --muted: #8a9ba0;
+      --accent: #4fb3a9;
+      --success: #5fbf8e;
+      --error: #e08585;
     }
 
     * { box-sizing: border-box; }
@@ -30,53 +76,3268 @@
     body {
       margin: 0;
       min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       background: var(--bg);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      padding: 16px;
     }
 
-    .card {
-      width: 100%;
-      max-width: 420px;
+    #theme-toggle {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 60;
+      min-height: 0;
+      padding: 6px 10px;
+      font-size: 12px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      cursor: pointer;
+    }
+    #theme-toggle:hover { border-color: var(--accent); }
+
+    header.page-header {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 20px 20px 0;
+    }
+    header.page-header h1 {
+      font-size: 20px;
+      margin: 0 0 4px;
+      font-weight: 700;
+    }
+    header.page-header p {
+      color: var(--muted);
+      font-size: 13px;
+      margin: 0;
+    }
+    header.page-header a {
+      color: var(--accent);
+      font-size: 13px;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    header.page-header a:hover { text-decoration: underline; }
+
+    /* Sticky so the tab bar and the global Save action stay reachable no
+       matter how far down a tab's own fields scroll: this page has no
+       Back/Next, a tab can be long (Map, APRS), and re-scrolling to the
+       top to save would be a real annoyance on a touchscreen kiosk. */
+    .tabbar-wrap {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      background: var(--bg);
+      padding-top: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .tabbar {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 20px;
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+    }
+    .tab-btn {
+      flex-shrink: 0;
+      min-height: 36px;
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-bottom: none;
+      border-radius: 8px 8px 0 0;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active {
+      background: var(--panel);
+      color: var(--accent);
+      border-color: var(--border);
+      position: relative;
+      top: 1px;
+    }
+
+    .savebar {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .savebar .spacer { flex: 1; }
+    #btn-save-all {
+      font-weight: 700;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .save-banner {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 20px 12px;
+    }
+    .banner {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.6;
+      background: var(--panel-2);
+    }
+    .banner.success { border-color: var(--success); }
+    .banner.error { border-color: var(--error); }
+    .banner strong { display: block; margin-bottom: 4px; }
+    .banner button { margin-top: 8px; }
+
+    /* Inline, non-blocking warnings (e.g. APRS/Radio's "still on defaults"
+       notices): distinct from .msg.error, which is a hard validation
+       failure that actually stops something. Save still proceeds with
+       one of these showing. */
+    .warn-banner {
+      background: var(--panel-2);
+      border: 1px solid var(--error);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text);
+      margin-top: 10px;
+    }
+
+    main.container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 20px 20px 80px;
+    }
+
+    .tab-panel .panel-card {
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 32px;
-      text-align: center;
+      padding: 24px;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     }
-
-    h1 {
-      font-size: 18px;
-      margin: 0 0 8px;
-      font-weight: 700;
+    @media (max-width: 480px) {
+      .tab-panel .panel-card { padding: 16px; border-radius: 10px; }
+      main.container { padding: 16px 12px 80px; }
+      header.page-header { padding: 16px 12px 0; }
+      .tabbar { padding: 0 12px; }
+      .savebar { padding: 10px 12px; }
+      .save-banner { padding: 0 12px 12px; }
     }
 
-    p {
-      color: var(--muted);
-      font-size: 14px;
-      margin: 0 0 20px;
-      line-height: 1.5;
-    }
-
-    a {
+    .panel-title {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
       color: var(--accent);
-      font-size: 14px;
-      font-weight: 600;
-      text-decoration: none;
+      font-weight: 700;
+      margin: 0 0 16px;
     }
-    a:hover { text-decoration: underline; }
+
+    section { margin-bottom: 20px; }
+
+    .status-box {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 14px;
+    }
+    .status-box .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      margin-right: 8px;
+      flex-shrink: 0;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin: 12px 0 6px;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="number"],
+    input[type="time"],
+    select {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 16px;
+      min-width: 0;
+    }
+    input:focus, select:focus { outline: none; border-color: var(--accent); }
+    input[readonly] { color: var(--muted); cursor: default; }
+    input[readonly]:focus { border-color: var(--border); }
+
+    .field { margin-bottom: 14px; }
+    .field-suffix { display: flex; align-items: center; gap: 8px; }
+    .field-suffix input { flex: 1; }
+    .field-suffix span { color: var(--muted); font-size: 14px; flex-shrink: 0; }
+
+    input[type="range"] { width: 100%; accent-color: var(--accent); margin: 8px 0 4px; }
+
+    .map-edge-handle {
+      width: 14px;
+      height: 14px;
+      background: var(--accent);
+      border: 2px solid #fff;
+      border-radius: 3px;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+    }
+    .map-edge-handle.ns { cursor: ns-resize; }
+    .map-edge-handle.ew { cursor: ew-resize; }
+
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .row input { flex: 1 1 160px; }
+
+    .eink-page-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 8px;
+      background: var(--panel-2);
+    }
+    .eink-page-row.disabled { opacity: 0.6; border-style: dashed; }
+    .eink-page-info { flex: 1; font-size: 14px; }
+    .eink-page-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .eink-page-actions button { min-height: 32px; padding: 4px 10px; font-size: 13px; }
+    .eink-duration { width: 100%; }
+
+    button {
+      min-height: 40px;
+      padding: 9px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button:disabled { opacity: 0.5; cursor: default; }
+
+    .scan-results { margin-top: 8px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .scan-result {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      min-height: 40px;
+      background: var(--panel-2);
+      border: none;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      font-size: 14px;
+      text-align: left;
+      width: 100%;
+      cursor: pointer;
+    }
+    .scan-result:last-child { border-bottom: none; }
+    .scan-result:hover, .scan-result:active { background: var(--border); }
+    .scan-result .signal { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+
+    .msg { margin-top: 10px; font-size: 13px; min-height: 16px; }
+    .msg.success { color: var(--success); }
+    .msg.error { color: var(--error); }
+
+    .hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 10px 0 0; }
+
+    .help-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      min-height: 0;
+      padding: 0;
+      margin-left: 4px;
+      border-radius: 50%;
+      border: 1px solid var(--muted);
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 700;
+      cursor: pointer;
+      vertical-align: middle;
+    }
+    .help-icon:hover { border-color: var(--accent); color: var(--accent); }
+
+    .help-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 100;
+    }
+    .help-box {
+      position: relative;
+      max-width: 380px;
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px 28px 24px 20px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+    .help-box p { margin: 0; color: var(--text); font-size: 14px; line-height: 1.6; }
+    .help-close {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 28px;
+      height: 28px;
+      min-height: 0;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .help-close:hover { color: var(--text); }
+
+    .hidden { display: none !important; }
+
+    .subsection {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-top: 14px;
+    }
+    .subsection-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .subsection-title input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+      outline: 1px solid var(--muted);
+      outline-offset: 2px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .subsection-body { margin-top: 12px; }
+    .subsection.disabled { opacity: 0.5; border-style: dashed; }
+    .subsection.disabled .subsection-title { cursor: default; }
+    .subsection.disabled .subsection-title input[type="checkbox"] {
+      cursor: not-allowed;
+      outline-color: var(--border);
+    }
+    .subsection:not(.active) .subsection-body { display: none; }
+    .subsection.disabled details { pointer-events: none; }
+
+    details.advanced { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+    details.advanced:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+    details.advanced > summary {
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 600;
+      list-style: none;
+    }
+    details.advanced > summary::-webkit-details-marker { display: none; }
+    details.advanced > summary::before { content: '\25B8 '; }
+    details.advanced[open] > summary::before { content: '\25BE '; }
+    details.advanced > .field:first-of-type { margin-top: 12px; }
+
+    .field-row { display: flex; gap: 10px; }
+    .field-row .field { flex: 1; margin-bottom: 0; }
+
+    .with-button { display: flex; gap: 8px; }
+    .with-button input { flex: 1; }
+    .with-button button { flex-shrink: 0; white-space: nowrap; }
+
+    .symbol-glyph { display: inline-block; flex-shrink: 0; background-color: var(--panel-2); border-radius: 4px; }
+    .symbol-input-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    input.symbol-code-input {
+      width: 70px;
+      flex: none;
+      text-align: center;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-transform: none;
+    }
+    .symbol-badge-inline {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 22px;
+      height: 22px;
+      padding: 0 4px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 4px;
+    }
+    .symbol-badge-inline.hidden { display: none; }
+    .symbol-select { flex: 1 1 160px; width: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+    #map-region-picker { height: 320px; border-radius: 8px; overflow: hidden; margin-bottom: 12px; }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Settings</h1>
-    <p>There's no way to change settings after initial setup yet. This page is a placeholder for that. The first-boot wizard is the only place configuration is collected right now (see TODO.md).</p>
-    <a href="/">&larr; Back to dashboard</a>
+  <button type="button" id="theme-toggle" aria-label="Toggle color theme"></button>
+
+  <header class="page-header">
+    <h1>Station settings</h1>
+    <p>Change any of the first-boot setup wizard's settings. <a href="/">&larr; Back to dashboard</a></p>
+  </header>
+
+  <div class="tabbar-wrap">
+    <nav class="tabbar" id="tabbar"></nav>
+    <div class="savebar">
+      <button type="button" class="primary" id="btn-save-all">Save all changes</button>
+      <span class="msg" id="save-all-msg"></span>
+      <div class="spacer"></div>
+    </div>
+    <div class="save-banner hidden" id="save-banner-wrap">
+      <div class="banner" id="save-banner"></div>
+    </div>
   </div>
+
+  <main class="container" id="tab-panels">
+    <div class="tab-panel" id="panel-network">
+      <div class="panel-card">
+        <h2 class="panel-title">Network</h2>
+        <div id="network-tab-content"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel hidden" id="panel-aprs">
+      <div class="panel-card">
+        <h2 class="panel-title">APRS settings</h2>
+        <div id="aprs-tab-content"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel hidden" id="panel-radio">
+      <div class="panel-card">
+        <h2 class="panel-title">Radio setup</h2>
+        <div id="radio-tab-content"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel hidden" id="panel-gps">
+      <div class="panel-card">
+        <h2 class="panel-title">GPS setup</h2>
+        <div id="gps-tab-content"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel hidden" id="panel-map">
+      <div class="panel-card">
+        <h2 class="panel-title">Map caching</h2>
+        <div id="map-tab-content"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel hidden" id="panel-eink">
+      <div class="panel-card">
+        <h2 class="panel-title">E-Ink display</h2>
+        <div id="eink-tab-content"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel hidden" id="panel-user">
+      <div class="panel-card">
+        <h2 class="panel-title">User management</h2>
+        <div id="user-tab-content"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel hidden" id="panel-startup">
+      <div class="panel-card">
+        <h2 class="panel-title">Startup</h2>
+        <div id="startup-tab-content"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel hidden" id="panel-gpio">
+      <div class="panel-card">
+        <h2 class="panel-title">GPIO pins</h2>
+        <div id="gpio-tab-content"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <div class="help-overlay hidden" id="help-overlay">
+    <div class="help-box" role="dialog" aria-modal="true" aria-labelledby="help-box-text">
+      <button type="button" class="help-close" id="help-close" aria-label="Close">&times;</button>
+      <p id="help-box-text"></p>
+    </div>
+  </div>
+
+  <div class="help-overlay hidden" id="confirm-overlay">
+    <div class="help-box" role="dialog" aria-modal="true" aria-labelledby="confirm-box-text">
+      <p id="confirm-box-text"></p>
+      <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+        <button type="button" id="confirm-box-no"></button>
+        <button type="button" id="confirm-box-yes"></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/maplibre/maplibre-gl.js"></script>
+  <script src="/static/maplibre/pmtiles.js"></script>
+  <script>
+    // ── UI theme toggle (identical pattern across every page in this
+    // project: first_run.html, normal.html, login.html) ─────────────────
+    const UI_THEME_KEY = 'ui-theme';
+    const THEME_CYCLE = [null, 'light', 'dark'];
+    const THEME_LABELS = { null: 'Theme: System', light: 'Theme: Light', dark: 'Theme: Dark' };
+
+    function applyUiTheme(theme) {
+      if (theme === 'light' || theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', theme);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+      document.getElementById('theme-toggle').textContent = THEME_LABELS[theme];
+    }
+
+    let uiTheme = localStorage.getItem(UI_THEME_KEY);
+    if (!THEME_CYCLE.includes(uiTheme)) uiTheme = null;
+    applyUiTheme(uiTheme);
+
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      uiTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(uiTheme) + 1) % THEME_CYCLE.length];
+      if (uiTheme) localStorage.setItem(UI_THEME_KEY, uiTheme);
+      else localStorage.removeItem(UI_THEME_KEY);
+      applyUiTheme(uiTheme);
+    });
+
+    // ── Shared help modal (ported from first_run.html) ──────────────────
+    function helpIcon(text) {
+      const escaped = text.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+      return `<button type="button" class="help-icon" data-help="${escaped}" aria-label="Help">?</button>`;
+    }
+
+    const helpOverlay = document.getElementById('help-overlay');
+    const helpBoxText = document.getElementById('help-box-text');
+
+    function showHelp(text) {
+      helpBoxText.innerHTML = text;
+      helpOverlay.classList.remove('hidden');
+    }
+    function hideHelp() { helpOverlay.classList.add('hidden'); }
+
+    // ── Shared confirm modal (Yes/No) ────────────────────────────────────
+    const confirmOverlay = document.getElementById('confirm-overlay');
+    const confirmBoxText = document.getElementById('confirm-box-text');
+    const confirmBoxYes = document.getElementById('confirm-box-yes');
+    const confirmBoxNo = document.getElementById('confirm-box-no');
+
+    function confirmModal(text, yesLabel, noLabel) {
+      return new Promise((resolve) => {
+        confirmBoxText.textContent = text;
+        confirmBoxYes.textContent = yesLabel;
+        confirmBoxNo.textContent = noLabel;
+        confirmOverlay.classList.remove('hidden');
+        function cleanup(result) {
+          confirmOverlay.classList.add('hidden');
+          confirmBoxYes.removeEventListener('click', onYes);
+          confirmBoxNo.removeEventListener('click', onNo);
+          resolve(result);
+        }
+        function onYes() { cleanup(true); }
+        function onNo() { cleanup(false); }
+        confirmBoxYes.addEventListener('click', onYes);
+        confirmBoxNo.addEventListener('click', onNo);
+      });
+    }
+
+    function formatBytes(bytes) {
+      if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+      if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+      if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${bytes} B`;
+    }
+
+    function formatDuration(totalSeconds) {
+      const s = Math.max(0, Math.round(totalSeconds));
+      if (s < 60) return `${s}s`;
+      const m = Math.floor(s / 60);
+      if (m < 60) return `${m}m ${s % 60}s`;
+      const h = Math.floor(m / 60);
+      return `${h}h ${m % 60}m`;
+    }
+
+    document.addEventListener('click', (e) => {
+      const icon = e.target.closest('.help-icon');
+      if (icon) { showHelp(icon.dataset.help); return; }
+      if (e.target === helpOverlay) hideHelp();
+    });
+    document.getElementById('help-close').addEventListener('click', hideHelp);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !helpOverlay.classList.contains('hidden')) hideHelp();
+    });
+
+    function addOption(select, value, label) {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      select.appendChild(opt);
+      return opt;
+    }
+
+    // ── In-memory config state, hydrated once from GET /api/config +
+    // GET /api/display/config on load, then read/written by each tab's
+    // own render/collect pair. Same one-key-per-section shape as
+    // first_run.html's wizardData, since config.yaml's sections were
+    // originally written straight from that object's shape (see
+    // /api/setup/complete in web/server.py). ──────────────────────────
+    const state = { radio: {}, aprs: {}, gps: {}, map: {}, startup: {}, display: {}, user: {}, gpio: {} };
+
+    let authState = { mode: 'none', logged_in: false };
+
+    // ── Tabs: every panel's HTML is built once at load and left in the
+    // DOM (not torn down/rebuilt on every click, unlike first_run.html's
+    // step-at-a-time wizard): each tab is independently reachable, and
+    // ids don't collide across tabs (every wizard step already used its
+    // own distinct id namespace, so porting them verbatim carries that
+    // property over for free). Only the Map tab's MapLibre instance is
+    // deferred to first click: it needs a visible, non-zero-size
+    // container to measure itself against. ─────────────────────────────
+    const TABS = [
+      { id: 'network', label: 'Network' },
+      { id: 'aprs', label: 'APRS' },
+      { id: 'radio', label: 'Radio' },
+      { id: 'gps', label: 'GPS' },
+      { id: 'map', label: 'Map' },
+      { id: 'eink', label: 'E-Ink' },
+      { id: 'user', label: 'User' },
+      { id: 'startup', label: 'Startup' },
+      { id: 'gpio', label: 'GPIO' },
+    ];
+    let activeTab = TABS[0].id;
+    let mapTabInitialized = false;
+
+    function renderTabbar() {
+      const bar = document.getElementById('tabbar');
+      bar.innerHTML = TABS.map(t =>
+        `<button type="button" class="tab-btn${t.id === activeTab ? ' active' : ''}" data-tab="${t.id}">${t.label}</button>`
+      ).join('');
+      bar.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+      });
+    }
+
+    function switchTab(tabId) {
+      activeTab = tabId;
+      TABS.forEach(t => {
+        document.getElementById(`panel-${t.id}`).classList.toggle('hidden', t.id !== tabId);
+      });
+      renderTabbar();
+      if (tabId === 'map' && !mapTabInitialized) {
+        mapTabInitialized = true;
+        initMapTab();
+      }
+    }
+
+    // ── Network tab (ported from first_run.html's Network setup step;
+    // has its own "Save WiFi credentials" button rather than feeding the
+    // global Save-all, since a WiFi change is its own reboot-required
+    // flow through POST /api/network/wifi, unrelated to config.yaml). ──
+    function renderNetworkTab() {
+      document.getElementById('network-tab-content').innerHTML = `
+        <section>
+          <div class="status-box"><span class="dot"></span><span id="network-status">Checking...</span></div>
+        </section>
+        <section id="wifi-connect-section">
+          <label>Connect to WiFi</label>
+          <div class="row">
+            <input type="text" id="wifi-ssid" placeholder="Scan or type SSID manually">
+            <button type="button" id="btn-scan">Scan</button>
+          </div>
+          <div id="wifi-scan-results" class="scan-results hidden"></div>
+          <label for="wifi-password">Password ${helpIcon("Leave this blank if you don't want to change it. Saving needs a reboot to take effect, so this session (even if it's over this same WiFi hotspot) won't drop right away.")}</label>
+          <input type="password" id="wifi-password" placeholder="At least 8 characters">
+          <button type="button" id="btn-save-wifi" style="margin-top: 10px;">Save WiFi credentials</button>
+          <p class="msg" id="wifi-msg"></p>
+        </section>
+      `;
+      document.getElementById('btn-scan').addEventListener('click', scanWifi);
+      document.getElementById('btn-save-wifi').addEventListener('click', saveWifiCredentials);
+      loadNetworkStatus();
+    }
+
+    async function loadNetworkStatus() {
+      const el = document.getElementById('network-status');
+      try {
+        const res = await fetch('/api/network/status');
+        const data = await res.json();
+        if (data.kind === 'ethernet') {
+          el.textContent = `Connected via Ethernet: ${data.ip}`;
+        } else if (data.kind === 'wifi') {
+          el.textContent = `Connected via WiFi: ${data.ip}`;
+        } else {
+          el.textContent = `Hotspot mode: devices connect to "${data.hotspot_ssid}"`;
+        }
+      } catch (e) {
+        el.textContent = 'Could not reach the server.';
+      }
+    }
+
+    async function scanWifi() {
+      const btn = document.getElementById('btn-scan');
+      const results = document.getElementById('wifi-scan-results');
+      btn.disabled = true;
+      btn.textContent = 'Scanning...';
+      try {
+        const res = await fetch('/api/network/scan');
+        const data = await res.json();
+        results.innerHTML = '';
+        const networks = data.networks || [];
+        if (networks.length === 0) {
+          results.classList.add('hidden');
+          return;
+        }
+        networks.forEach(n => {
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = 'scan-result';
+          const ssidSpan = document.createElement('span');
+          ssidSpan.textContent = n.ssid;
+          const signalSpan = document.createElement('span');
+          signalSpan.className = 'signal';
+          signalSpan.textContent = `${n.signal}%`;
+          item.append(ssidSpan, signalSpan);
+          item.addEventListener('click', () => {
+            document.getElementById('wifi-ssid').value = n.ssid;
+            results.classList.add('hidden');
+          });
+          results.appendChild(item);
+        });
+        results.classList.remove('hidden');
+      } catch (e) {
+        // manual entry still works
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Scan';
+      }
+    }
+
+    async function saveWifiCredentials() {
+      const ssid = document.getElementById('wifi-ssid').value.trim();
+      const msg = document.getElementById('wifi-msg');
+      msg.className = 'msg';
+      if (!ssid) {
+        msg.textContent = 'Enter an SSID first.';
+        msg.className = 'msg error';
+        return;
+      }
+      const password = document.getElementById('wifi-password').value;
+      const btn = document.getElementById('btn-save-wifi');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/network/wifi', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ssid, password }),
+        });
+        if (res.status === 401) {
+          msg.textContent = 'Your session has expired. Please log in again.';
+          msg.className = 'msg error';
+          return;
+        }
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || res.statusText);
+        }
+        msg.textContent = 'Saved. Reboot the device for the new WiFi credentials to take effect.';
+        msg.className = 'msg success';
+      } catch (e) {
+        msg.textContent = `Error: ${e.message}`;
+        msg.className = 'msg error';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // ── Radio tab (ported from first_run.html's Radio setup step) ───────
+    // Radio model and TX power level are still placeholder dummy lists:
+    // no radio-control backend exists yet, same as the wizard. Audio
+    // device and the serial/CM108 entries in PTT method are read live
+    // from this device (see services/hardware.py).
+    const PLACEHOLDER_RADIOS = [
+      'Baofeng UV-5R',
+      'Yaesu FT-2980R',
+      'Kenwood TM-D710G',
+      'Icom IC-2730A',
+    ];
+    const PLACEHOLDER_POWER_LEVELS = ['Low', 'Medium', 'High'];
+    // Same fixed wiring convention as first_run.html (see PINOUT.md):
+    // this is just the fallback shown/used when the GPIO tab hasn't
+    // overridden it. The GPIO tab is the one editable home for the real
+    // value; see collectRadioTab below.
+    const RADIO_DEFAULT_PTT_GPIO_PIN = 22;
+    const RADIO_DEFAULT_PTT_GPIO_PHYSICAL_PIN = 15;
+
+    function renderRadioTab() {
+      const d = state.radio || {};
+      document.getElementById('radio-tab-content').innerHTML = `
+        <section>
+          <div class="field">
+            <label for="radio-model">Radio model</label>
+            <select id="radio-model"></select>
+          </div>
+          <div class="field">
+            <label for="radio-frequency">Initial frequency</label>
+            <div class="field-suffix">
+              <input type="number" id="radio-frequency" step="0.001" placeholder="e.g. 144.800">
+              <span>MHz</span>
+            </div>
+            <p class="warn-banner hidden" id="radio-freq-warning">Initial frequency is still blank. Direwolf needs a real frequency to transmit on.</p>
+          </div>
+          <div class="field">
+            <label for="radio-ptt">PTT method</label>
+            <select id="radio-ptt">
+              <option value="vox">VOX</option>
+              <option value="gpio">GPIO pin</option>
+              <option value="cm108">CM108 (USB sound card PTT, auto-detect)</option>
+            </select>
+            <p class="hint hidden" id="radio-ptt-gpio-note"></p>
+          </div>
+          <div class="field">
+            <label for="radio-audio">Audio device</label>
+            <select id="radio-audio"></select>
+          </div>
+          <div class="field">
+            <label for="radio-power">TX power level</label>
+            <select id="radio-power"></select>
+          </div>
+        </section>
+      `;
+      const modelSelect = document.getElementById('radio-model');
+      PLACEHOLDER_RADIOS.forEach(r => addOption(modelSelect, r, r));
+      const powerSelect = document.getElementById('radio-power');
+      PLACEHOLDER_POWER_LEVELS.forEach(p => addOption(powerSelect, p, p));
+
+      modelSelect.value = d.model ?? modelSelect.value;
+      powerSelect.value = d.power_level ?? powerSelect.value;
+      document.getElementById('radio-frequency').value = d.frequency_mhz ?? '';
+      document.getElementById('radio-ptt').value = d.ptt_method ?? 'gpio';
+
+      function updatePttGpioNote() {
+        const note = document.getElementById('radio-ptt-gpio-note');
+        const isGpio = document.getElementById('radio-ptt').value === 'gpio';
+        note.classList.toggle('hidden', !isGpio);
+        if (isGpio) {
+          const pin = d.ptt_gpio_pin ?? RADIO_DEFAULT_PTT_GPIO_PIN;
+          note.textContent = `Using BCM ${pin}, configurable on the GPIO tab.`;
+        }
+      }
+      document.getElementById('radio-ptt').addEventListener('change', updatePttGpioNote);
+      updatePttGpioNote();
+
+      function updateFreqWarning() {
+        document.getElementById('radio-freq-warning').classList.toggle('hidden', !!document.getElementById('radio-frequency').value);
+      }
+      document.getElementById('radio-frequency').addEventListener('input', updateFreqWarning);
+      updateFreqWarning();
+
+      loadAudioDevices();
+      loadCm108PttOptions();
+      loadSerialPttOptions();
+    }
+
+    async function loadAudioDevices() {
+      const select = document.getElementById('radio-audio');
+      const d = state.radio || {};
+      try {
+        const res = await fetch('/api/hardware/audio-devices');
+        const data = await res.json();
+        const devices = data.devices || [];
+        if (devices.length === 0) {
+          addOption(select, '', 'No audio devices found');
+          return;
+        }
+        devices.forEach(dev => {
+          addOption(select, dev.id, dev.description ? `${dev.name}: ${dev.description}` : dev.name);
+        });
+        if (d.audio_device) select.value = d.audio_device;
+      } catch (e) {
+        addOption(select, '', 'Could not load audio devices');
+      }
+    }
+
+    async function loadCm108PttOptions() {
+      const select = document.getElementById('radio-ptt');
+      const d = state.radio || {};
+      try {
+        const res = await fetch('/api/hardware/cm108-devices');
+        const data = await res.json();
+        (data.devices || []).forEach(dev => {
+          addOption(select, `cm108:${dev.device}`, `CM108: ${dev.device} (${dev.description})`);
+        });
+        if (d.ptt_method) select.value = d.ptt_method;
+      } catch (e) {
+        // generic "cm108" auto-detect option still works without this
+      }
+    }
+
+    async function loadSerialPttOptions() {
+      const select = document.getElementById('radio-ptt');
+      const d = state.radio || {};
+      try {
+        const res = await fetch('/api/hardware/serial-devices');
+        const data = await res.json();
+        (data.devices || []).forEach(dev => {
+          const label = dev.description ? `Serial: ${dev.device} (${dev.description})` : `Serial: ${dev.device}`;
+          addOption(select, `serial:${dev.device}`, label);
+        });
+        if (d.ptt_method) select.value = d.ptt_method;
+      } catch (e) {
+        // VOX/GPIO options still work without this
+      }
+    }
+
+    // No confirm-modal gate here (unlike the wizard's saveRadioStep):
+    // there's no Next to block, so a blank frequency just keeps showing
+    // its inline warning above (see updateFreqWarning) and Save proceeds
+    // regardless.
+    function collectRadioTab() {
+      const pttMethod = document.getElementById('radio-ptt').value;
+      const radio = {
+        model: document.getElementById('radio-model').value,
+        frequency_mhz: document.getElementById('radio-frequency').value,
+        ptt_method: pttMethod,
+        audio_device: document.getElementById('radio-audio').value,
+        power_level: document.getElementById('radio-power').value,
+      };
+      if (pttMethod === 'gpio') {
+        // The GPIO tab is the one editable home for this value (see
+        // collectGpioTab), so it's read live from there, not from
+        // anything on this tab.
+        const pinEl = document.getElementById('gpio-ptt-gpio-pin');
+        radio.ptt_gpio_pin = pinEl ? (parseInt(pinEl.value, 10) || RADIO_DEFAULT_PTT_GPIO_PIN) : RADIO_DEFAULT_PTT_GPIO_PIN;
+      }
+      state.radio = radio;
+      return radio;
+    }
+
+    // ── APRS tab (ported from first_run.html's APRS settings step) ──────
+    // Symbol table verified against aprs.org's official reference
+    // (aprs.org/symbols/symbolsX.txt) and the alternate-table overlay
+    // convention for igate capability signalling (symbols-new.txt):
+    // I=generic igate, R=RX-only, T=1-hop TX-capable, 2=2-hop TX-capable.
+    // Icon art is bundled locally (web/static/aprs-symbols/): no network
+    // fetch needed to render the picker.
+    const APRS_DEFAULT_SERVER = 'rotate.aprs2.net';
+    const APRS_IGATE_REGIONS = {
+      automatic: APRS_DEFAULT_SERVER,
+      noam: 'noam.aprs2.net',
+      soam: 'soam.aprs2.net',
+      euro: 'euro.aprs2.net',
+      asia: 'asia.aprs2.net',
+      aunz: 'aunz.aprs2.net',
+    };
+    const APRS_DEFAULT_PORT = '14580';
+    const APRS_DEFAULT_TXVIA = 'WIDE1-1,WIDE2-1';
+    const APRS_DEFAULT_RF_BEACON_PATH = 'WIDE1-1';
+    const APRS_DEFAULT_RATE_1MIN = '6';
+    const APRS_DEFAULT_RATE_5MIN = '10';
+    const APRS_DEFAULT_DEDUPE = '60';
+
+    const DIGIPEAT_PRESETS = {
+      fillin: { alias: '^TEST$', wide: '^WIDE1-1$' },
+      widearea: { alias: '^WIDE[3-7]-[1-7]$|^TEST$', wide: '^WIDE[12]-[12]$' },
+    };
+
+    // Full base symbol set (no overlay variants: overlay is a separate,
+    // free-form character typed directly into the code field on top of
+    // whichever base symbol is picked here); table+symbol+label sourced
+    // from hessu/aprs-symbol-index's symbols.csv (same author/project as
+    // the icon art itself), filtered to the 159 assigned/labeled entries.
+    const APRS_SYMBOLS = [
+      { table: '/', symbol: '!', label: 'Police station' },
+      { table: '/', symbol: '#', label: 'Digipeater' },
+      { table: '/', symbol: '$', label: 'Telephone' },
+      { table: '/', symbol: '%', label: 'DX cluster' },
+      { table: '/', symbol: '&', label: 'HF gateway' },
+      { table: '/', symbol: '\'', label: 'Small aircraft' },
+      { table: '/', symbol: '(', label: 'Mobile satellite station' },
+      { table: '/', symbol: ')', label: 'Wheelchair, handicapped' },
+      { table: '/', symbol: '*', label: 'Snowmobile' },
+      { table: '/', symbol: '+', label: 'Red Cross' },
+      { table: '/', symbol: ',', label: 'Boy Scouts' },
+      { table: '/', symbol: '-', label: 'House' },
+      { table: '/', symbol: '.', label: 'Red X' },
+      { table: '/', symbol: '/', label: 'Red dot' },
+      { table: '/', symbol: '0', label: 'Numbered circle: 0' },
+      { table: '/', symbol: '1', label: 'Numbered circle: 1' },
+      { table: '/', symbol: '2', label: 'Numbered circle: 2' },
+      { table: '/', symbol: '3', label: 'Numbered circle: 3' },
+      { table: '/', symbol: '4', label: 'Numbered circle: 4' },
+      { table: '/', symbol: '5', label: 'Numbered circle: 5' },
+      { table: '/', symbol: '6', label: 'Numbered circle: 6' },
+      { table: '/', symbol: '7', label: 'Numbered circle: 7' },
+      { table: '/', symbol: '8', label: 'Numbered circle: 8' },
+      { table: '/', symbol: '9', label: 'Numbered circle: 9' },
+      { table: '/', symbol: ':', label: 'Fire' },
+      { table: '/', symbol: ';', label: 'Campground, tent' },
+      { table: '/', symbol: '<', label: 'Motorcycle' },
+      { table: '/', symbol: '=', label: 'Railroad engine' },
+      { table: '/', symbol: '>', label: 'Car' },
+      { table: '/', symbol: '?', label: 'File server' },
+      { table: '/', symbol: '@', label: 'Hurricane predicted path' },
+      { table: '/', symbol: 'A', label: 'Aid station' },
+      { table: '/', symbol: 'B', label: 'BBS' },
+      { table: '/', symbol: 'C', label: 'Canoe' },
+      { table: '/', symbol: 'E', label: 'Eyeball' },
+      { table: '/', symbol: 'F', label: 'Farm vehicle, tractor' },
+      { table: '/', symbol: 'G', label: 'Grid square, 3 by 3' },
+      { table: '/', symbol: 'H', label: 'Hotel' },
+      { table: '/', symbol: 'I', label: 'TCP/IP network station' },
+      { table: '/', symbol: 'K', label: 'School' },
+      { table: '/', symbol: 'L', label: 'PC user' },
+      { table: '/', symbol: 'M', label: 'Mac apple' },
+      { table: '/', symbol: 'N', label: 'NTS station' },
+      { table: '/', symbol: 'O', label: 'Balloon' },
+      { table: '/', symbol: 'P', label: 'Police car' },
+      { table: '/', symbol: 'R', label: 'Recreational vehicle' },
+      { table: '/', symbol: 'S', label: 'Space Shuttle' },
+      { table: '/', symbol: 'T', label: 'SSTV' },
+      { table: '/', symbol: 'U', label: 'Bus' },
+      { table: '/', symbol: 'V', label: 'ATV, Amateur Television' },
+      { table: '/', symbol: 'W', label: 'Weather service site' },
+      { table: '/', symbol: 'X', label: 'Helicopter' },
+      { table: '/', symbol: 'Y', label: 'Sailboat' },
+      { table: '/', symbol: 'Z', label: 'Windows flag' },
+      { table: '/', symbol: '[', label: 'Human' },
+      { table: '/', symbol: '\\', label: 'DF triangle' },
+      { table: '/', symbol: ']', label: 'Mailbox, post office' },
+      { table: '/', symbol: '^', label: 'Large aircraft' },
+      { table: '/', symbol: '_', label: 'Weather station' },
+      { table: '/', symbol: '`', label: 'Satellite dish antenna' },
+      { table: '/', symbol: 'a', label: 'Ambulance' },
+      { table: '/', symbol: 'b', label: 'Bicycle' },
+      { table: '/', symbol: 'c', label: 'Incident command post' },
+      { table: '/', symbol: 'd', label: 'Fire station' },
+      { table: '/', symbol: 'e', label: 'Horse, equestrian' },
+      { table: '/', symbol: 'f', label: 'Fire truck' },
+      { table: '/', symbol: 'g', label: 'Glider' },
+      { table: '/', symbol: 'h', label: 'Hospital' },
+      { table: '/', symbol: 'i', label: 'IOTA, islands on the air' },
+      { table: '/', symbol: 'j', label: 'Jeep' },
+      { table: '/', symbol: 'k', label: 'Truck' },
+      { table: '/', symbol: 'l', label: 'Laptop' },
+      { table: '/', symbol: 'm', label: 'Mic-E repeater' },
+      { table: '/', symbol: 'n', label: 'Node, black bulls-eye' },
+      { table: '/', symbol: 'o', label: 'Emergency operations center' },
+      { table: '/', symbol: 'p', label: 'Dog' },
+      { table: '/', symbol: 'q', label: 'Grid square, 2 by 2' },
+      { table: '/', symbol: 'r', label: 'Repeater tower' },
+      { table: '/', symbol: 's', label: 'Ship, power boat' },
+      { table: '/', symbol: 't', label: 'Truck stop' },
+      { table: '/', symbol: 'u', label: 'Semi-trailer truck, 18-wheeler' },
+      { table: '/', symbol: 'v', label: 'Van' },
+      { table: '/', symbol: 'w', label: 'Water station' },
+      { table: '/', symbol: 'x', label: 'X / Unix' },
+      { table: '/', symbol: 'y', label: 'House, yagi antenna' },
+      { table: '/', symbol: 'z', label: 'Shelter' },
+      { table: '\\', symbol: '!', label: 'Emergency' },
+      { table: '\\', symbol: '#', label: 'Digipeater, green star' },
+      { table: '\\', symbol: '$', label: 'Bank or ATM' },
+      { table: '\\', symbol: '&', label: 'Gateway station' },
+      { table: '\\', symbol: '\'', label: 'Crash / incident site' },
+      { table: '\\', symbol: '(', label: 'Cloudy' },
+      { table: '\\', symbol: ')', label: 'Firenet MEO, MODIS Earth Observation' },
+      { table: '\\', symbol: '*', label: 'Snow' },
+      { table: '\\', symbol: '+', label: 'Church' },
+      { table: '\\', symbol: ',', label: 'Girl Scouts' },
+      { table: '\\', symbol: '-', label: 'House, HF antenna' },
+      { table: '\\', symbol: '.', label: 'Ambiguous, question mark inside circle' },
+      { table: '\\', symbol: '/', label: 'Waypoint destination' },
+      { table: '\\', symbol: '0', label: 'Circle, IRLP / Echolink/WIRES' },
+      { table: '\\', symbol: '8', label: '802.11 WiFi or other network node' },
+      { table: '\\', symbol: '9', label: 'Gas station' },
+      { table: '\\', symbol: ':', label: 'Hail' },
+      { table: '\\', symbol: ';', label: 'Park, picnic area' },
+      { table: '\\', symbol: '<', label: 'Advisory, single red flag' },
+      { table: '\\', symbol: '>', label: 'Red car' },
+      { table: '\\', symbol: '?', label: 'Info kiosk' },
+      { table: '\\', symbol: '@', label: 'Hurricane, Tropical storm' },
+      { table: '\\', symbol: 'A', label: 'White box' },
+      { table: '\\', symbol: 'B', label: 'Blowing snow' },
+      { table: '\\', symbol: 'C', label: 'Coast Guard' },
+      { table: '\\', symbol: 'D', label: 'Drizzling rain' },
+      { table: '\\', symbol: 'E', label: 'Smoke, Chimney' },
+      { table: '\\', symbol: 'F', label: 'Freezing rain' },
+      { table: '\\', symbol: 'G', label: 'Snow shower' },
+      { table: '\\', symbol: 'H', label: 'Haze' },
+      { table: '\\', symbol: 'I', label: 'Rain shower' },
+      { table: '\\', symbol: 'J', label: 'Lightning' },
+      { table: '\\', symbol: 'K', label: 'Kenwood HT' },
+      { table: '\\', symbol: 'L', label: 'Lighthouse' },
+      { table: '\\', symbol: 'N', label: 'Navigation buoy' },
+      { table: '\\', symbol: 'O', label: 'Rocket' },
+      { table: '\\', symbol: 'P', label: 'Parking' },
+      { table: '\\', symbol: 'Q', label: 'Earthquake' },
+      { table: '\\', symbol: 'R', label: 'Restaurant' },
+      { table: '\\', symbol: 'S', label: 'Satellite' },
+      { table: '\\', symbol: 'T', label: 'Thunderstorm' },
+      { table: '\\', symbol: 'U', label: 'Sunny' },
+      { table: '\\', symbol: 'V', label: 'VORTAC, Navigational aid' },
+      { table: '\\', symbol: 'W', label: 'NWS site' },
+      { table: '\\', symbol: 'X', label: 'Pharmacy' },
+      { table: '\\', symbol: '[', label: 'Wall Cloud' },
+      { table: '\\', symbol: '^', label: 'Aircraft' },
+      { table: '\\', symbol: '_', label: 'Weather site' },
+      { table: '\\', symbol: '`', label: 'Rain' },
+      { table: '\\', symbol: 'a', label: 'Red diamond' },
+      { table: '\\', symbol: 'b', label: 'Blowing dust, sand' },
+      { table: '\\', symbol: 'c', label: 'CD triangle, RACES, CERTS, SATERN' },
+      { table: '\\', symbol: 'd', label: 'DX spot' },
+      { table: '\\', symbol: 'e', label: 'Sleet' },
+      { table: '\\', symbol: 'f', label: 'Funnel cloud' },
+      { table: '\\', symbol: 'g', label: 'Gale, two red flags' },
+      { table: '\\', symbol: 'h', label: 'Store' },
+      { table: '\\', symbol: 'i', label: 'Black box, point of interest' },
+      { table: '\\', symbol: 'j', label: 'Work zone, excavating machine' },
+      { table: '\\', symbol: 'k', label: 'SUV, ATV' },
+      { table: '\\', symbol: 'm', label: 'Value sign, 3 digit display' },
+      { table: '\\', symbol: 'n', label: 'Red triangle' },
+      { table: '\\', symbol: 'o', label: 'Small circle' },
+      { table: '\\', symbol: 'p', label: 'Partly cloudy' },
+      { table: '\\', symbol: 'r', label: 'Restrooms' },
+      { table: '\\', symbol: 's', label: 'Ship, boat' },
+      { table: '\\', symbol: 't', label: 'Tornado' },
+      { table: '\\', symbol: 'u', label: 'Truck' },
+      { table: '\\', symbol: 'v', label: 'Van' },
+      { table: '\\', symbol: 'w', label: 'Flooding' },
+      { table: '\\', symbol: 'y', label: 'Skywarn' },
+      { table: '\\', symbol: 'z', label: 'Shelter' },
+      { table: '\\', symbol: '{', label: 'Fog' },
+    ];
+
+    // Real APRS symbol art from hessu/aprs-symbols (github.com/hessu/aprs-symbols,
+    // CC BY-SA 4.0). Grid is 16 columns x 6 rows of square 64x64 cells,
+    // sequential ASCII from '!' (94 printable chars fit exactly in
+    // 16x6=96 cells).
+    const SPRITE_CELL_W = 64;
+    const SPRITE_CELL_H = 64;
+    const SPRITE_SHEET_W = 1024;
+    const SPRITE_SHEET_H = 384;
+    const SPRITE_BASE = '/static/aprs-symbols/';
+
+    function spriteCellFor(sym) {
+      const sheet = sym.table === '\\' ? 'sheet1.png' : 'sheet0.png';
+      const code = sym.symbol.charCodeAt(0) - 0x21;
+      return { sheet, col: code % 16, row: Math.floor(code / 16) };
+    }
+
+    // display:inline-block + flex-shrink:0 in the inline style: a bare
+    // <span> is display:inline, so width/height are spec-ignored unless
+    // something blockifies it (see web/static/normal.html's own copy of
+    // this function for the full story on the bug this fixes).
+    function symbolGlyphHTML(sym, displayW) {
+      const { sheet, col, row } = spriteCellFor(sym);
+      const scale = displayW / SPRITE_CELL_W;
+      const displayH = Math.round(SPRITE_CELL_H * scale);
+      const bgW = Math.round(SPRITE_SHEET_W * scale);
+      const bgH = Math.round(SPRITE_SHEET_H * scale);
+      const bgX = -Math.round(col * SPRITE_CELL_W * scale);
+      const bgY = -Math.round(row * SPRITE_CELL_H * scale);
+      const style = `display:inline-block;flex-shrink:0;width:${displayW}px;height:${displayH}px;background-image:url('${SPRITE_BASE}${sheet}');background-repeat:no-repeat;background-size:${bgW}px ${bgH}px;background-position:${bgX}px ${bgY}px;`;
+      return `<span class="symbol-glyph" style="${style}"></span>`;
+    }
+
+    function findSymbol(table, symbol) {
+      return APRS_SYMBOLS.find(s => s.table === table && s.symbol === symbol) || { table, symbol, overlay: '' };
+    }
+
+    function symbolCodeFromSymbol(sym) {
+      return sym.table === '\\' ? `\\${sym.symbol}${sym.overlay || ''}` : `${sym.table}${sym.symbol}`;
+    }
+
+    function parseSymbolCode(code) {
+      if (!code) return null;
+      if (code.length === 1) return { table: '/', symbol: code[0], overlay: '' };
+      const table = code[0] === '\\' ? '\\' : '/';
+      const symbol = code[1];
+      const overlay = table === '\\' ? (code[2] || '') : '';
+      return { table, symbol, overlay };
+    }
+
+    function symbolPickerHTML(pickerId, initialSym) {
+      const code = symbolCodeFromSymbol(initialSym);
+      const primaryOptions = APRS_SYMBOLS.filter(s => s.table === '/')
+        .map(s => `<option value="${s.table}${s.symbol}">${s.table}${s.symbol}: ${s.label}</option>`).join('');
+      const altOptions = APRS_SYMBOLS.filter(s => s.table === '\\')
+        .map(s => `<option value="${s.table}${s.symbol}">\\${s.symbol}: ${s.label}</option>`).join('');
+      return `
+        <div class="symbol-picker" id="${pickerId}">
+          <div class="symbol-input-row">
+            ${symbolGlyphHTML(initialSym, 48)}
+            <input type="text" class="symbol-code-input" maxlength="3" value="${code}" placeholder="/#">
+            <span class="symbol-badge-inline${initialSym.overlay ? '' : ' hidden'}">${initialSym.overlay || ''}</span>
+            <select class="symbol-select">
+              <option value="">(pick from list)</option>
+              <optgroup label="Primary table (/)">${primaryOptions}</optgroup>
+              <optgroup label="Alternate table (\\)">${altOptions}</optgroup>
+            </select>
+          </div>
+        </div>
+      `;
+    }
+
+    function wireSymbolPicker(pickerId) {
+      const picker = document.getElementById(pickerId);
+      const input = picker.querySelector('.symbol-code-input');
+      const select = picker.querySelector('.symbol-select');
+
+      function updatePreview() {
+        const sym = parseSymbolCode(input.value) || { table: '/', symbol: '#', overlay: '' };
+        const row = picker.querySelector('.symbol-input-row');
+        row.querySelector('.symbol-glyph').outerHTML = symbolGlyphHTML(sym, 48);
+        row.querySelector('.symbol-badge-inline').textContent = sym.overlay || '';
+        row.querySelector('.symbol-badge-inline').classList.toggle('hidden', !sym.overlay);
+      }
+
+      function syncSelectFromInput() {
+        const sym = parseSymbolCode(input.value);
+        const baseCode = sym ? sym.table + sym.symbol : '';
+        const hasOption = [...select.options].some(o => o.value === baseCode);
+        select.value = hasOption ? baseCode : '';
+      }
+
+      input.addEventListener('input', () => {
+        updatePreview();
+        syncSelectFromInput();
+      });
+
+      select.addEventListener('change', () => {
+        if (!select.value) return;
+        input.value = select.value;
+        updatePreview();
+      });
+
+      syncSelectFromInput();
+    }
+
+    function getSymbolPickerValue(pickerId) {
+      const input = document.getElementById(pickerId).querySelector('.symbol-code-input');
+      return parseSymbolCode(input.value) || { table: '/', symbol: '#', overlay: '' };
+    }
+
+    // Shared markup for the RF beacon / IGate beacon sections: identical
+    // fields apart from Path, which only makes sense for an RF beacon.
+    function beaconFieldsHTML(prefix, { includePath }) {
+      return `
+        ${includePath ? `
+        <div class="field">
+          <label for="${prefix}-path">Path ${helpIcon("Kept short for a fixed station's own beacon: WIDE1-1 (one hop) is standard practice rather than a wide-area path.")}</label>
+          <input type="text" id="${prefix}-path" value="${APRS_DEFAULT_RF_BEACON_PATH}">
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="${prefix}-phg-power">Power ${helpIcon('Optional. Antenna power/height/gain, encoded into the beacon so other stations can estimate your range. Leave blank to omit.')}</label>
+            <div class="field-suffix"><input type="number" id="${prefix}-phg-power" min="0" placeholder="e.g. 5"><span>W</span></div>
+          </div>
+          <div class="field">
+            <label for="${prefix}-phg-height">Height</label>
+            <div class="field-suffix"><input type="number" id="${prefix}-phg-height" min="0" placeholder="e.g. 20"><span>ft AAT</span></div>
+          </div>
+          <div class="field">
+            <label for="${prefix}-phg-gain">Gain</label>
+            <div class="field-suffix"><input type="number" id="${prefix}-phg-gain" min="0" placeholder="e.g. 3"><span>dB</span></div>
+          </div>
+        </div>` : ''}
+        <div class="field-row">
+          <div class="field">
+            <label for="${prefix}-delay">Initial delay</label>
+            <div class="field-suffix"><input type="number" id="${prefix}-delay" min="0" value="1"><span>min</span></div>
+          </div>
+          <div class="field">
+            <label for="${prefix}-interval">Interval</label>
+            <div class="field-suffix"><input type="number" id="${prefix}-interval" min="1" value="30"><span>min</span></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function restoreBeaconFields(prefix, saved) {
+      if (!saved) return;
+      const pathEl = document.getElementById(`${prefix}-path`);
+      if (pathEl && saved.path !== undefined) pathEl.value = saved.path;
+      document.getElementById(`${prefix}-delay`).value = saved.delay ?? 1;
+      document.getElementById(`${prefix}-interval`).value = saved.interval ?? 30;
+      const powerEl = document.getElementById(`${prefix}-phg-power`);
+      if (powerEl) {
+        powerEl.value = saved.phg?.power ?? '';
+        document.getElementById(`${prefix}-phg-height`).value = saved.phg?.height ?? '';
+        document.getElementById(`${prefix}-phg-gain`).value = saved.phg?.gain ?? '';
+      }
+    }
+
+    function collectBeaconFields(prefix, { includePath }) {
+      const beacon = {
+        enabled: true,
+        delay: document.getElementById(`${prefix}-delay`).value,
+        interval: document.getElementById(`${prefix}-interval`).value,
+      };
+      if (includePath) {
+        beacon.path = document.getElementById(`${prefix}-path`).value;
+        const power = document.getElementById(`${prefix}-phg-power`).value;
+        const height = document.getElementById(`${prefix}-phg-height`).value;
+        const gain = document.getElementById(`${prefix}-phg-gain`).value;
+        if (power || height || gain) beacon.phg = { power, height, gain };
+      }
+      return beacon;
+    }
+
+    function renderAprsTab() {
+      const d = state.aprs || {};
+      const initialStationSymbol = (d.symbol && d.symbol.table) ? d.symbol : findSymbol('/', '#');
+      document.getElementById('aprs-tab-content').innerHTML = `
+        <section>
+          <div class="field-row">
+            <div class="field" style="flex: 3;">
+              <label for="aprs-callsign">Callsign</label>
+              <input type="text" id="aprs-callsign" placeholder="e.g. KJ4XYZ" style="text-transform: uppercase;">
+            </div>
+            <div class="field" style="flex: 1;">
+              <label for="aprs-ssid">SSID</label>
+              <input type="number" id="aprs-ssid" min="0" max="15" placeholder="0">
+            </div>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="aprs-digipeat-mode">Digipeating</label>
+              <select id="aprs-digipeat-mode">
+                <option value="rxonly">RX only</option>
+                <option value="digipeater">RX &amp; TX</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="aprs-igate-mode">IGate</label>
+              <select id="aprs-igate-mode">
+                <option value="off">Off</option>
+                <option value="rxonly">RX only</option>
+                <option value="rxtx">RX &amp; TX</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="subsection hidden" id="digipeat-section">
+            <details class="advanced">
+              <summary>Digipeater settings</summary>
+              <div class="field">
+                <label for="aprs-digipeat-rules">Digipeat rules ${helpIcon("Recommended: fill-in for lower power, wide-area for hilltop sites.")}</label>
+                <select id="aprs-digipeat-rules">
+                  <option value="fillin">Fill-in digi (handles WIDE1-1 only)</option>
+                  <option value="widearea">Wide-area digi (handles WIDE2-1, WIDE2-2, etc.)</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="aprs-digipeat-alias">Alias pattern</label>
+                  <input type="text" id="aprs-digipeat-alias" readonly>
+                </div>
+                <div class="field">
+                  <label for="aprs-digipeat-wide">Wide pattern</label>
+                  <input type="text" id="aprs-digipeat-wide" readonly>
+                </div>
+              </div>
+              <div class="field" style="max-width: 130px;">
+                <label for="aprs-digipeat-dedupe">Dedupe window ${helpIcon("Won't repeat the same packet twice if heard again (e.g. via another digipeater) within this window.")}</label>
+                <div class="field-suffix"><input type="number" id="aprs-digipeat-dedupe" value="${APRS_DEFAULT_DEDUPE}"><span>sec</span></div>
+              </div>
+              <div class="field">
+                <label for="aprs-digipeat-filter">RF filter ${helpIcon("Limits which heard packets actually get repeated onto RF, on top of the alias match. Leave blank to repeat everything that matches.")}</label>
+                <input type="text" id="aprs-digipeat-filter" placeholder="optional">
+              </div>
+            </details>
+          </div>
+
+          <div class="subsection hidden" id="igate-section">
+            <div class="field">
+              <label for="aprs-igate-region">IGate region ${helpIcon("Set the APRS-IS server this digipeater connects to, highly recommended to set a local server over Automatic.")}</label>
+              <select id="aprs-igate-region">
+                <option value="automatic">Automatic (global rotate)</option>
+                <option value="noam">North America</option>
+                <option value="soam">South America</option>
+                <option value="euro">Europe / Africa</option>
+                <option value="asia">Asia</option>
+                <option value="aunz">Oceania</option>
+                <option value="custom">Custom</option>
+              </select>
+              <p class="warn-banner hidden" id="aprs-igate-region-warning">IGate region is still set to Automatic. It's recommended to switch to a local region if possible.</p>
+            </div>
+            <details class="advanced">
+              <summary>IGate settings</summary>
+              <div class="field">
+                <label for="aprs-igate-passcode">APRS-IS passcode</label>
+                <div class="with-button">
+                  <input type="text" id="aprs-igate-passcode" placeholder="Generated from callsign">
+                  <button type="button" id="btn-generate-passcode">Generate</button>
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field" style="flex: 3;">
+                  <label for="aprs-igate-server">Server address</label>
+                  <input type="text" id="aprs-igate-server" value="${APRS_DEFAULT_SERVER}" readonly>
+                </div>
+                <div class="field" style="flex: 1;">
+                  <label for="aprs-igate-port">Port</label>
+                  <input type="number" id="aprs-igate-port" value="${APRS_DEFAULT_PORT}" readonly>
+                </div>
+              </div>
+              <div class="field">
+                <label for="aprs-igate-filter">APRS-IS filter (server &rarr; you) ${helpIcon("Without this, APRS-IS already limits you to traffic related to what you gate. Add a filter (e.g. a range like m/50) to see more than that, not less.")}</label>
+                <input type="text" id="aprs-igate-filter" placeholder="e.g. m/50 (optional)">
+              </div>
+              <div class="field">
+                <label for="aprs-igate-gatefilter">Packet types to gate (you &rarr; server) ${helpIcon("Limits which packet types get forwarded from RF to APRS-IS (e.g. t/m for messages only). Leave blank to gate everything you hear.")}</label>
+                <input type="text" id="aprs-igate-gatefilter" placeholder="e.g. t/m (optional)">
+              </div>
+              <div class="field">
+                <label for="aprs-igate-txvia">TX via path ${helpIcon('Path used when relaying messages from the internet onto RF. Only takes effect when IGate mode is set to "RX &amp; TX".')}</label>
+                <input type="text" id="aprs-igate-txvia" value="${APRS_DEFAULT_TXVIA}">
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="aprs-igate-ratelimit-1">TX limit (1 min)</label>
+                  <input type="number" id="aprs-igate-ratelimit-1" value="${APRS_DEFAULT_RATE_1MIN}">
+                </div>
+                <div class="field">
+                  <label for="aprs-igate-ratelimit-5">TX limit (5 min)</label>
+                  <input type="number" id="aprs-igate-ratelimit-5" value="${APRS_DEFAULT_RATE_5MIN}">
+                </div>
+              </div>
+            </details>
+          </div>
+
+          <div class="field" id="station-icon-field">
+            <label>Station icon</label>
+            ${symbolPickerHTML('station-symbol', initialStationSymbol)}
+          </div>
+
+          <div class="field">
+            <label for="station-comment">Station comment</label>
+            <input type="text" id="station-comment" maxlength="60" placeholder="e.g. Digipeater + IGate">
+          </div>
+
+          <div class="subsection disabled" id="rfbeacon-section">
+            <label class="subsection-title">
+              <input type="checkbox" id="rfbeacon-enabled">
+              RF Beacon
+            </label>
+            <div class="subsection-body">
+              ${beaconFieldsHTML('rf', { includePath: true })}
+            </div>
+          </div>
+
+          <div class="subsection disabled" id="igbeacon-section">
+            <label class="subsection-title">
+              <input type="checkbox" id="igbeacon-enabled">
+              IGate Beacon
+            </label>
+            <div class="subsection-body">
+              ${beaconFieldsHTML('ig', { includePath: false })}
+            </div>
+          </div>
+        </section>
+      `;
+
+      // Declared before any of the restore/preset calls below, several of
+      // which (applyIgateRegionPreset -> updateIgateRegionWarning) read
+      // igateMode/digipeatMode through this closure: referencing a const
+      // before its own declaration line has run throws a ReferenceError
+      // even from within a nested function, since the TDZ covers the
+      // whole enclosing scope from its start, not just the point of use.
+      const digipeatMode = document.getElementById('aprs-digipeat-mode');
+      const igateMode = document.getElementById('aprs-igate-mode');
+      const digipeatSection = document.getElementById('digipeat-section');
+      const igateSection = document.getElementById('igate-section');
+      const rfSection = document.getElementById('rfbeacon-section');
+      const igSection = document.getElementById('igbeacon-section');
+      const rfEnabled = document.getElementById('rfbeacon-enabled');
+      const igEnabled = document.getElementById('igbeacon-enabled');
+      const stationIconField = document.getElementById('station-icon-field');
+
+      if (d.callsign) document.getElementById('aprs-callsign').value = d.callsign;
+      if (d.ssid) document.getElementById('aprs-ssid').value = d.ssid;
+      document.getElementById('aprs-digipeat-mode').value = d.digipeat_mode || 'rxonly';
+      if (d.digipeat) {
+        document.getElementById('aprs-digipeat-dedupe').value = d.digipeat.dedupe || APRS_DEFAULT_DEDUPE;
+        document.getElementById('aprs-digipeat-filter').value = d.digipeat.filter || '';
+      }
+      document.getElementById('aprs-digipeat-rules').value = d.digipeat?.rules || 'widearea';
+      if (d.digipeat?.rules === 'custom') {
+        document.getElementById('aprs-digipeat-alias').value = d.digipeat.alias || '';
+        document.getElementById('aprs-digipeat-wide').value = d.digipeat.wide || '';
+      }
+      applyDigipeatRulesPreset();
+      document.getElementById('aprs-igate-mode').value = d.igate_mode || 'off';
+      if (d.igate) {
+        document.getElementById('aprs-igate-passcode').value = d.igate.passcode || '';
+        document.getElementById('aprs-igate-port').value = d.igate.port || APRS_DEFAULT_PORT;
+        document.getElementById('aprs-igate-filter').value = d.igate.filter || '';
+        document.getElementById('aprs-igate-gatefilter').value = d.igate.gate_filter || '';
+        document.getElementById('aprs-igate-txvia').value = d.igate.tx_via || APRS_DEFAULT_TXVIA;
+        document.getElementById('aprs-igate-ratelimit-1').value = d.igate.rate_limit_1min || APRS_DEFAULT_RATE_1MIN;
+        document.getElementById('aprs-igate-ratelimit-5').value = d.igate.rate_limit_5min || APRS_DEFAULT_RATE_5MIN;
+      }
+      document.getElementById('aprs-igate-region').value = d.igate?.region || 'automatic';
+      if (d.igate?.region === 'custom') {
+        document.getElementById('aprs-igate-server').value = d.igate.server || APRS_DEFAULT_SERVER;
+      }
+      applyIgateRegionPreset();
+      document.getElementById('station-comment').value = d.comment || '';
+      document.getElementById('rfbeacon-enabled').checked = !!(d.rf_beacon && d.rf_beacon.enabled);
+      document.getElementById('igbeacon-enabled').checked = !!(d.igate_beacon && d.igate_beacon.enabled);
+      restoreBeaconFields('rf', d.rf_beacon);
+      restoreBeaconFields('ig', d.igate_beacon);
+
+      function updateModeVisibility() {
+        const isDigi = digipeatMode.value === 'digipeater';
+        const igateOn = igateMode.value !== 'off';
+        const igateTx = igateMode.value === 'rxtx';
+
+        stationIconField.classList.toggle('hidden', !(isDigi || igateTx));
+        digipeatSection.classList.toggle('hidden', !isDigi);
+
+        rfEnabled.disabled = !isDigi;
+        if (!isDigi) rfEnabled.checked = false;
+        rfSection.classList.toggle('disabled', !isDigi);
+        rfSection.classList.toggle('active', isDigi && rfEnabled.checked);
+
+        igEnabled.disabled = !igateOn;
+        if (!igateOn) igEnabled.checked = false;
+        igateSection.classList.toggle('hidden', !igateOn);
+        igSection.classList.toggle('disabled', !igateOn);
+        igSection.classList.toggle('active', igateOn && igEnabled.checked);
+
+        updateIgateRegionWarning();
+      }
+
+      function updateIgateRegionWarning() {
+        const igateOn = igateMode.value !== 'off';
+        const region = document.getElementById('aprs-igate-region');
+        document.getElementById('aprs-igate-region-warning').classList.toggle(
+          'hidden', !(igateOn && region.value === 'automatic')
+        );
+      }
+
+      wireSymbolPicker('station-symbol');
+
+      function applyDigipeatRulesPreset() {
+        const rulesSelect = document.getElementById('aprs-digipeat-rules');
+        const aliasInput = document.getElementById('aprs-digipeat-alias');
+        const wideInput = document.getElementById('aprs-digipeat-wide');
+        const preset = DIGIPEAT_PRESETS[rulesSelect.value];
+        if (preset) {
+          aliasInput.value = preset.alias;
+          wideInput.value = preset.wide;
+        }
+        aliasInput.readOnly = !!preset;
+        wideInput.readOnly = !!preset;
+      }
+      document.getElementById('aprs-digipeat-rules').addEventListener('change', applyDigipeatRulesPreset);
+
+      function applyIgateRegionPreset() {
+        const regionSelect = document.getElementById('aprs-igate-region');
+        const serverInput = document.getElementById('aprs-igate-server');
+        const portInput = document.getElementById('aprs-igate-port');
+        const server = APRS_IGATE_REGIONS[regionSelect.value];
+        if (server) {
+          serverInput.value = server;
+          portInput.value = APRS_DEFAULT_PORT;
+        }
+        serverInput.readOnly = !!server;
+        portInput.readOnly = !!server;
+        updateIgateRegionWarning();
+      }
+      document.getElementById('aprs-igate-region').addEventListener('change', applyIgateRegionPreset);
+
+      digipeatMode.addEventListener('change', updateModeVisibility);
+      igateMode.addEventListener('change', updateModeVisibility);
+      rfEnabled.addEventListener('change', () => {
+        rfSection.classList.toggle('active', rfEnabled.checked);
+      });
+      igEnabled.addEventListener('change', () => {
+        igSection.classList.toggle('active', igEnabled.checked);
+      });
+
+      const passcodeInput = document.getElementById('aprs-igate-passcode');
+      let passcodeManuallySet = !!(d.igate && d.igate.passcode);
+      passcodeInput.addEventListener('input', () => { passcodeManuallySet = true; });
+
+      async function fetchAndFillPasscode() {
+        const callsign = document.getElementById('aprs-callsign').value.trim();
+        if (!callsign) return;
+        try {
+          const res = await fetch(`/api/aprs/passcode?callsign=${encodeURIComponent(callsign)}`);
+          const data = await res.json();
+          passcodeInput.value = data.passcode;
+        } catch (e) {
+          // leave field as-is, manual entry still works
+        }
+      }
+      function autoFillPasscode() {
+        if (!passcodeManuallySet) fetchAndFillPasscode();
+      }
+      document.getElementById('aprs-callsign').addEventListener('input', autoFillPasscode);
+      document.getElementById('btn-generate-passcode').addEventListener('click', () => {
+        passcodeManuallySet = false;
+        fetchAndFillPasscode();
+      });
+
+      updateModeVisibility();
+    }
+
+    // No confirm-modal gate here (unlike the wizard's saveAprsStep): the
+    // "IGate region still Automatic" check becomes the inline warning
+    // banner wired up in renderAprsTab above (updateIgateRegionWarning),
+    // and Save proceeds regardless of whether it's showing.
+    function collectAprsTab() {
+      const digipeatMode = document.getElementById('aprs-digipeat-mode').value;
+      const igateMode = document.getElementById('aprs-igate-mode').value;
+      const stationSymbol = getSymbolPickerValue('station-symbol');
+      const aprsConfig = {
+        callsign: document.getElementById('aprs-callsign').value.trim().toUpperCase(),
+        ssid: document.getElementById('aprs-ssid').value,
+        digipeat_mode: digipeatMode,
+        igate_mode: igateMode,
+        symbol: {
+          code: symbolCodeFromSymbol(stationSymbol),
+          table: stationSymbol.table,
+          symbol: stationSymbol.symbol,
+          overlay: stationSymbol.overlay,
+        },
+        comment: document.getElementById('station-comment').value,
+      };
+
+      if (digipeatMode === 'digipeater') {
+        aprsConfig.digipeat = {
+          rules: document.getElementById('aprs-digipeat-rules').value,
+          alias: document.getElementById('aprs-digipeat-alias').value,
+          wide: document.getElementById('aprs-digipeat-wide').value,
+          dedupe: document.getElementById('aprs-digipeat-dedupe').value,
+          filter: document.getElementById('aprs-digipeat-filter').value,
+        };
+      }
+
+      if (igateMode !== 'off') {
+        aprsConfig.igate = {
+          passcode: document.getElementById('aprs-igate-passcode').value,
+          region: document.getElementById('aprs-igate-region').value,
+          server: document.getElementById('aprs-igate-server').value,
+          port: document.getElementById('aprs-igate-port').value,
+          filter: document.getElementById('aprs-igate-filter').value,
+          gate_filter: document.getElementById('aprs-igate-gatefilter').value,
+          tx_via: document.getElementById('aprs-igate-txvia').value,
+          rate_limit_1min: document.getElementById('aprs-igate-ratelimit-1').value,
+          rate_limit_5min: document.getElementById('aprs-igate-ratelimit-5').value,
+        };
+      }
+
+      if (document.getElementById('rfbeacon-enabled').checked) {
+        aprsConfig.rf_beacon = collectBeaconFields('rf', { includePath: true });
+      }
+      if (document.getElementById('igbeacon-enabled').checked) {
+        aprsConfig.igate_beacon = collectBeaconFields('ig', { includePath: false });
+      }
+
+      state.aprs = aprsConfig;
+      return aprsConfig;
+    }
+
+    // ── GPS tab (ported from first_run.html's GPS setup step) ───────────
+    // ── Manual position: coordinate format conversions ──────────────────
+    // All pure client-side math: no API key, no network call needed.
+    const MAIDENHEAD_LETTERS = 'ABCDEFGHIJKLMNOPQR';
+
+    function formatDMS(decimal, isLat) {
+      const dir = isLat ? (decimal < 0 ? 'S' : 'N') : (decimal < 0 ? 'W' : 'E');
+      const abs = Math.abs(decimal);
+      const deg = Math.floor(abs);
+      const minFull = (abs - deg) * 60;
+      const min = Math.floor(minFull);
+      const sec = (minFull - min) * 60;
+      return `${deg}°${min}'${sec.toFixed(1)}"${dir}`;
+    }
+
+    function parseDMS(raw) {
+      if (!raw) return null;
+      let s = raw.trim().toUpperCase();
+      let sign = 1;
+      const leadingDir = s.match(/^([NSEW])\s*(.*)$/);
+      const trailingDir = !leadingDir && s.match(/^(.*?)\s*([NSEW])$/);
+      if (leadingDir) {
+        sign = (leadingDir[1] === 'S' || leadingDir[1] === 'W') ? -1 : 1;
+        s = leadingDir[2].trim();
+      } else if (trailingDir) {
+        sign = (trailingDir[2] === 'S' || trailingDir[2] === 'W') ? -1 : 1;
+        s = trailingDir[1].trim();
+      } else if (s.startsWith('-')) {
+        sign = -1;
+        s = s.slice(1).trim();
+      }
+      const nums = s.match(/[0-9]+(?:\.[0-9]+)?/g);
+      if (!nums || nums.length === 0) return null;
+      const deg = parseFloat(nums[0]);
+      const min = nums[1] ? parseFloat(nums[1]) : 0;
+      const sec = nums[2] ? parseFloat(nums[2]) : 0;
+      if (min >= 60 || sec >= 60) return null;
+      return sign * (deg + min / 60 + sec / 3600);
+    }
+
+    function formatMaidenhead(lat, lon) {
+      let adjLon = lon + 180;
+      let adjLat = lat + 90;
+      const fieldLon = Math.floor(adjLon / 20);
+      const fieldLat = Math.floor(adjLat / 10);
+      adjLon -= fieldLon * 20;
+      adjLat -= fieldLat * 10;
+      const squareLon = Math.floor(adjLon / 2);
+      const squareLat = Math.floor(adjLat / 1);
+      adjLon -= squareLon * 2;
+      adjLat -= squareLat * 1;
+      const subLon = Math.floor(adjLon / (2 / 24));
+      const subLat = Math.floor(adjLat / (1 / 24));
+      return MAIDENHEAD_LETTERS[fieldLon] + MAIDENHEAD_LETTERS[fieldLat] + squareLon + squareLat
+        + String.fromCharCode(97 + subLon) + String.fromCharCode(97 + subLat);
+    }
+
+    function parseMaidenhead(raw) {
+      const s = (raw || '').trim();
+      if (!/^[A-Ra-r]{2}[0-9]{2}([A-Xa-x]{2})?$/.test(s)) return null;
+      const u = s.toUpperCase();
+      let lon = MAIDENHEAD_LETTERS.indexOf(u[0]) * 20 - 180;
+      let lat = MAIDENHEAD_LETTERS.indexOf(u[1]) * 10 - 90;
+      lon += parseInt(u[2], 10) * 2;
+      lat += parseInt(u[3], 10) * 1;
+      let lonSize = 2, latSize = 1;
+      if (u.length >= 6) {
+        lon += (u.charCodeAt(4) - 65) * (2 / 24);
+        lat += (u.charCodeAt(5) - 65) * (1 / 24);
+        lonSize = 2 / 24;
+        latSize = 1 / 24;
+      }
+      lon += lonSize / 2;
+      lat += latSize / 2;
+      return { lat, lon };
+    }
+
+    // Open Location Code / Plus Codes: ported from Google's own reference
+    // implementation (github.com/google/open-location-code, Apache-2.0).
+    // Output verified to match Google's own reference implementation
+    // exactly (byte-for-byte) across more than a dozen test points
+    // spanning both hemispheres, the antimeridian, and longitude
+    // wraparound. See first_run.html's copy of this block for the full
+    // provenance notes; ported here unchanged.
+    const OLC_ALPHABET = '23456789CFGHJMPQRVWX';
+    const OLC_BASE = OLC_ALPHABET.length;
+    const OLC_SEPARATOR_POSITION = 8;
+    const OLC_PAIR_CODE_LENGTH = 10;
+    const OLC_MAX_DIGIT_COUNT = 15;
+    const OLC_PAIR_PRECISION = Math.pow(OLC_BASE, 3);
+    const OLC_PAIR_FIRST_PLACE_VALUE = Math.pow(OLC_BASE, 5 - 1);
+    const OLC_GRID_ROWS = 5;
+    const OLC_GRID_COLUMNS = 4;
+    const OLC_GRID_CODE_LENGTH = OLC_MAX_DIGIT_COUNT - OLC_PAIR_CODE_LENGTH; // 5
+    const OLC_FINAL_LAT_PRECISION = OLC_PAIR_PRECISION * Math.pow(OLC_GRID_ROWS, OLC_GRID_CODE_LENGTH);
+    const OLC_FINAL_LNG_PRECISION = OLC_PAIR_PRECISION * Math.pow(OLC_GRID_COLUMNS, OLC_GRID_CODE_LENGTH);
+    const OLC_GRID_LAT_FIRST_PLACE_VALUE = Math.pow(OLC_GRID_ROWS, OLC_GRID_CODE_LENGTH - 1);
+    const OLC_GRID_LNG_FIRST_PLACE_VALUE = Math.pow(OLC_GRID_COLUMNS, OLC_GRID_CODE_LENGTH - 1);
+
+    function olcClipLat(lat) { return Math.min(90, Math.max(-90, lat)); }
+    function olcNormLon(lon) {
+      while (lon < -180) lon += 360;
+      while (lon >= 180) lon -= 360;
+      return lon;
+    }
+
+    function formatPlusCode(lat, lon, codeLength) {
+      codeLength = codeLength || OLC_PAIR_CODE_LENGTH;
+      lat = olcClipLat(lat);
+      const lonNorm = olcNormLon(lon);
+      if (lat === 90) {
+        const precision = codeLength <= 10
+          ? Math.pow(20, Math.floor(codeLength / -2 + 2))
+          : Math.pow(20, -3) / Math.pow(OLC_GRID_ROWS, codeLength - 10);
+        lat -= 0.9 * precision;
+      }
+
+      let latVal = Math.floor(lat * OLC_FINAL_LAT_PRECISION) + 90 * OLC_FINAL_LAT_PRECISION;
+      latVal = Math.min(Math.max(latVal, 0), 2 * 90 * OLC_FINAL_LAT_PRECISION - 1);
+      let lngVal = Math.floor(lonNorm * OLC_FINAL_LNG_PRECISION) + 180 * OLC_FINAL_LNG_PRECISION;
+      const lngRange = 2 * 180 * OLC_FINAL_LNG_PRECISION;
+      lngVal = ((lngVal % lngRange) + lngRange) % lngRange;
+
+      const code = new Array(OLC_MAX_DIGIT_COUNT + 1);
+      code[OLC_SEPARATOR_POSITION] = '+';
+
+      if (codeLength > OLC_PAIR_CODE_LENGTH) {
+        for (let i = OLC_MAX_DIGIT_COUNT - OLC_PAIR_CODE_LENGTH; i >= 1; i--) {
+          const latDigit = latVal % OLC_GRID_ROWS;
+          const lngDigit = lngVal % OLC_GRID_COLUMNS;
+          code[OLC_SEPARATOR_POSITION + 2 + i] = OLC_ALPHABET[latDigit * OLC_GRID_COLUMNS + lngDigit];
+          latVal = Math.floor(latVal / OLC_GRID_ROWS);
+          lngVal = Math.floor(lngVal / OLC_GRID_COLUMNS);
+        }
+      } else {
+        latVal = Math.floor(latVal / Math.pow(OLC_GRID_ROWS, OLC_GRID_CODE_LENGTH));
+        lngVal = Math.floor(lngVal / Math.pow(OLC_GRID_COLUMNS, OLC_GRID_CODE_LENGTH));
+      }
+
+      code[OLC_SEPARATOR_POSITION + 1] = OLC_ALPHABET[latVal % OLC_BASE];
+      code[OLC_SEPARATOR_POSITION + 2] = OLC_ALPHABET[lngVal % OLC_BASE];
+      latVal = Math.floor(latVal / OLC_BASE);
+      lngVal = Math.floor(lngVal / OLC_BASE);
+      for (let i = OLC_PAIR_CODE_LENGTH / 2 + 1; i >= 0; i -= 2) {
+        code[i] = OLC_ALPHABET[latVal % OLC_BASE];
+        code[i + 1] = OLC_ALPHABET[lngVal % OLC_BASE];
+        latVal = Math.floor(latVal / OLC_BASE);
+        lngVal = Math.floor(lngVal / OLC_BASE);
+      }
+
+      if (codeLength >= OLC_SEPARATOR_POSITION) {
+        return code.slice(0, codeLength + 1).join('');
+      }
+      return code.slice(0, codeLength).join('') + Array(OLC_SEPARATOR_POSITION - codeLength + 1).join('0') + '+';
+    }
+
+    function decodePlusCode(rawCode) {
+      const code = rawCode.replace('+', '').replace(/0/g, '').toUpperCase();
+      let normalLat = -90 * OLC_PAIR_PRECISION;
+      let normalLng = -180 * OLC_PAIR_PRECISION;
+      let gridLat = 0, gridLng = 0;
+      let digits = Math.min(code.length, OLC_PAIR_CODE_LENGTH);
+      let pv = OLC_PAIR_FIRST_PLACE_VALUE;
+      for (let i = 0; i < digits; i += 2) {
+        const latDigit = OLC_ALPHABET.indexOf(code[i]);
+        const lngDigit = OLC_ALPHABET.indexOf(code[i + 1]);
+        if (latDigit === -1 || lngDigit === -1) return null;
+        normalLat += latDigit * pv;
+        normalLng += lngDigit * pv;
+        if (i < digits - 2) pv /= OLC_BASE;
+      }
+      let latPrecision = pv / OLC_PAIR_PRECISION;
+      let lngPrecision = pv / OLC_PAIR_PRECISION;
+      if (code.length > OLC_PAIR_CODE_LENGTH) {
+        let rowpv = OLC_GRID_LAT_FIRST_PLACE_VALUE;
+        let colpv = OLC_GRID_LNG_FIRST_PLACE_VALUE;
+        digits = Math.min(code.length, OLC_MAX_DIGIT_COUNT);
+        for (let i = OLC_PAIR_CODE_LENGTH; i < digits; i++) {
+          const digitVal = OLC_ALPHABET.indexOf(code[i]);
+          if (digitVal === -1) return null;
+          gridLat += Math.floor(digitVal / OLC_GRID_COLUMNS) * rowpv;
+          gridLng += (digitVal % OLC_GRID_COLUMNS) * colpv;
+          if (i < digits - 1) {
+            rowpv /= OLC_GRID_ROWS;
+            colpv /= OLC_GRID_COLUMNS;
+          }
+        }
+        latPrecision = rowpv / OLC_FINAL_LAT_PRECISION;
+        lngPrecision = colpv / OLC_FINAL_LNG_PRECISION;
+      }
+      const lat = normalLat / OLC_PAIR_PRECISION + gridLat / OLC_FINAL_LAT_PRECISION;
+      const lon = normalLng / OLC_PAIR_PRECISION + gridLng / OLC_FINAL_LNG_PRECISION;
+      return {
+        latCenter: Math.min(lat + latPrecision / 2, 90),
+        lonCenter: Math.min(lon + lngPrecision / 2, 180),
+      };
+    }
+
+    function isShortPlusCode(raw) {
+      const s = (raw || '').trim().toUpperCase();
+      const sepIdx = s.indexOf('+');
+      return sepIdx >= 2 && sepIdx < OLC_SEPARATOR_POSITION && sepIdx % 2 === 0;
+    }
+
+    function recoverPlusCode(shortCode, refLat, refLon) {
+      refLat = olcClipLat(refLat);
+      refLon = olcNormLon(refLon);
+      const s = shortCode.trim().toUpperCase();
+      const paddingLength = OLC_SEPARATOR_POSITION - s.indexOf('+');
+      const resolution = Math.pow(20, 2 - paddingLength / 2);
+      const halfResolution = resolution / 2.0;
+      const refFull = formatPlusCode(refLat, refLon, OLC_PAIR_CODE_LENGTH);
+      const area = decodePlusCode(refFull.slice(0, paddingLength) + s);
+      if (!area) return null;
+      let lat = area.latCenter, lon = area.lonCenter;
+      if (refLat + halfResolution < lat && lat - resolution >= -90) {
+        lat -= resolution;
+      } else if (refLat - halfResolution > lat && lat + resolution <= 90) {
+        lat += resolution;
+      }
+      if (refLon + halfResolution < lon) {
+        lon -= resolution;
+      } else if (refLon - halfResolution > lon) {
+        lon += resolution;
+      }
+      return { lat, lon };
+    }
+
+    function parsePlusCode(raw, reference) {
+      if (!raw) return null;
+      const match = raw.trim().toUpperCase().match(/^((?:[23456789CFGHJMPQRVWX]{2}){1,4}\+[23456789CFGHJMPQRVWX]{2,3})/);
+      if (!match) return null;
+      const code = match[1];
+      if (isShortPlusCode(code)) {
+        if (!reference) return null;
+        return recoverPlusCode(code, reference.lat, reference.lon);
+      }
+      const area = decodePlusCode(code);
+      if (!area) return null;
+      const lat = area.latCenter, lon = area.lonCenter;
+      if (lat < -90 || lat > 90 || lon < -180 || lon >= 180) return null;
+      return { lat, lon };
+    }
+
+    // A live GPS fix, or the last position resolved from any manual
+    // format, kept around purely as a reference point for recovering a
+    // *short* Plus Code (see parsePlusCode/recoverPlusCode above).
+    let lastKnownPosition = null;
+
+    function getManualLatLon(format) {
+      format = format || document.getElementById('gps-loc-format').value;
+      let lat, lon;
+      if (format === 'dms') {
+        lat = parseDMS(document.getElementById('gps-lat-dms').value);
+        lon = parseDMS(document.getElementById('gps-lon-dms').value);
+        if (lat === null || lon === null) return null;
+      } else if (format === 'maidenhead') {
+        const parsed = parseMaidenhead(document.getElementById('gps-grid').value);
+        if (!parsed) return null;
+        lat = parsed.lat;
+        lon = parsed.lon;
+      } else if (format === 'pluscode') {
+        const parsed = parsePlusCode(document.getElementById('gps-pluscode').value, lastKnownPosition);
+        if (!parsed) return null;
+        lat = parsed.lat;
+        lon = parsed.lon;
+      } else {
+        lat = parseFloat(document.getElementById('gps-lat').value);
+        lon = parseFloat(document.getElementById('gps-lon').value);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      }
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+      if (format !== 'pluscode') lastKnownPosition = { lat, lon };
+      return { lat, lon };
+    }
+
+    function renderGpsTab() {
+      const g = state.gps || {};
+      document.getElementById('gps-tab-content').innerHTML = `
+        <section>
+          <div class="field">
+            <label for="gps-device">GPS device</label>
+            <select id="gps-device">
+              <option value="none">No GPS</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="gps-position-source">Beacon position</label>
+            <select id="gps-position-source">
+              <option value="gps">GPS</option>
+              <option value="manual">Manual</option>
+            </select>
+          </div>
+
+          <div class="hidden" id="gps-manual-loc">
+            <div class="field">
+              <label for="gps-loc-format">Coordinate format</label>
+              <select id="gps-loc-format">
+                <option value="decimal">Decimal degrees</option>
+                <option value="dms">Degrees / minutes / seconds</option>
+                <option value="maidenhead">Maidenhead grid square</option>
+                <option value="pluscode">Plus Code</option>
+              </select>
+            </div>
+
+            <div class="field-row" id="gps-loc-decimal">
+              <div class="field">
+                <label for="gps-lat">Latitude</label>
+                <input type="number" id="gps-lat" step="0.000001" placeholder="e.g. -36.848461">
+              </div>
+              <div class="field">
+                <label for="gps-lon">Longitude</label>
+                <input type="number" id="gps-lon" step="0.000001" placeholder="e.g. 174.763336">
+              </div>
+            </div>
+
+            <div class="field-row hidden" id="gps-loc-dms">
+              <div class="field">
+                <label for="gps-lat-dms">Latitude</label>
+                <input type="text" id="gps-lat-dms" placeholder="36&deg;50'54.5&quot;S">
+              </div>
+              <div class="field">
+                <label for="gps-lon-dms">Longitude</label>
+                <input type="text" id="gps-lon-dms" placeholder="174&deg;45'48.0&quot;E">
+              </div>
+            </div>
+
+            <div class="field hidden" id="gps-loc-maidenhead">
+              <label for="gps-grid">Grid square ${helpIcon("Maidenhead locator, the standard ham radio grid square system, e.g. RF80qh (6 characters, roughly 4km precision). The position used is the center of that square, not an exact point.")}</label>
+              <input type="text" id="gps-grid" maxlength="6" placeholder="e.g. RF80qh">
+            </div>
+
+            <div class="field hidden" id="gps-loc-pluscode">
+              <label for="gps-pluscode">Plus Code ${helpIcon("Open Location Code, Google's open, offline standard (no account or API key needed). Find one by dropping a pin on Google Maps. A full code (e.g. 8FVC9G8F+6X, about 14x14m precision) works on its own; a short code (e.g. 57QW+PXQ) needs a GPS fix or a previously-entered position nearby to resolve. The position used is the center of that square.")}</label>
+              <input type="text" id="gps-pluscode" placeholder="e.g. 8FVC9G8F+6X">
+            </div>
+
+            <p class="msg" id="gps-loc-msg"></p>
+          </div>
+          <div class="field hidden" id="gps-getcurrent-row">
+            <button type="button" id="btn-gps-getcurrent" disabled>Get current position</button>
+            <p class="msg" id="gps-getcurrent-msg"></p>
+          </div>
+
+          <div class="field">
+            <label class="subsection-title">
+              <input type="checkbox" id="gps-time-sync" disabled>
+              Update system time from GPS
+            </label>
+          </div>
+          <div class="field hidden" id="gps-timezone-field">
+            <label for="gps-timezone">Timezone</label>
+            <select id="gps-timezone"></select>
+          </div>
+
+          <div class="field hidden" id="gps-status-field">
+            <label>Live GPS status</label>
+            <div class="status-box" id="gps-status-box">Not checked yet.</div>
+            <button type="button" id="btn-gps-refresh" style="margin-top: 8px;">Refresh</button>
+          </div>
+        </section>
+      `;
+
+      const deviceSelect = document.getElementById('gps-device');
+      const sourceSelect = document.getElementById('gps-position-source');
+      const manualLoc = document.getElementById('gps-manual-loc');
+      const getCurrentRow = document.getElementById('gps-getcurrent-row');
+      const getCurrentBtn = document.getElementById('btn-gps-getcurrent');
+      const timeSyncCheckbox = document.getElementById('gps-time-sync');
+      const timezoneField = document.getElementById('gps-timezone-field');
+      const statusField = document.getElementById('gps-status-field');
+      const formatSelect = document.getElementById('gps-loc-format');
+      const locMsg = document.getElementById('gps-loc-msg');
+
+      function setManualFields(format, latLon) {
+        if (!latLon) return;
+        if (format === 'dms') {
+          document.getElementById('gps-lat-dms').value = formatDMS(latLon.lat, true);
+          document.getElementById('gps-lon-dms').value = formatDMS(latLon.lon, false);
+        } else if (format === 'maidenhead') {
+          document.getElementById('gps-grid').value = formatMaidenhead(latLon.lat, latLon.lon);
+        } else if (format === 'pluscode') {
+          document.getElementById('gps-pluscode').value = formatPlusCode(latLon.lat, latLon.lon);
+        } else {
+          document.getElementById('gps-lat').value = latLon.lat.toFixed(6);
+          document.getElementById('gps-lon').value = latLon.lon.toFixed(6);
+        }
+      }
+
+      function updateFormatVisibility() {
+        const format = formatSelect.value;
+        document.getElementById('gps-loc-decimal').classList.toggle('hidden', format !== 'decimal');
+        document.getElementById('gps-loc-dms').classList.toggle('hidden', format !== 'dms');
+        document.getElementById('gps-loc-maidenhead').classList.toggle('hidden', format !== 'maidenhead');
+        document.getElementById('gps-loc-pluscode').classList.toggle('hidden', format !== 'pluscode');
+      }
+
+      function updateLocPreview() {
+        const format = formatSelect.value;
+        if (format === 'decimal') {
+          locMsg.textContent = '';
+          locMsg.className = 'msg';
+          return;
+        }
+        const isEmpty = format === 'dms'
+          ? !document.getElementById('gps-lat-dms').value.trim() && !document.getElementById('gps-lon-dms').value.trim()
+          : format === 'pluscode'
+          ? !document.getElementById('gps-pluscode').value.trim()
+          : !document.getElementById('gps-grid').value.trim();
+        if (isEmpty) {
+          locMsg.textContent = '';
+          locMsg.className = 'msg';
+          return;
+        }
+        const latLon = getManualLatLon();
+        if (!latLon) {
+          if (format === 'pluscode' && isShortPlusCode(document.getElementById('gps-pluscode').value)) {
+            locMsg.textContent = lastKnownPosition
+              ? 'Could not resolve this short code near the last known position.'
+              : "This is a short Plus Code. Paste the full code instead, or get a GPS fix first so it can be resolved relative to that.";
+          } else {
+            const example = format === 'dms' ? `e.g. 36°50'54.5"S` : format === 'pluscode' ? 'e.g. 8FVC9G8F+6X' : 'e.g. RF80qh';
+            locMsg.textContent = `Could not parse: check the format (${example}).`;
+          }
+          locMsg.className = 'msg error';
+          return;
+        }
+        locMsg.textContent = `≈ ${latLon.lat.toFixed(6)}, ${latLon.lon.toFixed(6)}`;
+        locMsg.className = 'msg';
+      }
+
+      formatSelect.addEventListener('change', () => {
+        const previousFormat = formatSelect.dataset.prev || 'decimal';
+        const latLon = getManualLatLon(previousFormat);
+        formatSelect.dataset.prev = formatSelect.value;
+        updateFormatVisibility();
+        setManualFields(formatSelect.value, latLon);
+        updateLocPreview();
+      });
+      formatSelect.dataset.prev = 'decimal';
+      ['gps-lat-dms', 'gps-lon-dms', 'gps-grid', 'gps-pluscode'].forEach(id => {
+        document.getElementById(id).addEventListener('input', updateLocPreview);
+      });
+
+      function updateGpsVisibility() {
+        const hasDevice = deviceSelect.value !== 'none';
+        if (!hasDevice && sourceSelect.value === 'gps') sourceSelect.value = 'manual';
+        sourceSelect.querySelector('option[value="gps"]').disabled = !hasDevice;
+        const isManual = sourceSelect.value === 'manual';
+        manualLoc.classList.toggle('hidden', !isManual);
+        getCurrentRow.classList.toggle('hidden', !isManual);
+        getCurrentBtn.disabled = !hasDevice;
+        timeSyncCheckbox.disabled = !hasDevice;
+        if (!hasDevice) timeSyncCheckbox.checked = false;
+        timezoneField.classList.toggle('hidden', !timeSyncCheckbox.checked);
+        statusField.classList.toggle('hidden', !hasDevice);
+      }
+
+      deviceSelect.addEventListener('change', updateGpsVisibility);
+      sourceSelect.addEventListener('change', updateGpsVisibility);
+      timeSyncCheckbox.addEventListener('change', updateGpsVisibility);
+
+      getCurrentBtn.addEventListener('click', async () => {
+        const msg = document.getElementById('gps-getcurrent-msg');
+        const prevText = getCurrentBtn.textContent;
+        getCurrentBtn.disabled = true;
+        getCurrentBtn.textContent = 'Getting position...';
+        msg.className = 'msg';
+        try {
+          const res = await fetch('/api/gps/position');
+          const data = await res.json();
+          if (data.available) {
+            lastKnownPosition = { lat: data.latitude, lon: data.longitude };
+            setManualFields(formatSelect.value, lastKnownPosition);
+            updateLocPreview();
+            msg.textContent = 'Position filled in from GPS.';
+            msg.className = 'msg success';
+          } else {
+            msg.textContent = data.reason || 'No GPS fix available.';
+            msg.className = 'msg error';
+          }
+        } catch (e) {
+          msg.textContent = 'Could not reach the server.';
+          msg.className = 'msg error';
+        } finally {
+          getCurrentBtn.disabled = deviceSelect.value === 'none';
+          getCurrentBtn.textContent = prevText;
+        }
+      });
+
+      document.getElementById('btn-gps-refresh').addEventListener('click', refreshGpsStatus);
+
+      async function refreshGpsStatus() {
+        const box = document.getElementById('gps-status-box');
+        box.textContent = 'Checking...';
+        try {
+          const res = await fetch('/api/gps/status');
+          const data = await res.json();
+          if (!data.available) {
+            box.textContent = data.reason || 'GPS not available.';
+            return;
+          }
+          if (data.has_fix) lastKnownPosition = { lat: data.latitude, lon: data.longitude };
+          const sats = `${data.satellites_used ?? '?'} used / ${data.satellites_visible ?? '?'} visible`;
+          const pos = data.has_fix ? `${data.latitude.toFixed(6)}, ${data.longitude.toFixed(6)}` : 'N/A';
+          box.innerHTML = '';
+          [['Fix', data.fix], ['Position', pos], ['Satellites', sats]].forEach(([label, value]) => {
+            const row = document.createElement('div');
+            const l = document.createElement('strong');
+            l.textContent = `${label}: `;
+            row.append(l, value);
+            box.appendChild(row);
+          });
+        } catch (e) {
+          box.textContent = 'Could not reach the server.';
+        }
+      }
+
+      async function loadGpsDevices() {
+        try {
+          const res = await fetch('/api/hardware/serial-devices');
+          const data = await res.json();
+          (data.devices || []).forEach(d => {
+            const label = d.description ? `${d.device}: ${d.description}` : d.device;
+            addOption(deviceSelect, `serial:${d.device}`, label);
+          });
+          if (g.device) deviceSelect.value = g.device;
+        } catch (e) {
+          // "No GPS" still works
+        } finally {
+          updateGpsVisibility();
+          if (deviceSelect.value !== 'none') refreshGpsStatus();
+        }
+      }
+
+      async function loadTimezones() {
+        const tzSelect = document.getElementById('gps-timezone');
+        try {
+          const res = await fetch('/api/system/timezones');
+          const data = await res.json();
+          (data.timezones || []).forEach(tz => addOption(tzSelect, tz, tz));
+        } catch (e) {
+          addOption(tzSelect, 'UTC', 'UTC');
+        }
+        if (g.timezone) tzSelect.value = g.timezone;
+      }
+
+      sourceSelect.value = g.position_source || 'manual';
+      const savedFormat = g.location_format || 'decimal';
+      formatSelect.value = savedFormat;
+      formatSelect.dataset.prev = savedFormat;
+      if (g.latitude !== undefined && g.longitude !== undefined && g.latitude !== '' && g.longitude !== '') {
+        const latLon = { lat: parseFloat(g.latitude), lon: parseFloat(g.longitude) };
+        document.getElementById('gps-lat').value = latLon.lat.toFixed(6);
+        document.getElementById('gps-lon').value = latLon.lon.toFixed(6);
+        setManualFields(savedFormat, latLon);
+        lastKnownPosition = latLon;
+      }
+      timeSyncCheckbox.checked = !!g.time_sync;
+
+      loadGpsDevices();
+      loadTimezones();
+      updateGpsVisibility();
+      updateFormatVisibility();
+      updateLocPreview();
+    }
+
+    // Returns null (rather than blocking a Next button, as the wizard's
+    // saveGpsStep does) when a manual position doesn't parse: saveAll()
+    // treats that as a reason to abort the whole save and point back at
+    // this tab, since sending a garbage position to gpsconfig.apply()
+    // isn't something worth doing quietly.
+    function collectGpsTab() {
+      const positionSource = document.getElementById('gps-position-source').value;
+      let latitude = '', longitude = '';
+      if (positionSource === 'manual') {
+        const latLon = getManualLatLon();
+        if (!latLon) {
+          const msg = document.getElementById('gps-loc-msg');
+          msg.textContent = 'Enter a valid position before saving.';
+          msg.className = 'msg error';
+          return null;
+        }
+        latitude = latLon.lat;
+        longitude = latLon.lon;
+      }
+      const gps = {
+        device: document.getElementById('gps-device').value,
+        position_source: positionSource,
+        location_format: document.getElementById('gps-loc-format').value,
+        latitude,
+        longitude,
+        time_sync: document.getElementById('gps-time-sync').checked,
+        timezone: document.getElementById('gps-timezone').value,
+      };
+      state.gps = gps;
+      return gps;
+    }
+
+    // ── Map tab (ported from first_run.html's Map caching step) ─────────
+    // Unlike every other tab, this one's content is built lazily on first
+    // click (see switchTab in the boot section below), not eagerly at
+    // load: MapLibre needs a visible, non-zero-size container to measure
+    // itself against, and this tab's panel is display:none until chosen.
+    // Downloads started here persist their own bounds into config.yaml
+    // server-side (see /api/map/cache/start), so this tab has no
+    // "Save" of its own and isn't part of the global Save-all payload.
+    const MAP_DEFAULT_RADIUS_KM = 50;
+    const MAP_MIN_ZOOM = 1;
+    const MAP_SLIDER_MAX_ZOOM = 15; // matches Protomaps' hosted planet build, which only goes to z15
+    const MAP_DEFAULT_MAX_ZOOM = 10;
+    const MAP_DEFAULT_AUTO_UPDATE_TIME = '03:00';
+    let mapStatusPollTimer = null;
+    let currentRegionMap = null;
+    let pmtilesProtocolRegistered = false;
+    let mapRegionBounds = null;
+
+    function initMapTab() {
+      const m = state.map || {};
+      document.getElementById('map-tab-content').innerHTML = `
+        <section>
+          <p class="msg" id="map-checking-msg">Checking map caching status...</p>
+
+          <div id="map-unavailable-warning" class="hidden">
+            <p class="msg error">Map caching isn't available on this device.</p>
+            <p class="hint">The world map wasn't cached during install: either there was no internet at the time, or it was skipped. See PINOUT.md/SETUP.md for re-running the install step.</p>
+          </div>
+
+          <div id="map-fields" class="hidden">
+            <p class="msg error hidden" id="map-offline-note">No internet found. The pre-cached map below will still work, but downloading a more detailed region needs an internet connection.</p>
+
+            <label>Region ${helpIcon("Drag the pin (or click anywhere) to move the whole region. Drag the small squares on each edge to resize it: drag one side to make it a rectangle instead of a square. Shown on the pre-cached world map, so this works even without internet.")}</label>
+            <div id="map-region-picker"></div>
+
+            <button type="button" id="btn-map-use-station">Use station location</button>
+
+            <div class="field">
+              <label for="map-zoom-max">Detail level: zoom <span id="map-zoom-max-value"></span></label>
+              <input type="range" id="map-zoom-max" min="${MAP_MIN_ZOOM}" max="${MAP_SLIDER_MAX_ZOOM}" value="${m.zoom_max ?? MAP_DEFAULT_MAX_ZOOM}">
+            </div>
+
+            <p class="msg" id="map-region-msg"></p>
+
+            <button type="button" id="btn-map-download" style="margin-top: 12px;">Download this region</button>${helpIcon("Size depends on how much map detail actually exists in this area, so there's no reliable estimate to show before downloading. You'll see real progress once it starts.")}
+            <button type="button" id="btn-map-cancel" class="hidden" style="margin-top: 8px;">Cancel download</button>
+
+            <div id="map-progress-wrap" class="hidden" style="margin-top: 12px;">
+              <div class="status-box" id="map-progress-msg"></div>
+              <p class="hint">This keeps downloading in the background even if you switch tabs. The picked bounds are saved as soon as the download starts.</p>
+            </div>
+          </div>
+        </section>
+      `;
+
+      const downloadBtn = document.getElementById('btn-map-download');
+      const cancelBtn = document.getElementById('btn-map-cancel');
+      const useStationBtn = document.getElementById('btn-map-use-station');
+      const regionMsg = document.getElementById('map-region-msg');
+      const offlineNote = document.getElementById('map-offline-note');
+      const progressWrap = document.getElementById('map-progress-wrap');
+      const progressMsg = document.getElementById('map-progress-msg');
+
+      let regionMarker = null;
+      let edgeHandleN = null, edgeHandleS = null, edgeHandleE = null, edgeHandleW = null;
+      let interactive = false;
+
+      function boundsFromRadius(lat, lon, radiusKm) {
+        const latDelta = radiusKm / 111.0;
+        const lonDelta = radiusKm / (111.0 * Math.max(Math.cos(lat * Math.PI / 180), 0.01));
+        return { north: lat + latDelta, south: lat - latDelta, east: lon + lonDelta, west: lon - lonDelta };
+      }
+
+      function rectGeoJSON(b) {
+        return {
+          type: 'Feature',
+          geometry: {
+            type: 'Polygon',
+            coordinates: [[
+              [b.west, b.south], [b.east, b.south], [b.east, b.north], [b.west, b.north], [b.west, b.south],
+            ]],
+          },
+        };
+      }
+
+      function redrawRegion() {
+        if (!currentRegionMap || !mapRegionBounds) return;
+        const b = mapRegionBounds;
+        const centerLat = (b.north + b.south) / 2;
+        const centerLon = (b.east + b.west) / 2;
+        regionMarker.setLngLat([centerLon, centerLat]);
+        const src = currentRegionMap.getSource('region-rect');
+        if (src) src.setData(rectGeoJSON(b));
+        edgeHandleN.setLngLat([centerLon, b.north]);
+        edgeHandleS.setLngLat([centerLon, b.south]);
+        edgeHandleE.setLngLat([b.east, centerLat]);
+        edgeHandleW.setLngLat([b.west, centerLat]);
+      }
+
+      function recenterTo(lat, lon, panMap) {
+        const b = mapRegionBounds;
+        const centerLat = (b.north + b.south) / 2;
+        const centerLon = (b.east + b.west) / 2;
+        const dLat = lat - centerLat;
+        const dLon = lon - centerLon;
+        b.north += dLat; b.south += dLat;
+        b.east += dLon; b.west += dLon;
+        if (currentRegionMap && panMap) currentRegionMap.easeTo({ center: [lon, lat] });
+        redrawRegion();
+      }
+
+      function setInteractive(enabled) {
+        interactive = enabled;
+        offlineNote.classList.toggle('hidden', enabled);
+        downloadBtn.disabled = !enabled;
+        if (regionMarker) regionMarker.setDraggable(enabled);
+        [edgeHandleN, edgeHandleS, edgeHandleE, edgeHandleW].forEach(h => h && h.setDraggable(enabled));
+      }
+
+      function makeEdgeHandle(lngLat, axisClass) {
+        const el = document.createElement('div');
+        el.className = `map-edge-handle ${axisClass}`;
+        return new maplibregl.Marker({ element: el, draggable: interactive }).setLngLat(lngLat).addTo(currentRegionMap);
+      }
+
+      async function initRegionMap(bounds) {
+        mapRegionBounds = bounds;
+        const b = bounds;
+        const centerLat = (b.north + b.south) / 2;
+        const centerLon = (b.east + b.west) / 2;
+
+        if (!pmtilesProtocolRegistered) {
+          const protocol = new pmtiles.Protocol();
+          maplibregl.addProtocol('pmtiles', protocol.tile);
+          pmtilesProtocolRegistered = true;
+        }
+
+        const uiIsDark = uiTheme === 'dark' || (uiTheme !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        const styleUrl = `/static/maplibre/style-${uiIsDark ? 'dark' : 'light'}.json`;
+        const style = await (await fetch(styleUrl)).json();
+        style.sources.protomaps.url = `pmtiles://${location.origin}/map-data/world.pmtiles`;
+
+        currentRegionMap = new maplibregl.Map({
+          container: 'map-region-picker',
+          style,
+          center: [centerLon, centerLat],
+          zoom: 6,
+        });
+
+        await new Promise(resolve => currentRegionMap.on('load', resolve));
+
+        currentRegionMap.addSource('region-rect', { type: 'geojson', data: rectGeoJSON(b) });
+        currentRegionMap.addLayer({
+          id: 'region-rect-fill', type: 'fill', source: 'region-rect',
+          paint: { 'fill-color': '#4fb3a9', 'fill-opacity': 0.15 },
+        });
+        currentRegionMap.addLayer({
+          id: 'region-rect-line', type: 'line', source: 'region-rect',
+          paint: { 'line-color': '#4fb3a9', 'line-width': 2 },
+        });
+
+        regionMarker = new maplibregl.Marker({ draggable: interactive }).setLngLat([centerLon, centerLat]).addTo(currentRegionMap);
+        regionMarker.on('dragend', () => {
+          const { lat, lng } = regionMarker.getLngLat();
+          recenterTo(lat, lng, false);
+        });
+        currentRegionMap.on('click', (e) => {
+          if (!interactive) return;
+          recenterTo(e.lngLat.lat, e.lngLat.lng, false);
+        });
+
+        edgeHandleN = makeEdgeHandle([centerLon, b.north], 'ns');
+        edgeHandleS = makeEdgeHandle([centerLon, b.south], 'ns');
+        edgeHandleE = makeEdgeHandle([b.east, centerLat], 'ew');
+        edgeHandleW = makeEdgeHandle([b.west, centerLat], 'ew');
+
+        const MIN_GAP_DEG = 0.001;
+        edgeHandleN.on('drag', () => {
+          mapRegionBounds.north = Math.max(edgeHandleN.getLngLat().lat, mapRegionBounds.south + MIN_GAP_DEG);
+          redrawRegion();
+        });
+        edgeHandleS.on('drag', () => {
+          mapRegionBounds.south = Math.min(edgeHandleS.getLngLat().lat, mapRegionBounds.north - MIN_GAP_DEG);
+          redrawRegion();
+        });
+        edgeHandleE.on('drag', () => {
+          mapRegionBounds.east = Math.max(edgeHandleE.getLngLat().lng, mapRegionBounds.west + MIN_GAP_DEG);
+          redrawRegion();
+        });
+        edgeHandleW.on('drag', () => {
+          mapRegionBounds.west = Math.min(edgeHandleW.getLngLat().lng, mapRegionBounds.east - MIN_GAP_DEG);
+          redrawRegion();
+        });
+      }
+
+      const zoomMaxInput = document.getElementById('map-zoom-max');
+      const zoomMaxValue = document.getElementById('map-zoom-max-value');
+      function updateZoomLabel() { zoomMaxValue.textContent = zoomMaxInput.value; }
+      updateZoomLabel();
+      zoomMaxInput.addEventListener('input', updateZoomLabel);
+
+      useStationBtn.addEventListener('click', async () => {
+        const g = state.gps || {};
+        if (g.position_source === 'manual' && g.latitude && g.longitude) {
+          recenterTo(parseFloat(g.latitude), parseFloat(g.longitude), true);
+          return;
+        }
+        try {
+          const res = await fetch('/api/gps/position');
+          const data = await res.json();
+          if (data.available) {
+            recenterTo(data.latitude, data.longitude, true);
+          } else {
+            regionMsg.textContent = data.reason || 'No station position available.';
+          }
+        } catch (e) {
+          regionMsg.textContent = 'Could not reach the server.';
+        }
+      });
+
+      function pollDownloadStatus() {
+        mapStatusPollTimer = setInterval(async () => {
+          try {
+            const res = await fetch('/api/map/cache/status');
+            const data = await res.json();
+            const elapsed = data.elapsed_s !== null ? formatDuration(data.elapsed_s) : '';
+            if (data.active) {
+              progressMsg.textContent = `Downloading... ${formatBytes(data.bytes)} so far${elapsed ? ` (${elapsed} elapsed)` : ''}`;
+              return;
+            }
+            clearInterval(mapStatusPollTimer);
+            mapStatusPollTimer = null;
+            downloadBtn.disabled = !interactive;
+            cancelBtn.classList.add('hidden');
+            if (data.cancelled) {
+              progressMsg.textContent = 'Cancelled.';
+            } else if (data.error) {
+              progressMsg.textContent = `Failed: ${data.error}`;
+            } else if (data.done) {
+              progressMsg.textContent = `Done: ${formatBytes(data.bytes)} downloaded${elapsed ? ` in ${elapsed}` : ''}.`;
+            }
+          } catch (e) {
+            // Transient. Next poll tries again.
+          }
+        }, 1000);
+      }
+
+      downloadBtn.addEventListener('click', async () => {
+        if (!mapRegionBounds || !interactive) return;
+        const zoomMax = parseInt(document.getElementById('map-zoom-max').value, 10);
+        downloadBtn.disabled = true;
+        progressWrap.classList.remove('hidden');
+        progressMsg.textContent = 'Starting...';
+        try {
+          const res = await fetch('/api/map/cache/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...mapRegionBounds, zoom_max: zoomMax }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            progressMsg.textContent = err.detail || 'Failed to start download.';
+            downloadBtn.disabled = !interactive;
+            return;
+          }
+          cancelBtn.classList.remove('hidden');
+          pollDownloadStatus();
+        } catch (e) {
+          progressMsg.textContent = 'Could not reach the server.';
+          downloadBtn.disabled = !interactive;
+        }
+      });
+
+      cancelBtn.addEventListener('click', async () => {
+        cancelBtn.disabled = true;
+        try {
+          await fetch('/api/map/cache/cancel', { method: 'POST' });
+        } finally {
+          cancelBtn.disabled = false;
+        }
+      });
+
+      (async () => {
+        const checkingMsg = document.getElementById('map-checking-msg');
+        const unavailableWarning = document.getElementById('map-unavailable-warning');
+        const mapFields = document.getElementById('map-fields');
+
+        let worldAvailable = false;
+        try {
+          const res = await fetch('/api/map/world-status');
+          worldAvailable = (await res.json()).available;
+        } catch (e) {
+          worldAvailable = false;
+        }
+        checkingMsg.classList.add('hidden');
+        if (!worldAvailable) {
+          unavailableWarning.classList.remove('hidden');
+          return;
+        }
+        mapFields.classList.remove('hidden');
+
+        let initialBounds = null;
+        if (m.north !== undefined && m.south !== undefined && m.east !== undefined && m.west !== undefined) {
+          initialBounds = {
+            north: parseFloat(m.north), south: parseFloat(m.south),
+            east: parseFloat(m.east), west: parseFloat(m.west),
+          };
+        } else {
+          let initLat = NaN, initLon = NaN;
+          const g = state.gps || {};
+          if (g.position_source === 'manual' && g.latitude && g.longitude) {
+            initLat = parseFloat(g.latitude);
+            initLon = parseFloat(g.longitude);
+          } else {
+            try {
+              const res = await fetch('/api/gps/position');
+              const data = await res.json();
+              if (data.available) {
+                initLat = data.latitude;
+                initLon = data.longitude;
+              }
+            } catch (e) {
+              // Falls through to the 0,0 default below.
+            }
+          }
+          if (!Number.isFinite(initLat) || !Number.isFinite(initLon)) {
+            initLat = 0;
+            initLon = 0;
+          }
+          initialBounds = boundsFromRadius(initLat, initLon, MAP_DEFAULT_RADIUS_KM);
+        }
+
+        await initRegionMap(initialBounds);
+
+        let online = false;
+        try {
+          const res = await fetch('/api/network/internet');
+          online = (await res.json()).online;
+        } catch (e) {
+          online = false;
+        }
+        setInteractive(online);
+      })();
+    }
+
+    // ── E-Ink tab (ported from first_run.html's E-Ink display step) ─────
+    // Driver/model are hydrated from GET /api/display/config (a separate
+    // file, display_config.json, not config.yaml) rather than state.display,
+    // which only ever carries the page-rotation list; see the boot IIFE.
+    const EINK_DEFAULT_PAGES = [
+      { id: 'status', label: 'Status' },
+      { id: 'config_summary', label: 'Config summary' },
+      { id: 'location', label: 'Location' },
+      { id: 'last_beacon', label: 'Last beacon' },
+      { id: 'last_heard', label: 'Last heard' },
+    ];
+    const EINK_DEFAULT_DURATION_S = 30;
+    let einkPages = [];
+
+    function renderEinkPageLists() {
+      const enabledList = document.getElementById('eink-enabled-list');
+      const disabledList = document.getElementById('eink-disabled-list');
+      const enabled = einkPages.filter(p => p.enabled);
+      const disabled = einkPages.filter(p => !p.enabled);
+
+      enabledList.innerHTML = enabled.map((p, i) => `
+        <div class="eink-page-row">
+          <div class="eink-page-info"><strong>${p.label}</strong></div>
+          <div class="field-suffix" style="flex: 0 0 100px;">
+            <input type="number" min="1" class="eink-duration" data-id="${p.id}" value="${p.duration}">
+            <span>sec</span>
+          </div>
+          <div class="eink-page-actions">
+            <button type="button" class="eink-move-up" data-id="${p.id}" ${i === 0 ? 'disabled' : ''} title="Move up">&uarr;</button>
+            <button type="button" class="eink-move-down" data-id="${p.id}" ${i === enabled.length - 1 ? 'disabled' : ''} title="Move down">&darr;</button>
+            <button type="button" class="eink-disable" data-id="${p.id}">Disable</button>
+          </div>
+        </div>
+      `).join('') || '<p class="hint">Nothing enabled: every screen is disabled below.</p>';
+
+      disabledList.innerHTML = disabled.map(p => `
+        <div class="eink-page-row disabled">
+          <div class="eink-page-info"><strong>${p.label}</strong></div>
+          <div class="eink-page-actions">
+            <button type="button" class="eink-enable" data-id="${p.id}">Enable</button>
+          </div>
+        </div>
+      `).join('') || '<p class="hint">Nothing disabled.</p>';
+
+      enabledList.querySelectorAll('.eink-move-up').forEach(btn =>
+        btn.addEventListener('click', () => moveEinkPage(btn.dataset.id, -1)));
+      enabledList.querySelectorAll('.eink-move-down').forEach(btn =>
+        btn.addEventListener('click', () => moveEinkPage(btn.dataset.id, 1)));
+      enabledList.querySelectorAll('.eink-disable').forEach(btn =>
+        btn.addEventListener('click', () => setEinkPageEnabled(btn.dataset.id, false)));
+      disabledList.querySelectorAll('.eink-enable').forEach(btn =>
+        btn.addEventListener('click', () => setEinkPageEnabled(btn.dataset.id, true)));
+      enabledList.querySelectorAll('.eink-duration').forEach(input =>
+        input.addEventListener('input', () => {
+          const page = einkPages.find(p => p.id === input.dataset.id);
+          if (page) page.duration = input.value;
+        }));
+    }
+
+    function moveEinkPage(id, delta) {
+      const enabledIds = einkPages.filter(p => p.enabled).map(p => p.id);
+      const from = enabledIds.indexOf(id);
+      const to = from + delta;
+      if (from === -1 || to < 0 || to >= enabledIds.length) return;
+      const fromIdx = einkPages.findIndex(p => p.id === id);
+      const toIdx = einkPages.findIndex(p => p.id === enabledIds[to]);
+      [einkPages[fromIdx], einkPages[toIdx]] = [einkPages[toIdx], einkPages[fromIdx]];
+      renderEinkPageLists();
+    }
+
+    function setEinkPageEnabled(id, enabled) {
+      const idx = einkPages.findIndex(p => p.id === id);
+      if (idx === -1) return;
+      const [page] = einkPages.splice(idx, 1);
+      page.enabled = enabled;
+      einkPages.push(page);
+      renderEinkPageLists();
+    }
+
+    async function renderEinkTab() {
+      const d = state.display || {};
+      document.getElementById('eink-tab-content').innerHTML = `
+        <section>
+          <div class="field">
+            <label for="eink-display">Display</label>
+            <select id="eink-display"></select>
+            <p class="hint">Driver/model changes only take effect after a reboot.</p>
+          </div>
+
+          <div class="field">
+            <label>Screens</label>
+            <div id="eink-enabled-list"></div>
+
+            <label style="margin-top: 20px; display: block;">Disabled</label>
+            <div id="eink-disabled-list"></div>
+          </div>
+        </section>
+      `;
+
+      einkPages = (d.pages && d.pages.length ? d.pages : EINK_DEFAULT_PAGES.map(p => ({ ...p, duration: EINK_DEFAULT_DURATION_S, enabled: true })))
+        .map(p => ({ ...EINK_DEFAULT_PAGES.find(dp => dp.id === p.id), ...p }));
+      renderEinkPageLists();
+
+      const select = document.getElementById('eink-display');
+      addOption(select, 'none|', 'None (disabled)');
+      try {
+        const res = await fetch('/api/display/models');
+        const data = await res.json();
+        (data.models || []).forEach(m => addOption(select, `waveshare|${m.id}`, m.desc));
+      } catch (e) {
+        // "None" still works without this
+      }
+      // driver/model come from GET /api/display/config, stashed onto
+      // state.display alongside the page list during the boot hydrate
+      // (see the boot IIFE): a separate file from config.yaml, same as
+      // the wizard sources them from two places.
+      select.value = `${d.driver || 'none'}|${d.model || ''}`;
+    }
+
+    function collectEinkTab() {
+      const [driver, model] = document.getElementById('eink-display').value.split('|');
+      const display = {
+        driver,
+        model,
+        pages: einkPages.map(({ id, duration, enabled }) => ({ id, duration, enabled })),
+      };
+      state.display = display;
+      return display;
+    }
+
+    // ── User tab (ported from first_run.html's User management step) ────
+    // Unlike the wizard, the password field is optional here: leaving it
+    // blank means "keep the current password" (enforced server-side in
+    // /api/config/save, since GET /api/config never hands the hash back
+    // to the frontend to begin with, so there's nothing to prefill it
+    // with even if this wanted to).
+    const USER_SECURITY_MODES = [
+      { value: 'none', label: 'No security' },
+      { value: 'readonly', label: 'Read only' },
+      { value: 'full', label: 'Full security' },
+    ];
+
+    function renderUserTab() {
+      const u = state.user || {};
+      document.getElementById('user-tab-content').innerHTML = `
+        <section>
+          <div class="field">
+            <label for="user-security-mode">Security mode ${helpIcon('<ul style="margin: 0; padding-left: 18px;"><li><strong>No security:</strong> open access, no password.</li><li><strong>Read only:</strong> viewing is open, any change needs the password.</li><li><strong>Full security:</strong> the password is needed for everything, including just viewing.</li></ul>')}</label>
+            <select id="user-security-mode">
+              ${USER_SECURITY_MODES.map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field hidden" id="user-password-field">
+            <label for="user-password">Admin password</label>
+            <input type="password" id="user-password" placeholder="Leave blank to keep current password" autocomplete="new-password">
+          </div>
+          <div class="field hidden" id="user-password-confirm-field">
+            <label for="user-password-confirm">Confirm admin password</label>
+            <input type="password" id="user-password-confirm" placeholder="Re-enter the new password" autocomplete="new-password">
+          </div>
+          <p class="msg" id="user-msg"></p>
+        </section>
+      `;
+
+      const modeSelect = document.getElementById('user-security-mode');
+      const passwordField = document.getElementById('user-password-field');
+      const confirmField = document.getElementById('user-password-confirm-field');
+      const passwordInput = document.getElementById('user-password');
+      const confirmInput = document.getElementById('user-password-confirm');
+      const msg = document.getElementById('user-msg');
+      modeSelect.value = u.mode || 'none';
+
+      // Live validation, but never disables anything: there's no Next
+      // button to gate here, only collectUserTab()'s own check at Save
+      // time (see below), which blocks just this section of the payload.
+      function updateState() {
+        const needsPassword = modeSelect.value !== 'none';
+        passwordField.classList.toggle('hidden', !needsPassword);
+        confirmField.classList.toggle('hidden', !needsPassword);
+
+        if (!needsPassword) {
+          msg.textContent = '';
+          msg.className = 'msg';
+          return;
+        }
+        const password = passwordInput.value;
+        const confirm = confirmInput.value;
+        if (password && password.length < 8) {
+          msg.textContent = 'Password must be at least 8 characters.';
+          msg.className = 'msg error';
+        } else if (password && confirm !== password) {
+          msg.textContent = "Passwords don't match.";
+          msg.className = 'msg error';
+        } else if (!password) {
+          msg.textContent = 'Leave both password fields blank to keep the current password.';
+          msg.className = 'msg';
+        } else {
+          msg.textContent = '';
+          msg.className = 'msg';
+        }
+      }
+
+      modeSelect.addEventListener('change', updateState);
+      passwordInput.addEventListener('input', updateState);
+      confirmInput.addEventListener('input', updateState);
+      updateState();
+    }
+
+    // Returns null (instead of blocking a Next button) when a mode needs
+    // a password and what was typed is invalid: saveAll() treats that as
+    // a reason to abort the whole save and point back at this tab.
+    function collectUserTab() {
+      const mode = document.getElementById('user-security-mode').value;
+      const msg = document.getElementById('user-msg');
+      if (mode === 'none') {
+        state.user = { mode };
+        return state.user;
+      }
+      const password = document.getElementById('user-password').value;
+      const confirm = document.getElementById('user-password-confirm').value;
+      if (password && password.length < 8) {
+        msg.textContent = 'Password must be at least 8 characters.';
+        msg.className = 'msg error';
+        return null;
+      }
+      if (password && confirm !== password) {
+        msg.textContent = "Passwords don't match.";
+        msg.className = 'msg error';
+        return null;
+      }
+      // Empty password: the backend keeps whatever hash/salt is already
+      // on disk (see /api/config/save's handling of body.user.password).
+      state.user = { mode, password };
+      return state.user;
+    }
+
+    // ── Startup tab (ported from first_run.html's Startup step) ─────────
+    // Also touches map.auto_update.{enabled,time}, same as the wizard:
+    // kept inside state.map.auto_update so the Map tab's own bounds
+    // (north/south/east/west/zoom_max, which the Map tab manages
+    // directly through its own live download action, not through
+    // state.map at all) are never clobbered by a save that doesn't
+    // touch the Map tab.
+    const STARTUP_DEFAULT_RESTART_ATTEMPTS = 3;
+    const STARTUP_DEFAULT_RESTART_DELAY_S = 30;
+
+    async function renderStartupTab() {
+      const s = state.startup || {};
+      const m = state.map || {};
+      document.getElementById('startup-tab-content').innerHTML = `
+        <section>
+          <div class="field">
+            <label class="subsection-title">
+              <input type="checkbox" id="startup-autostart" checked>
+              Start automatically on boot
+              ${helpIcon("Recommended for a field-deployed station: if the power drops and comes back, or the Pi reboots on its own, it starts digipeating again without anyone needing to log in and start it by hand.")}
+            </label>
+          </div>
+
+          <div class="field">
+            <label class="subsection-title">
+              <input type="checkbox" id="startup-autorestart" checked>
+              Restart automatically if it crashes
+              ${helpIcon("If Direwolf exits unexpectedly (not a normal shutdown), try restarting it rather than leaving the station silent until someone notices.")}
+            </label>
+          </div>
+          <div class="field-row" id="startup-restart-fields">
+            <div class="field">
+              <label for="startup-restart-attempts">Max attempts</label>
+              <input type="number" id="startup-restart-attempts" min="1" value="${s.restart_attempts ?? STARTUP_DEFAULT_RESTART_ATTEMPTS}">
+            </div>
+            <div class="field">
+              <label for="startup-restart-delay">Delay between attempts</label>
+              <div class="field-suffix"><input type="number" id="startup-restart-delay" min="1" value="${s.restart_delay_s ?? STARTUP_DEFAULT_RESTART_DELAY_S}"><span>sec</span></div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="subsection-title">
+              <input type="checkbox" id="map-auto-update-enabled">
+              Automatically check for map updates
+              ${helpIcon("Once a day, checks whether Protomaps has published a newer map build than what's cached, and if so, re-downloads the world map and (if a region was picked on the Map tab) that region too. Needs internet at check time; if there isn't any, it just tries again at the next check rather than waiting a full day.")}
+            </label>
+          </div>
+          <div class="field" id="map-auto-update-time-wrap">
+            <label for="map-auto-update-time">Check time</label>
+            <input type="time" id="map-auto-update-time" value="${(m.auto_update && m.auto_update.time) || MAP_DEFAULT_AUTO_UPDATE_TIME}">
+          </div>
+        </section>
+      `;
+
+      const autostartBox = document.getElementById('startup-autostart');
+      const autorestartBox = document.getElementById('startup-autorestart');
+      const restartFields = document.getElementById('startup-restart-fields');
+
+      autostartBox.checked = s.autostart ?? true;
+      autorestartBox.checked = s.autorestart ?? true;
+
+      function updateRestartFieldsVisibility() {
+        restartFields.classList.toggle('hidden', !autorestartBox.checked);
+      }
+      autorestartBox.addEventListener('change', updateRestartFieldsVisibility);
+      updateRestartFieldsVisibility();
+
+      const autoUpdateCheckbox = document.getElementById('map-auto-update-enabled');
+      const autoUpdateTimeWrap = document.getElementById('map-auto-update-time-wrap');
+      function updateAutoUpdateTimeVisibility() {
+        autoUpdateTimeWrap.classList.toggle('hidden', !autoUpdateCheckbox.checked);
+      }
+      autoUpdateCheckbox.addEventListener('change', updateAutoUpdateTimeVisibility);
+
+      if (m.auto_update && typeof m.auto_update.enabled === 'boolean') {
+        autoUpdateCheckbox.checked = m.auto_update.enabled;
+      } else {
+        try {
+          const res = await fetch('/api/network/internet');
+          autoUpdateCheckbox.checked = (await res.json()).online;
+        } catch (e) {
+          autoUpdateCheckbox.checked = false;
+        }
+      }
+      updateAutoUpdateTimeVisibility();
+    }
+
+    function collectStartupTab() {
+      const autorestart = document.getElementById('startup-autorestart').checked;
+      const startup = {
+        autostart: document.getElementById('startup-autostart').checked,
+        autorestart,
+      };
+      if (autorestart) {
+        startup.restart_attempts = document.getElementById('startup-restart-attempts').value;
+        startup.restart_delay_s = document.getElementById('startup-restart-delay').value;
+      }
+      state.startup = startup;
+      state.map = {
+        ...state.map,
+        auto_update: {
+          enabled: document.getElementById('map-auto-update-enabled').checked,
+          time: document.getElementById('map-auto-update-time').value || MAP_DEFAULT_AUTO_UPDATE_TIME,
+        },
+      };
+      return startup;
+    }
+
+    // ── GPIO tab (new: no wizard equivalent). Overrides for pin
+    // assignments otherwise hardcoded in services/relay.py and
+    // display/waveshare/epdconfig.py, plus the one editable home for
+    // radio.ptt_gpio_pin (which lives under the radio section, not gpio,
+    // see collectRadioTab above). Defaults match PINOUT.md's documented
+    // wiring convention. ──────────────────────────────────────────────
+    const GPIO_DEFAULT_RELAY_PIN = 27;
+    const GPIO_DEFAULT_EINK_RST = 17;
+    const GPIO_DEFAULT_EINK_DC = 25;
+    const GPIO_DEFAULT_EINK_CS = 8;
+    const GPIO_DEFAULT_EINK_BUSY = 24;
+
+    function renderGpioTab() {
+      const gp = state.gpio || {};
+      const pttPin = state.radio?.ptt_gpio_pin ?? RADIO_DEFAULT_PTT_GPIO_PIN;
+      document.getElementById('gpio-tab-content').innerHTML = `
+        <section>
+          <p class="hint">Defaults are already configured for best compatibility and performance. Only change these if you have a specific wiring reason to.</p>
+
+          <div class="field">
+            <label for="gpio-ptt-gpio-pin">PTT pin (BCM) ${helpIcon("Used only when the Radio tab's PTT method is set to GPIO pin. Applies live: Direwolf's config is rewritten and it's restarted if currently running, no reboot needed.")}</label>
+            <input type="number" id="gpio-ptt-gpio-pin" min="0" max="27" value="${pttPin}">
+          </div>
+
+          <div class="field">
+            <label for="gpio-relay-pin">Radio power relay pin (BCM) ${helpIcon("Reboot required: this pin is claimed once, at process start, so a change here only takes effect on the next boot.")}</label>
+            <input type="number" id="gpio-relay-pin" min="0" max="27" value="${gp.relay_pin ?? GPIO_DEFAULT_RELAY_PIN}">
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="gpio-eink-rst">E-Ink RST pin (BCM)</label>
+              <input type="number" id="gpio-eink-rst" min="0" max="27" value="${gp.eink_rst ?? GPIO_DEFAULT_EINK_RST}">
+            </div>
+            <div class="field">
+              <label for="gpio-eink-dc">E-Ink DC pin (BCM)</label>
+              <input type="number" id="gpio-eink-dc" min="0" max="27" value="${gp.eink_dc ?? GPIO_DEFAULT_EINK_DC}">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="gpio-eink-cs">E-Ink CS pin (BCM)</label>
+              <input type="number" id="gpio-eink-cs" min="0" max="27" value="${gp.eink_cs ?? GPIO_DEFAULT_EINK_CS}">
+            </div>
+            <div class="field">
+              <label for="gpio-eink-busy">E-Ink BUSY pin (BCM)</label>
+              <input type="number" id="gpio-eink-busy" min="0" max="27" value="${gp.eink_busy ?? GPIO_DEFAULT_EINK_BUSY}">
+            </div>
+          </div>
+          <p class="hint">E-Ink pins also need a reboot: they're claimed once, when the display driver initializes.</p>
+
+          <p class="warn-banner hidden" id="gpio-conflict-warning">Two of these pins are set to the same value. That will conflict: give each one a different pin.</p>
+        </section>
+      `;
+
+      const pinIds = ['gpio-ptt-gpio-pin', 'gpio-relay-pin', 'gpio-eink-rst', 'gpio-eink-dc', 'gpio-eink-busy', 'gpio-eink-cs'];
+      function updateConflictWarning() {
+        const values = pinIds.map(id => document.getElementById(id).value).filter(v => v !== '');
+        const hasDupe = new Set(values).size !== values.length;
+        document.getElementById('gpio-conflict-warning').classList.toggle('hidden', !hasDupe);
+      }
+      pinIds.forEach(id => document.getElementById(id).addEventListener('input', updateConflictWarning));
+      updateConflictWarning();
+    }
+
+    // radio.ptt_gpio_pin is deliberately NOT collected here: it's read
+    // directly off this tab's own input by collectRadioTab() instead,
+    // since the backend's gpio config-save key means only these five
+    // pins (see /api/config/save in web/server.py).
+    function collectGpioTab() {
+      const gpio = {
+        relay_pin: parseInt(document.getElementById('gpio-relay-pin').value, 10) || GPIO_DEFAULT_RELAY_PIN,
+        eink_rst: parseInt(document.getElementById('gpio-eink-rst').value, 10) || GPIO_DEFAULT_EINK_RST,
+        eink_dc: parseInt(document.getElementById('gpio-eink-dc').value, 10) || GPIO_DEFAULT_EINK_DC,
+        eink_cs: parseInt(document.getElementById('gpio-eink-cs').value, 10) || GPIO_DEFAULT_EINK_CS,
+        eink_busy: parseInt(document.getElementById('gpio-eink-busy').value, 10) || GPIO_DEFAULT_EINK_BUSY,
+      };
+      state.gpio = gpio;
+      return gpio;
+    }
+
+    // ── Save-all (the page's single global save action; Map and Network
+    // are excluded, see their own tabs above) ───────────────────────────
+    const APPLIED_LABELS = { gps: 'GPS', radio: 'Radio', aprs: 'APRS' };
+    const REBOOT_LABELS = { gpio: 'GPIO pins (relay and e-ink)', display: 'E-Ink display driver/model' };
+
+    function hideSaveBanner() {
+      document.getElementById('save-banner-wrap').classList.add('hidden');
+    }
+
+    function showSaveBanner(kind, html) {
+      const wrap = document.getElementById('save-banner-wrap');
+      const banner = document.getElementById('save-banner');
+      banner.className = `banner ${kind}`;
+      banner.innerHTML = html;
+      wrap.classList.remove('hidden');
+    }
+
+    function renderSaveResult(data) {
+      const applied = (data.applied || []).map(k => APPLIED_LABELS[k] || k);
+      const reboot = (data.reboot_required || []).map(k => REBOOT_LABELS[k] || k);
+      let html = '<strong>Saved.</strong>';
+      if (applied.length) html += `Applied immediately: ${applied.join(', ')}. `;
+      if (reboot.length) html += `Needs a reboot to take effect: ${reboot.join(', ')}. `;
+      if (!applied.length && !reboot.length) html += 'Nothing needed live-applying.';
+      if (reboot.length) {
+        html += '<div><button type="button" id="btn-reboot-now">Reboot now</button></div>';
+      }
+      showSaveBanner('success', html);
+      if (reboot.length) {
+        document.getElementById('btn-reboot-now').addEventListener('click', rebootNow);
+      }
+    }
+
+    async function rebootNow() {
+      const proceed = await confirmModal(
+        'Reboot the device now? This will briefly take the station and this page offline.',
+        'Yes, reboot now', 'Not yet'
+      );
+      if (!proceed) return;
+      const btn = document.getElementById('btn-reboot-now');
+      if (btn) { btn.disabled = true; btn.textContent = 'Rebooting...'; }
+      try {
+        const res = await fetch('/api/system/reboot', { method: 'POST' });
+        if (!res.ok) throw new Error('reboot endpoint unavailable');
+        if (btn) btn.textContent = 'Rebooting, this page will stop responding shortly...';
+      } catch (e) {
+        // No standalone reboot endpoint exists outside first-boot setup's
+        // own /api/setup/complete (see web/server.py): degrades to asking
+        // for a manual power-cycle rather than pretending this worked.
+        showSaveBanner('error', 'Could not trigger a reboot automatically. Please power-cycle the device by hand for the changes above to take effect.');
+      }
+    }
+
+    async function saveAll() {
+      const msg = document.getElementById('save-all-msg');
+      msg.textContent = '';
+      msg.className = 'msg';
+      hideSaveBanner();
+
+      collectRadioTab();
+      collectAprsTab();
+      const gps = collectGpsTab();
+      if (!gps) {
+        switchTab('gps');
+        msg.textContent = 'Fix the GPS tab before saving.';
+        msg.className = 'msg error';
+        return;
+      }
+      collectStartupTab();
+      collectEinkTab();
+      const user = collectUserTab();
+      if (!user) {
+        switchTab('user');
+        msg.textContent = 'Fix the User tab before saving.';
+        msg.className = 'msg error';
+        return;
+      }
+      collectGpioTab();
+
+      const payload = {
+        radio: state.radio,
+        aprs: state.aprs,
+        gps: state.gps,
+        startup: state.startup,
+        gpio: state.gpio,
+        display: state.display,
+        user: state.user,
+      };
+
+      const btn = document.getElementById('btn-save-all');
+      const prevText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+      try {
+        const res = await fetch('/api/config/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (res.status === 401) {
+          showSaveBanner('error', 'Your session has expired. <a href="/login">Log in again</a> to save changes.');
+          return;
+        }
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          showSaveBanner('error', `Save failed: ${body.detail || res.statusText}`);
+          return;
+        }
+        const data = await res.json();
+        renderSaveResult(data);
+      } catch (e) {
+        showSaveBanner('error', 'Could not reach the server.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prevText;
+      }
+    }
+
+    // ── Boot: hydrate state from GET /api/config + GET /api/display/config,
+    // then render every tab except Map (deferred to first click; see
+    // switchTab). ────────────────────────────────────────────────────────
+    (async () => {
+      document.getElementById('btn-save-all').textContent = 'Save all changes';
+
+      try {
+        authState = await (await fetch('/api/auth/status')).json();
+      } catch (e) {
+        authState = { mode: 'none', logged_in: false };
+      }
+
+      let cfg = {};
+      try {
+        const res = await fetch('/api/config');
+        if (res.status === 401) {
+          location.href = '/login';
+          return;
+        }
+        if (res.ok) cfg = await res.json();
+      } catch (e) {
+        // Degrades to an empty cfg: every tab below handles missing
+        // sections by falling back to defaults, same as the wizard does
+        // for a fresh, never-configured field.
+      }
+
+      state.radio = cfg.radio || {};
+      state.aprs = cfg.aprs || {};
+      state.gps = cfg.gps || {};
+      state.map = cfg.map || {};
+      state.startup = cfg.startup || {};
+      state.gpio = cfg.gpio || {};
+      // GET /api/config's security section only ever carries {mode}: see
+      // get_config() in web/server.py, which strips hash/salt before
+      // this response is even built. "user" isn't a real config.yaml
+      // section, it's this page's (and the wizard's) name for that data.
+      state.user = { mode: (cfg.security && cfg.security.mode) || 'none' };
+      state.display = { pages: (cfg.display && cfg.display.pages) || [] };
+
+      try {
+        const res = await fetch('/api/display/config');
+        if (res.ok) {
+          const d = await res.json();
+          state.display.driver = d.driver || 'none';
+          state.display.model = d.model || '';
+        } else {
+          state.display.driver = 'none';
+          state.display.model = '';
+        }
+      } catch (e) {
+        state.display.driver = 'none';
+        state.display.model = '';
+      }
+
+      renderTabbar();
+      TABS.forEach(t => document.getElementById(`panel-${t.id}`).classList.toggle('hidden', t.id !== activeTab));
+
+      renderNetworkTab();
+      renderAprsTab();
+      renderRadioTab();
+      renderGpsTab();
+      renderEinkTab();
+      renderUserTab();
+      renderStartupTab();
+      renderGpioTab();
+
+      document.getElementById('btn-save-all').addEventListener('click', saveAll);
+    })();
+  </script>
 </body>
 </html>
