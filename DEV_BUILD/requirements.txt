@@ -10,6 +10,10 @@ pillow
 pyyaml
 pyserial
 httpx
+# Real APRS packet decoding (MIC-E/compressed/timestamped/standard
+# formats) for services/packet_log.py's heard-station/beacon tracking,
+# same library ORIGINAL used, not reimplemented here.
+aprslib
 # Needed for FastAPI/Starlette to parse the login page's form POST (see
 # web/server.py's /api/auth/login): required even for plain
 # application/x-www-form-urlencoded bodies, not just multipart/file uploads.

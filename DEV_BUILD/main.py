@@ -8,7 +8,7 @@ import yaml
 
 from display.driver_none import NullDriver
 from display.rotation import RotationManager, load_pages
-from services import direwolf_config, gpsconfig, network, relay, restart_policy, system
+from services import direwolf_config, gpsconfig, network, packet_log, relay, restart_policy, system
 from web.server import create_app
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -209,6 +209,7 @@ async def main() -> None:
     network_status = {"kind": kind, "ip": ip, "hotspot_ssid": HOTSPOT_SSID}
 
     rotation = None
+    packets = None
     if first_boot:
         logger.info("No config.yaml found, running first-boot sequence")
         await _show_network_status(display_driver, template, "Initial config", kind, ip, fast=True)
@@ -224,8 +225,10 @@ async def main() -> None:
         # task, not awaited), it naturally shows the real
         # starting -> waiting_gps -> running progression live instead of a
         # frozen placeholder.
+        packets = packet_log.PacketLog()
+        packets.start()
         rotation = RotationManager(
-            display_driver, template, load_pages(config.get("display", {})), network_status,
+            display_driver, template, load_pages(config.get("display", {})), network_status, packets,
         )
         rotation.start()
 
@@ -244,7 +247,7 @@ async def main() -> None:
         if not result["ok"]:
             logger.error("Failed to %s direwolf: %s", "start" if want_running else "stop", result["reason"])
 
-    app = create_app(display_driver, first_boot, network_status, rotation)
+    app = create_app(display_driver, first_boot, network_status, rotation, packets)
 
     server_config = uvicorn.Config(app, host="0.0.0.0", port=80, log_level="warning")
     server = uvicorn.Server(server_config)

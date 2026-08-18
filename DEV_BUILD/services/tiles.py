@@ -7,8 +7,7 @@ just discouraged, it's disallowed outright: "Offline use is not permitted
 on tile.openstreetmap.org", and bulk downloading is defined to include
 exactly what an earlier version of this module did: pre-emptive fetching
 of tiles beyond what's being actively viewed, pre-seeding areas, building
-tile archives. See operations.osmfoundation.org/policies/tiles/ and
-TODO.md.
+tile archives. See operations.osmfoundation.org/policies/tiles/.
 
 PMTiles is the legitimate, designed-for-this-exact-purpose alternative
 (also what OSM's own policy page recommends for offline use): a single
@@ -65,8 +64,7 @@ MAP_DATA_DIR = Path("map_data")
 REGION_PATH = MAP_DATA_DIR / "region.pmtiles"
 # Written once at install time (scripts/precache_world.py): the always-
 # available basemap for the wizard's region picker, regardless of whether
-# there's internet at setup time. Coarse (maxzoom 8, ~1GB) on purpose;
-# see TODO.md for the sizing reasoning.
+# there's internet at setup time. Coarse (maxzoom 8, ~1GB) on purpose.
 WORLD_PMTILES_PATH = MAP_DATA_DIR / "world.pmtiles"
 WORLD_MAX_ZOOM = 8
 # 85.0 rather than 90.0: Web Mercator (what PMTiles/Protomaps' planet

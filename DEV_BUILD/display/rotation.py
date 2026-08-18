@@ -33,7 +33,9 @@ CONFIG_PATH = Path("config.yaml")
 # Matches first_run.html's EINK_DEFAULT_PAGES/EINK_DEFAULT_DURATION_S: the
 # page types the wizard/config page's E-Ink step offers, in the same
 # default order. last_beacon/last_heard render a placeholder (see
-# _build_page_content) until real packet history exists (TODO.md).
+# _build_page_content). last_beacon/last_heard are backed by
+# services/packet_log.py; both read as "None" until it's actually seen a
+# beacon/packet since this run started.
 PAGE_IDS = ("status", "config_summary", "location", "symbol", "last_beacon", "last_heard")
 DEFAULT_DURATION_S = 30
 
@@ -45,8 +47,6 @@ _SPRITE_DIR = Path("web/static/aprs-symbols")
 _SPRITE_CELL = 64
 _SPRITE_COLS = 16
 _SYMBOL_ICON_SIZE = 56
-# Smaller than the Symbol page's icon: Last Heard also has to fit a
-# callsign next to it plus a Lat/Lon line and a comment underneath.
 _STATION_ICON_SIZE = 40
 _symbol_sheet_cache: dict = {}
 
@@ -73,6 +73,20 @@ def load_pages(display_config: dict | None) -> list[Page]:
         Page(p["id"], p.get("enabled", True), int(p.get("duration") or DEFAULT_DURATION_S))
         for p in raw
     ]
+
+
+def _format_coord(value) -> str:
+    """4 decimal places (~11m precision, plenty for a station's own
+    position), not whatever precision the source happened to store: a
+    Maidenhead-grid-derived manual position in particular comes out as a
+    long repeating decimal (e.g. -37.770833333333) if just stringified
+    as-is."""
+    if value in (None, ""):
+        return "-"
+    try:
+        return f"{float(value):.4f}"
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _read_config() -> dict:
@@ -124,7 +138,10 @@ _DIREWOLF_STATE_LABELS = {
 _EMPTY_ROTATION_POLL_S = 5
 
 
-def _format_uptime(seconds: float) -> str:
+def _format_duration(seconds: float) -> str:
+    """A human-scale span, e.g. "5m", "2h 14m", "3d 5h": used for both
+    Status's Uptime and Last Beacon's Last/Next columns."""
+    seconds = max(0, seconds)
     total_minutes = int(seconds // 60)
     days, rem_minutes = divmod(total_minutes, 24 * 60)
     hours, minutes = divmod(rem_minutes, 60)
@@ -136,11 +153,12 @@ def _format_uptime(seconds: float) -> str:
 
 
 class RotationManager:
-    def __init__(self, driver, template, pages: list[Page], network_status: dict):
+    def __init__(self, driver, template, pages: list[Page], network_status: dict, packets=None):
         self._driver = driver
         self._template = template
         self._pages = pages
         self._network_status = network_status
+        self._packets = packets
         self._index = 0
         self._task: asyncio.Task | None = None
         # Monotonic, not wall-clock: GPS time sync can jump the system
@@ -237,7 +255,7 @@ class RotationManager:
         # failure or on stop), so it'd just be redundant with State here.
         direwolf_status = await system.get_direwolf_status()
         state_label = _DIREWOLF_STATE_LABELS.get(direwolf_status["state"], direwolf_status["state"])
-        uptime = _format_uptime(asyncio.get_event_loop().time() - self._started_at)
+        uptime = _format_duration(asyncio.get_event_loop().time() - self._started_at)
         rows = [
             ("State", state_label),
             ("IP", self._network_status.get("ip") or "-"),
@@ -275,8 +293,8 @@ class RotationManager:
             lat, lon = gps_config.get("latitude"), gps_config.get("longitude")
             rows = [
                 ("GPS", "Manual"),
-                ("Lat", str(lat) if lat not in (None, "") else "-"),
-                ("Lon", str(lon) if lon not in (None, "") else "-"),
+                ("Lat", _format_coord(lat)),
+                ("Lon", _format_coord(lon)),
             ]
             return "Location", rows
 
@@ -286,24 +304,49 @@ class RotationManager:
         sats = f"{status.get('satellites_used', '-')}/{status.get('satellites_visible', '-')} sats"
         rows = [
             ("GPS", sats),
-            ("Lat", f"{status['latitude']:.4f}"),
-            ("Lon", f"{status['longitude']:.4f}"),
+            ("Lat", _format_coord(status["latitude"])),
+            ("Lon", _format_coord(status["longitude"])),
         ]
         return "Location", rows
 
     def _last_beacon_page(self, config: dict) -> tuple[str, list[str], list[tuple[str, list[str]]]]:
-        # Enabled/disabled is real (same aprs config used on Config
-        # summary); the actual Last/Next times aren't, no beacon
-        # transmission history is tracked anywhere yet (see this module's
-        # docstring and TODO.md), so those stay "-" until that exists.
         aprs = config.get("aprs", {}) or {}
-        rf_enabled = aprs.get("digipeat_mode") == "digipeater"
-        igate_enabled = (aprs.get("igate_mode") or "off") != "off"
+        # RF and IGate beacons are independently configured (separate
+        # enabled/interval each, see services/direwolf_config.py's
+        # rf_beacon/igate_beacon), not a shared aprs.beacon block.
+        rf_beacon = aprs.get("rf_beacon") or {}
+        igate_beacon = aprs.get("igate_beacon") or {}
+        rf_enabled = aprs.get("digipeat_mode") == "digipeater" and bool(rf_beacon.get("enabled"))
+        igate_enabled = (aprs.get("igate_mode") or "off") != "off" and bool(igate_beacon.get("enabled"))
+        stats = self._packets.beacon_stats() if self._packets else {}
         rows = [
-            ("RF", ["-", "-"] if rf_enabled else ["Disabled"]),
-            ("IGate", ["-", "-"] if igate_enabled else ["Disabled"]),
+            (
+                "RF",
+                self._beacon_row(
+                    rf_enabled, stats.get("last_rf_beacon_seconds_ago"), int(rf_beacon.get("interval", 30)) * 60,
+                ),
+            ),
+            (
+                "IGate",
+                self._beacon_row(
+                    igate_enabled, stats.get("last_igate_beacon_seconds_ago"),
+                    int(igate_beacon.get("interval", 30)) * 60,
+                ),
+            ),
         ]
         return "Last Beacon", ["Last", "Next"], rows
+
+    def _beacon_row(self, enabled: bool, last_ago: int | None, interval_s: int) -> list[str]:
+        if not enabled:
+            return ["Disabled"]
+        if last_ago is None:
+            # Enabled, but services/packet_log.py hasn't actually seen a
+            # beacon transmission log line yet this run (just started, or
+            # none due yet): "None", not a bare "-", so it reads as "no
+            # data yet" rather than a formatting placeholder.
+            return ["None", "None"]
+        remaining = interval_s - last_ago
+        return [_format_duration(last_ago), "Due" if remaining <= 0 else _format_duration(remaining)]
 
     def _symbol_page(self, config: dict):
         aprs = config.get("aprs", {}) or {}
@@ -317,8 +360,18 @@ class RotationManager:
         return "Symbol", icon, comment
 
     def _last_heard_page(self):
-        # Placeholder until real packet history exists (see this module's
-        # docstring and TODO.md): no heard-station data source exists at
-        # all yet, so every field here is a dash, only the layout is real.
-        icon = _render_symbol_glyph("/", "#", _STATION_ICON_SIZE)
-        return "Last Heard", icon, "-", "-", "-", "Not available yet"
+        station = self._packets.last_heard() if self._packets else None
+        if not station:
+            # Nothing heard yet this run (see services/packet_log.py): no
+            # icon (draw_station_page accepts None), this station's own
+            # symbol would misleadingly look like an actual heard station.
+            # "None" for every field rather than a bare "-", so it reads
+            # as "no data yet" rather than a formatting placeholder.
+            return "Last Heard", None, "None", "None", "None", "None"
+        icon = _render_symbol_glyph(
+            station["symbol"]["table"], station["symbol"]["symbol"], _STATION_ICON_SIZE,
+        )
+        lat = _format_coord(station["latitude"]) if station.get("latitude") is not None else "None"
+        lon = _format_coord(station["longitude"]) if station.get("longitude") is not None else "None"
+        comment = station.get("comment") or "None"
+        return "Last Heard", icon, station["callsign"], lat, lon, comment

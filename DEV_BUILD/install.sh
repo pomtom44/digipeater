@@ -267,6 +267,27 @@ else
     fail "Generated sudoers rule failed validation, aborting for safety"
 fi
 
+# ── Grant access to read Direwolf's journal (error-log modal + live packet tailing) ──
+# A normal user isn't guaranteed read access to the systemd journal
+# (depends on group membership/journald config), so this goes through
+# sudo like everything else here. One wildcarded rule covers both real
+# uses: the dashboard's error-log modal's one-shot fetch (see
+# services/system.py's get_direwolf_logs) and services/packet_log.py's
+# continuous `-f` follow-mode tail for heard-station/beacon tracking,
+# still scoped to exactly the direwolf unit's own logs, never blanket
+# journal access.
+JOURNALCTL_PATH="$(command -v journalctl)"
+SUDOERS_TMP6="$(mktemp)"
+echo "$USER ALL=(root) NOPASSWD: $JOURNALCTL_PATH -u direwolf *" > "$SUDOERS_TMP6"
+if sudo visudo -c -f "$SUDOERS_TMP6" > /dev/null 2>&1; then
+    sudo install -o root -g root -m 0440 "$SUDOERS_TMP6" /etc/sudoers.d/digipeater-journalctl
+    rm -f "$SUDOERS_TMP6"
+    ok "Direwolf log-reading permissions configured"
+else
+    rm -f "$SUDOERS_TMP6"
+    fail "Generated sudoers rule failed validation, aborting for safety"
+fi
+
 # ── Python virtual environment ────────────────
 # --system-site-packages so the venv can see the apt-installed RPi.GPIO/spidev
 # (those build native extensions against the Pi's kernel headers; pip-installing
@@ -290,7 +311,7 @@ ok "Python packages installed"
 # server. OpenStreetMap's own tile usage policy is explicit that offline
 # use and bulk/pre-emptive tile fetching aren't just discouraged, they're
 # not permitted at all (operations.osmfoundation.org/policies/tiles/).
-# See TODO.md. Soft/non-fatal: the digipeater's actual RF/APRS function
+# Soft/non-fatal: the digipeater's actual RF/APRS function
 # doesn't depend on this, so a flaky connection here shouldn't block the
 # rest of setup: the Map caching wizard step just reports it's missing
 # if this didn't succeed, same as any other missing optional dependency.
@@ -361,7 +382,7 @@ StandardError=journal
 # Binding port 80 needs root normally: grant just that one capability
 # instead of running the whole service as root. Deliberately no
 # CapabilityBoundingSet here: that directive caps the maximum capabilities
-# of every child process too, including the `sudo nmcli` calls this service
+# of every child process too, including the sudo nmcli calls this service
 # shells out to for hotspot management; restricting it broke sudo's own
 # privilege escalation ("unable to change to root gid: Operation not
 # permitted"), silently killing the hotspot feature.

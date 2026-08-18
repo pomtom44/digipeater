@@ -329,6 +329,17 @@
       margin: 10px 0 0;
     }
 
+    .warn-banner {
+      background: var(--panel-2);
+      border: 1px solid var(--error);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text);
+      margin-top: 10px;
+    }
+
     /* "?" icon next to a label: opens the shared help modal below rather
        than showing an always-visible block of text under every field. */
     .help-icon {
@@ -969,6 +980,10 @@
           <div class="field">
             <label for="radio-audio">Audio device</label>
             <select id="radio-audio"></select>
+            <p class="warn-banner hidden" id="radio-audio-warning">
+              No audio input device detected. Direwolf needs a microphone/audio input to receive on, it can't start without one.
+              <br><button type="button" id="btn-audio-warning-ack" style="margin-top: 8px;">Yes, I understand</button>
+            </p>
           </div>
           <div class="field">
             <label for="radio-power">TX power level</label>
@@ -997,6 +1012,11 @@
       document.getElementById('radio-ptt').addEventListener('change', updatePttSerialLineVisibility);
       updatePttSerialLineVisibility();
 
+      document.getElementById('btn-audio-warning-ack').addEventListener('click', () => {
+        audioInputWarningAcked = true;
+        document.getElementById('radio-audio-warning').classList.add('hidden');
+      });
+
       loadAudioDevices();
       loadCm108PttOptions();
       loadSerialPttOptions();
@@ -1010,6 +1030,16 @@
       document.getElementById('radio-ptt-serial-line-wrap').classList.toggle('hidden', !isSerial);
     }
 
+    // Set once the wizard's own "Yes, I understand" button is clicked, so
+    // the warning doesn't reappear if the Radio step re-renders (e.g. Back
+    // then Next again) within this same session.
+    let audioInputWarningAcked = false;
+
+    function updateAudioInputWarning(devices) {
+      const hasInput = devices.some(d => d.has_input);
+      document.getElementById('radio-audio-warning').classList.toggle('hidden', hasInput || audioInputWarningAcked);
+    }
+
     async function loadAudioDevices() {
       const select = document.getElementById('radio-audio');
       try {
@@ -1018,14 +1048,17 @@
         const devices = data.devices || [];
         if (devices.length === 0) {
           addOption(select, '', 'No audio devices found');
+          updateAudioInputWarning(devices);
           return;
         }
         devices.forEach(d => {
           addOption(select, d.id, d.description ? `${d.name}: ${d.description}` : d.name);
         });
         if (wizardData.radio?.audio_device) select.value = wizardData.radio.audio_device;
+        updateAudioInputWarning(devices);
       } catch (e) {
         addOption(select, '', 'Could not load audio devices');
+        updateAudioInputWarning([]);
       }
     }
 
@@ -1550,6 +1583,10 @@
                 <label for="aprs-digipeat-filter">RF filter ${helpIcon("Limits which heard packets actually get repeated onto RF, on top of the alias match. Leave blank to repeat everything that matches.")}</label>
                 <input type="text" id="aprs-digipeat-filter" placeholder="optional">
               </div>
+              <div class="field">
+                <label for="aprs-digipeat-callsign-filter">Only digipeat these callsigns ${helpIcon("Restricts digipeating to just these stations, based on who originally sent the packet. Comma or space separated; end a pattern with * to match any suffix, e.g. ZL1ABC* matches ZL1ABC, ZL1ABC-9, etc (a pattern with no * only matches that exact callsign, no SSID). Leave blank to repeat everything, the normal default.")}</label>
+                <input type="text" id="aprs-digipeat-callsign-filter" placeholder="e.g. ZL1ABC, ZL2XYZ* (optional)">
+              </div>
             </details>
           </div>
 
@@ -1592,6 +1629,10 @@
               <div class="field">
                 <label for="aprs-igate-gatefilter">Packet types to gate (you → server) ${helpIcon("Limits which packet types get forwarded from RF to APRS-IS (e.g. t/m for messages only). Leave blank to gate everything you hear.")}</label>
                 <input type="text" id="aprs-igate-gatefilter" placeholder="e.g. t/m (optional)">
+              </div>
+              <div class="field">
+                <label for="aprs-igate-callsign-filter">Only gate these callsigns ${helpIcon("Restricts IGate gating to just these stations, based on who originally sent the packet. Comma or space separated; end a pattern with * to match any suffix, e.g. ZL1ABC* matches ZL1ABC, ZL1ABC-9, etc (a pattern with no * only matches that exact callsign, no SSID). Leave blank to gate everything, the normal default.")}</label>
+                <input type="text" id="aprs-igate-callsign-filter" placeholder="e.g. ZL1ABC, ZL2XYZ* (optional)">
               </div>
               <div class="field">
                 <label for="aprs-igate-txvia">TX via path ${helpIcon('Path used when relaying messages from the internet onto RF. Only takes effect when IGate mode is set to "RX & TX".')}</label>
@@ -1650,6 +1691,7 @@
       if (d.digipeat) {
         document.getElementById('aprs-digipeat-dedupe').value = d.digipeat.dedupe || APRS_DEFAULT_DEDUPE;
         document.getElementById('aprs-digipeat-filter').value = d.digipeat.filter || '';
+        document.getElementById('aprs-digipeat-callsign-filter').value = d.digipeat.callsign_filter || '';
       }
       document.getElementById('aprs-digipeat-rules').value = d.digipeat?.rules || 'widearea';
       if (d.digipeat?.rules === 'custom') {
@@ -1663,6 +1705,7 @@
         document.getElementById('aprs-igate-port').value = d.igate.port || APRS_DEFAULT_PORT;
         document.getElementById('aprs-igate-filter').value = d.igate.filter || '';
         document.getElementById('aprs-igate-gatefilter').value = d.igate.gate_filter || '';
+        document.getElementById('aprs-igate-callsign-filter').value = d.igate.callsign_filter || '';
         document.getElementById('aprs-igate-txvia').value = d.igate.tx_via || APRS_DEFAULT_TXVIA;
         document.getElementById('aprs-igate-ratelimit-1').value = d.igate.rate_limit_1min || APRS_DEFAULT_RATE_1MIN;
         document.getElementById('aprs-igate-ratelimit-5').value = d.igate.rate_limit_5min || APRS_DEFAULT_RATE_5MIN;
@@ -1833,6 +1876,7 @@
           wide: document.getElementById('aprs-digipeat-wide').value,
           dedupe: document.getElementById('aprs-digipeat-dedupe').value,
           filter: document.getElementById('aprs-digipeat-filter').value,
+          callsign_filter: document.getElementById('aprs-digipeat-callsign-filter').value.trim(),
         };
       }
 
@@ -1844,6 +1888,7 @@
           port: document.getElementById('aprs-igate-port').value,
           filter: document.getElementById('aprs-igate-filter').value,
           gate_filter: document.getElementById('aprs-igate-gatefilter').value,
+          callsign_filter: document.getElementById('aprs-igate-callsign-filter').value.trim(),
           tx_via: document.getElementById('aprs-igate-txvia').value,
           rate_limit_1min: document.getElementById('aprs-igate-ratelimit-1').value,
           rate_limit_5min: document.getElementById('aprs-igate-ratelimit-5').value,
@@ -2748,13 +2793,10 @@
     // separate start/stop gate with no config gate isn't useful without a
     // dashboard that actually distinguishes the two, and ORIGINAL's own
     // "Read only" mode didn't gate config changes either despite its label
-    // implying it should (see TODO.md): three clear levels beats four
-    // confusable ones.
+    // implying it should: three clear levels beats four confusable ones.
     // One real change from ORIGINAL: the password is hashed (PBKDF2,
     // services/auth.py) before it ever touches disk, rather than
-    // ORIGINAL's plaintext config.yaml field: cheap to do right from the
-    // start, even though nothing enforces login yet to actually use it
-    // (see TODO.md).
+    // ORIGINAL's plaintext config.yaml field.
     const USER_SECURITY_MODES = [
       { value: 'none', label: 'No security' },
       { value: 'readonly', label: 'Read only' },
@@ -2851,10 +2893,8 @@
     // straight to display_config.json (same file install.sh writes), and
     // Finish always reboots, so there's no "collected but not applied"
     // gap here like most of the rest of the wizard. The page-rotation
-    // list below is the opposite: fully collected, not applied anywhere
-    // yet, since no page-rotation renderer exists in DEV_BUILD (see
-    // TODO.md): reordering/disabling now just means it's ready once one
-    // is built.
+    // list below feeds display/rotation.py's RotationManager directly
+    // (see config.yaml's display.pages), same page IDs both places.
     const EINK_DEFAULT_PAGES = [
       { id: 'status', label: 'Status' },
       { id: 'config_summary', label: 'Config summary' },

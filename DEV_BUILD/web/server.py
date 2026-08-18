@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 # Session cookie for the web UI's security mode (none/readonly/full; see
-# services/auth.py and TODO.md's "User management" section). Sessions live
+# services/auth.py). Sessions live
 # in memory only (see `sessions` below); a restart forces re-login, which
 # is an acceptable trade-off for a single-admin embedded device that
 # doesn't restart often, and avoids needing any persistent token storage.
@@ -68,7 +68,7 @@ def _build_test_image(display_driver: DisplayDriver):
 
 
 def create_app(
-    display_driver: DisplayDriver, first_boot: bool, network_status: dict, rotation=None,
+    display_driver: DisplayDriver, first_boot: bool, network_status: dict, rotation=None, packets=None,
 ) -> FastAPI:
     app = FastAPI(title="APRS Digipeater")
 
@@ -128,8 +128,8 @@ def create_app(
         if first_boot:
             return FileResponse(STATIC_DIR / "first_run.html")
         # "Full" security means viewing needs a password too, not just
-        # changes (see TODO.md's User management section): everything
-        # else (none/readonly) leaves the dashboard itself open.
+        # changes: everything else (none/readonly) leaves the dashboard
+        # itself open.
         if _read_security().get("mode") == "full" and not _is_logged_in(request):
             return FileResponse(STATIC_DIR / "login.html")
         return FileResponse(STATIC_DIR / "normal.html")
@@ -147,8 +147,8 @@ def create_app(
     async def config_page(request: Request):
         if first_boot:
             return RedirectResponse(url="/")
-        # Config changes need a password under both readonly and full (see
-        # TODO.md), unlike root() above, which only gates full.
+        # Config changes need a password under both readonly and full,
+        # unlike root() above, which only gates full.
         mode = _read_security().get("mode", "none")
         if mode != "none" and not _is_logged_in(request):
             return FileResponse(STATIC_DIR / "login.html")
@@ -259,6 +259,19 @@ def create_app(
             raise HTTPException(status_code=400, detail="Callsign is required")
         return {"passcode": aprs.calculate_passcode(callsign)}
 
+    @app.get("/api/aprs/heard")
+    async def aprs_heard():
+        # None (not empty-and-hidden) when there's no live tracking at all
+        # (first boot, or packets=None in some other code path), so the
+        # frontend can tell "nothing heard yet" apart from "not tracking".
+        return {"stations": packets.heard_stations() if packets else None}
+
+    @app.get("/api/aprs/beacon-stats")
+    async def aprs_beacon_stats():
+        return packets.beacon_stats() if packets else {
+            "last_rf_beacon_seconds_ago": None, "last_igate_beacon_seconds_ago": None,
+        }
+
     @app.get("/api/gps/status")
     async def gps_status():
         return await gps.get_status()
@@ -278,11 +291,16 @@ def create_app(
         # required login before this could ever be called anyway.
         return await system.get_direwolf_status()
 
+    @app.get("/api/system/direwolf/logs")
+    async def direwolf_logs():
+        # Read-only, same gating (none) as direwolf_status above: backs
+        # the dashboard's error-badge "view logs" modal.
+        return {"logs": await system.get_direwolf_logs()}
+
     def _require_login_for_action(request: Request) -> None:
         # Starting/stopping Direwolf is a change, so both "readonly" and
         # "full" gate it (unlike viewing, where only "full" does): same
-        # split TODO.md describes for the (not yet built) config-editing
-        # endpoints this will eventually sit alongside.
+        # split /api/config/save below uses for the same reason.
         if _read_security().get("mode", "none") != "none" and not _is_logged_in(request):
             raise HTTPException(status_code=401, detail="Login required")
 
@@ -406,7 +424,7 @@ def create_app(
     # map data exists in the area (a dense city vs. open countryside at the
     # same bbox/zoom can differ by an order of magnitude), not a clean
     # geometric formula. Better to say so honestly than show a fake-precise
-    # number. See TODO.md.
+    # number.
 
     @app.post("/api/map/cache/start")
     async def map_cache_start(request: Request):
@@ -589,8 +607,7 @@ def create_app(
         /api/setup/complete (first-boot only, whole-config, always reboots),
         this applies live wherever the codebase actually allows it and
         reports back what did vs. what still needs a reboot, rather than
-        rebooting unconditionally. See TODO.md's "In-program config page"
-        section for the full reasoning per field.
+        rebooting unconditionally.
 
         Body: any subset of {radio, aprs, gps, startup, gpio, display,
         user}. map and network are intentionally not accepted here: map

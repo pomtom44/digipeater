@@ -955,6 +955,10 @@
           <div class="field">
             <label for="radio-audio">Audio device</label>
             <select id="radio-audio"></select>
+            <p class="warn-banner hidden" id="radio-audio-warning">
+              No audio input device detected. Direwolf needs a microphone/audio input to receive on, it can't start without one.
+              <br><button type="button" id="btn-audio-warning-ack" style="margin-top: 8px;">Yes, I understand</button>
+            </p>
           </div>
           <div class="field">
             <label for="radio-power">TX power level</label>
@@ -993,6 +997,11 @@
       document.getElementById('radio-frequency').addEventListener('input', updateFreqWarning);
       updateFreqWarning();
 
+      document.getElementById('btn-audio-warning-ack').addEventListener('click', () => {
+        audioInputWarningAcked = true;
+        document.getElementById('radio-audio-warning').classList.add('hidden');
+      });
+
       loadAudioDevices();
       loadCm108PttOptions();
       loadSerialPttOptions();
@@ -1009,6 +1018,16 @@
       document.getElementById('radio-ptt-serial-line-wrap').classList.toggle('hidden', !isSerial);
     }
 
+    // Set once this tab's own "Yes, I understand" button is clicked, so
+    // the warning doesn't reappear if the Radio tab re-renders within
+    // this same session.
+    let audioInputWarningAcked = false;
+
+    function updateAudioInputWarning(devices) {
+      const hasInput = devices.some(d => d.has_input);
+      document.getElementById('radio-audio-warning').classList.toggle('hidden', hasInput || audioInputWarningAcked);
+    }
+
     async function loadAudioDevices() {
       const select = document.getElementById('radio-audio');
       const d = state.radio || {};
@@ -1018,14 +1037,17 @@
         const devices = data.devices || [];
         if (devices.length === 0) {
           addOption(select, '', 'No audio devices found');
+          updateAudioInputWarning(devices);
           return;
         }
         devices.forEach(dev => {
           addOption(select, dev.id, dev.description ? `${dev.name}: ${dev.description}` : dev.name);
         });
         if (d.audio_device) select.value = d.audio_device;
+        updateAudioInputWarning(devices);
       } catch (e) {
         addOption(select, '', 'Could not load audio devices');
+        updateAudioInputWarning([]);
       }
     }
 
@@ -1494,6 +1516,7 @@
             </div>
           </div>
 
+
           <div class="subsection hidden" id="digipeat-section">
             <details class="advanced">
               <summary>Digipeater settings</summary>
@@ -1522,6 +1545,10 @@
               <div class="field">
                 <label for="aprs-digipeat-filter">RF filter ${helpIcon("Limits which heard packets actually get repeated onto RF, on top of the alias match. Leave blank to repeat everything that matches.")}</label>
                 <input type="text" id="aprs-digipeat-filter" placeholder="optional">
+              </div>
+              <div class="field">
+                <label for="aprs-digipeat-callsign-filter">Only digipeat these callsigns ${helpIcon("Restricts digipeating to just these stations, based on who originally sent the packet. Comma or space separated; end a pattern with * to match any suffix, e.g. ZL1ABC* matches ZL1ABC, ZL1ABC-9, etc (a pattern with no * only matches that exact callsign, no SSID). Leave blank to repeat everything, the normal default.")}</label>
+                <input type="text" id="aprs-digipeat-callsign-filter" placeholder="e.g. ZL1ABC, ZL2XYZ* (optional)">
               </div>
             </details>
           </div>
@@ -1566,6 +1593,10 @@
               <div class="field">
                 <label for="aprs-igate-gatefilter">Packet types to gate (you &rarr; server) ${helpIcon("Limits which packet types get forwarded from RF to APRS-IS (e.g. t/m for messages only). Leave blank to gate everything you hear.")}</label>
                 <input type="text" id="aprs-igate-gatefilter" placeholder="e.g. t/m (optional)">
+              </div>
+              <div class="field">
+                <label for="aprs-igate-callsign-filter">Only gate these callsigns ${helpIcon("Restricts IGate gating to just these stations, based on who originally sent the packet. Comma or space separated; end a pattern with * to match any suffix, e.g. ZL1ABC* matches ZL1ABC, ZL1ABC-9, etc (a pattern with no * only matches that exact callsign, no SSID). Leave blank to gate everything, the normal default.")}</label>
+                <input type="text" id="aprs-igate-callsign-filter" placeholder="e.g. ZL1ABC, ZL2XYZ* (optional)">
               </div>
               <div class="field">
                 <label for="aprs-igate-txvia">TX via path ${helpIcon('Path used when relaying messages from the internet onto RF. Only takes effect when IGate mode is set to "RX &amp; TX".')}</label>
@@ -1638,6 +1669,7 @@
       if (d.digipeat) {
         document.getElementById('aprs-digipeat-dedupe').value = d.digipeat.dedupe || APRS_DEFAULT_DEDUPE;
         document.getElementById('aprs-digipeat-filter').value = d.digipeat.filter || '';
+        document.getElementById('aprs-digipeat-callsign-filter').value = d.digipeat.callsign_filter || '';
       }
       document.getElementById('aprs-digipeat-rules').value = d.digipeat?.rules || 'widearea';
       if (d.digipeat?.rules === 'custom') {
@@ -1651,6 +1683,7 @@
         document.getElementById('aprs-igate-port').value = d.igate.port || APRS_DEFAULT_PORT;
         document.getElementById('aprs-igate-filter').value = d.igate.filter || '';
         document.getElementById('aprs-igate-gatefilter').value = d.igate.gate_filter || '';
+        document.getElementById('aprs-igate-callsign-filter').value = d.igate.callsign_filter || '';
         document.getElementById('aprs-igate-txvia').value = d.igate.tx_via || APRS_DEFAULT_TXVIA;
         document.getElementById('aprs-igate-ratelimit-1').value = d.igate.rate_limit_1min || APRS_DEFAULT_RATE_1MIN;
         document.getElementById('aprs-igate-ratelimit-5').value = d.igate.rate_limit_5min || APRS_DEFAULT_RATE_5MIN;
@@ -1792,6 +1825,7 @@
           wide: document.getElementById('aprs-digipeat-wide').value,
           dedupe: document.getElementById('aprs-digipeat-dedupe').value,
           filter: document.getElementById('aprs-digipeat-filter').value,
+          callsign_filter: document.getElementById('aprs-digipeat-callsign-filter').value.trim(),
         };
       }
 
@@ -1803,6 +1837,7 @@
           port: document.getElementById('aprs-igate-port').value,
           filter: document.getElementById('aprs-igate-filter').value,
           gate_filter: document.getElementById('aprs-igate-gatefilter').value,
+          callsign_filter: document.getElementById('aprs-igate-callsign-filter').value.trim(),
           tx_via: document.getElementById('aprs-igate-txvia').value,
           rate_limit_1min: document.getElementById('aprs-igate-ratelimit-1').value,
           rate_limit_5min: document.getElementById('aprs-igate-ratelimit-5').value,

@@ -28,18 +28,18 @@ Digipeater test station, Auckland CBD
 ```
 
 ### Last beacon
-A table, not label:value rows (see display/templates/default.py's draw_table_page):
+A table, not label:value rows (see display/templates/default.py's draw_table_page). Real, backed by services/packet_log.py tailing Direwolf's journal for beacon-transmission log lines:
 
 ```
           Last    Next
-    RF:   -       -
+    RF:   2m      28m
  IGate:   Disabled
 ```
 
-Enabled/disabled is real (same aprs config as Config summary); Last/Next stay "-" until real beacon-transmission history exists.
+Both fields are "None" (not a bare "-") when a beacon type is enabled but nothing's actually been seen yet this run (just started, or none due).
 
 ### Last heard
-Icon+callsign, Lat/Lon, then comment, not label:value rows (see display/templates/default.py's draw_station_page):
+Icon+callsign, Lat/Lon, then comment, not label:value rows (see display/templates/default.py's draw_station_page). Real, same source as Last Beacon, aprslib-decoded from the journal tail:
 
 ```
 [icon] ZL1ABC-9
@@ -47,4 +47,4 @@ Icon+callsign, Lat/Lon, then comment, not label:value rows (see display/template
   Mobile /M portable digipeater test
 ```
 
-Layout is real; every field is a placeholder ("-"/"Not available yet") until real packet history exists, no heard-station data source is tracked anywhere yet.
+Every field is "None" until something's actually been heard this run.

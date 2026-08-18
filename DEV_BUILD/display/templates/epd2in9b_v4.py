@@ -46,11 +46,14 @@ def draw_status_page(driver, title: str, rows: list[tuple[str, str]]):
     tbbox = draw.textbbox((0, 0), title, font=title_font)
     tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
 
-    block_h = th + 14 + len(rows) * row_height
-    top = max(MARGIN, (h - block_h) / 2)
-
-    draw.text(((w - tw) / 2, top), title, font=title_font, fill=0)
-    divider_y = top + th + 7
+    # Title/divider always at the same fixed position (MARGIN), not
+    # centered against how tall this particular page's content happens to
+    # be: otherwise the title jumps up and down page to page as rotation
+    # cycles through pages with different row counts, especially visible
+    # on this panel since it has no fast refresh (every tick is already a
+    # full visible flash, see this module's own docstring).
+    draw.text(((w - tw) / 2, MARGIN), title, font=title_font, fill=0)
+    divider_y = MARGIN + th + 7
     draw.line((MARGIN, divider_y, w - MARGIN, divider_y), fill=0, width=1)
 
     # Labels right-align and values left-align against a shared center

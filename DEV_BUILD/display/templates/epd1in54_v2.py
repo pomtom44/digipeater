@@ -47,12 +47,12 @@ def draw_status_page(driver, title: str, rows: list[tuple[str, str]]):
     tbbox = draw.textbbox((0, 0), title, font=title_font)
     tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
 
-    row_block_h = len(rows) * (LABEL_ROW_H + VALUE_ROW_H)
-    total_h = th + 16 + row_block_h
-    top = max(MARGIN, (h - total_h) / 2)
-
-    draw.text(((w - tw) / 2, top), title, font=title_font, fill=0)
-    divider_y = top + th + 10
+    # Title/divider always at the same fixed position (MARGIN), not
+    # centered against how tall this particular page's content happens to
+    # be: otherwise the title jumps up and down page to page as rotation
+    # cycles through pages with different row counts.
+    draw.text(((w - tw) / 2, MARGIN), title, font=title_font, fill=0)
+    divider_y = MARGIN + th + 10
     draw.line((MARGIN, divider_y, w - MARGIN, divider_y), fill=0, width=1)
 
     y = divider_y + 14

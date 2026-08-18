@@ -14,7 +14,16 @@ _CARD_LINE_RE = re.compile(r"^\s*(\d+)\s*\[([^\]]*)\]:\s*(.*)$")
 
 async def list_audio_devices() -> list[dict]:
     """List ALSA sound cards straight from /proc/asound/cards, a
-    kernel-exposed file, so no extra package (e.g. alsa-utils) is needed."""
+    kernel-exposed file, so no extra package (e.g. alsa-utils) is needed.
+
+    has_input reflects whether the card actually has a capture-direction
+    PCM device: /proc/asound/cardN/pcm*c, ALSA's own convention (a "c"
+    suffix means capture, "p" means playback). The Pi's own onboard audio
+    is a real card that shows up in /proc/asound/cards, but it's
+    playback-only, no mic input at all (see SUPPORTED_HARDWARE.md), so
+    just being listed here doesn't mean a device can feed Direwolf's
+    receive path; the wizard's Radio step uses this to warn if nothing
+    with real input capability is plugged in."""
     if not _ASOUND_CARDS.exists():
         return []
     devices = []
@@ -23,7 +32,11 @@ async def list_audio_devices() -> list[dict]:
         if not m:
             continue
         index, name, desc = m.groups()
-        devices.append({"id": f"hw:{index}", "name": name.strip(), "description": desc.strip()})
+        has_input = any(Path(f"/proc/asound/card{index}").glob("pcm*c"))
+        devices.append({
+            "id": f"hw:{index}", "name": name.strip(), "description": desc.strip(),
+            "has_input": has_input,
+        })
     return devices
 
 

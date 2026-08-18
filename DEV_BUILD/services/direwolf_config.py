@@ -1,7 +1,7 @@
 """Generates direwolf.conf from config.yaml.
 
-This is the piece TODO.md has called "the big one" all session: every other
-"collected but not applied" item downstream of it. Directive syntax here
+Every other "collected but not applied" item in the wizard sits downstream
+of this file actually existing. Directive syntax here
 was verified against Direwolf's actual config-file parser
 (github.com/wb2osz/direwolf, src/config.c), not just its sample config or
 ORIGINAL's own generator (ORIGINAL/core/config_gen.py): a few things
@@ -19,6 +19,7 @@ no root/sudo is needed just to write a config file, only to actually
 start/stop the direwolf systemd service itself (see services/system.py).
 """
 
+import re
 from pathlib import Path
 
 CONFIG_PATH = Path("direwolf.conf")
@@ -61,6 +62,34 @@ def _ptt_lines(radio: dict, can_transmit: bool) -> list[str]:
     return []
 
 
+def _callsign_filter_expr(pattern_str: str) -> str:
+    """User-typed comma/space-separated callsign patterns (e.g. "ZL1ABC,
+    ZL2*") -> a real Direwolf budlist filter expression (b/pat1/pat2/...).
+    Confirmed against pfilter.c's filt_bodgu(): "b" matches the AX.25
+    source address (callsign-SSID, e.g. "ZL1ABC-9") exactly unless a
+    single trailing * wildcard is used for a prefix match; * anywhere
+    else in a pattern is rejected by Direwolf outright, so a pattern
+    without an SSID (e.g. "ZL1ABC") only matches that exact no-SSID
+    address, not every SSID under it, only "ZL1ABC*" does that."""
+    patterns = [p.strip().upper() for p in re.split(r"[,\s]+", pattern_str) if p.strip()]
+    if not patterns:
+        return ""
+    return "b/" + "/".join(patterns)
+
+
+def _combine_filters(*parts: str) -> str:
+    """Direwolf's filter language supports AND/OR/NOT/() (confirmed
+    against pfilter.c), so an advanced free-text filter and the simple
+    callsign filter can both apply at once rather than one silently
+    overriding the other."""
+    parts = [p for p in parts if p]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return " & ".join(f"({p})" for p in parts)
+
+
 def _digipeat_lines(aprs: dict) -> list[str]:
     digipeat = aprs.get("digipeat") or {}
     alias = digipeat.get("alias") or "^WIDE[3-7]-[1-7]$|^TEST$"
@@ -70,8 +99,10 @@ def _digipeat_lines(aprs: dict) -> list[str]:
     if dedupe:
         lines.append(f"DEDUPE {dedupe}")
     rf_filter = (digipeat.get("filter") or "").strip()
-    if rf_filter:
-        lines.append(f"FILTER 0 0 {rf_filter}")
+    callsign_filter = _callsign_filter_expr(digipeat.get("callsign_filter") or "")
+    combined = _combine_filters(rf_filter, callsign_filter)
+    if combined:
+        lines.append(f"FILTER 0 0 {combined}")
     return lines
 
 
@@ -93,8 +124,10 @@ def _igate_lines(aprs: dict) -> list[str]:
     if server_filter:
         lines.append(f"IGFILTER {server_filter}")
     gate_filter = (igate.get("gate_filter") or "").strip()
-    if gate_filter:
-        lines.append(f"FILTER 0 IG {gate_filter}")
+    callsign_filter = _callsign_filter_expr(igate.get("callsign_filter") or "")
+    combined = _combine_filters(gate_filter, callsign_filter)
+    if combined:
+        lines.append(f"FILTER 0 IG {combined}")
     if igate_mode == "rxtx":
         tx_via = igate.get("tx_via") or "WIDE1-1,WIDE2-1"
         lines.append(f"IGTXVIA 0 {tx_via}")
@@ -207,6 +240,13 @@ def generate(config: dict) -> str:
     lines.append("CHANNEL 0")
     lines.append(f"MYCALL {_mycall(aprs)}")
     lines.append("MODEM 1200")
+    # Loopback only (this app is the one and only client, see
+    # services/packet_log.py's KISS tail): lets it decode real heard
+    # packets straight from raw AX.25 frames instead of scraping
+    # Direwolf's own log text for them. Direwolf itself decodes/reports
+    # heard traffic over KISS the same regardless of digipeat/IGate mode,
+    # so this is unconditional, not gated on can_transmit like PTT is.
+    lines.append("KISSPORT 8001")
     lines.append("")
 
     ptt_lines = _ptt_lines(radio, can_transmit)

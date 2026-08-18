@@ -37,12 +37,21 @@ mkdir -p "$DROPIN_DIR"
 if [ "$AUTORESTART" = "on" ]; then
     # StartLimitBurst counts every start, the initial one plus each
     # auto-restart, so this many total attempts matches "ATTEMPTS" the way
-    # the Startup tab describes it. StartLimitIntervalSec has to cover the
-    # whole attempt window (all of them DELAY_S apart) or the counter
-    # window slides past before the last attempt and it just retries
-    # forever again; +5s per attempt is slack for direwolf's own
-    # startup-to-failure time, not exact, just enough to not undercount.
-    INTERVAL=$(( ATTEMPTS * (DELAY_S + 5) ))
+    # the Startup tab describes it. StartLimitIntervalSec is a SLIDING
+    # window (systemd prunes start timestamps older than this before
+    # counting), not a fixed budget: it has to comfortably outlast the
+    # time it actually takes to accumulate ATTEMPTS starts (each
+    # DELAY_S apart), or the oldest attempt ages back out of the window
+    # just as fast as new ones arrive and the burst count never climbs
+    # past ATTEMPTS at all, letting it retry forever regardless of the
+    # configured limit (confirmed happening in practice: ATTEMPTS*
+    # (DELAY_S+5) was tried first and was too tight, a real crash loop
+    # went 8+ restarts deep before finally hitting systemd's own
+    # "repeated too quickly" fallback instead of stopping at ATTEMPTS).
+    # +1 attempt and +10s per gap is deliberate slack, not a tight
+    # estimate, so normal timing jitter can't push it over the edge
+    # again the way the tighter formula did.
+    INTERVAL=$(( (ATTEMPTS + 1) * (DELAY_S + 10) ))
     cat > "$DROPIN_DIR/override.conf" <<EOF
 [Unit]
 StartLimitIntervalSec=$INTERVAL
