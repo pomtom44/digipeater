@@ -1,20 +1,5 @@
 #!/usr/bin/env python3
-"""Checks whether Protomaps has published a newer daily planet build than
-whatever is currently cached, and re-extracts the world map (and the saved
-region, if one was ever downloaded) when there is one.
-
-Invoked frequently by a systemd timer (digipeater-tile-update.timer, see
-install.sh) rather than run as a long-lived daemon; each invocation reads
-config.yaml fresh and mostly no-ops, same "apply from disk on a schedule"
-pattern as scripts/apply-gps-config.sh. A marker file
-(map_data/.auto_update_last_run) caps this to one real attempt per day, at
-or after the user's configured check time; a failed or offline attempt
-does NOT set the marker, so it's retried on the timer's next tick instead
-of waiting a full day.
-
-Must be run with cwd set to the app directory, same as
-scripts/precache_world.py, so map_data/ and config.yaml resolve correctly.
-"""
+"""Re-extracts the world map tiles when Protomaps publishes a newer daily build, run periodically by a systemd timer."""
 
 import asyncio
 import logging

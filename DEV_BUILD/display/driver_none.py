@@ -1,4 +1,4 @@
-"""Null display driver — used when no display hardware is configured."""
+"""Null display driver, used when no display hardware is configured."""
 
 import logging
 from .base import DisplayDriver

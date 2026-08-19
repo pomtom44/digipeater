@@ -1,16 +1,4 @@
-"""
-Waveshare e-Paper model registry — auto-discovered from this folder.
-
-To add support for a new screen: drop a driver module here (a class named
-EPD with init/getbuffer/display/Clear/sleep — copy an existing file as a
-template) exposing the metadata constants DESC, LANDSCAPE_WIDTH,
-LANDSCAPE_HEIGHT (LINE_HEIGHT/MARGIN optional, default 16/4). It will show
-up in the config-page model dropdown and be loadable by name automatically.
-Nothing else in the app needs to change — the config-page dropdown, the
-GPIO pinout note, and driver_waveshare.py all read this registry rather
-than naming models individually. See epd2in9b_v4.py for the constants
-this scan reads.
-"""
+"""Waveshare e-Paper model registry, auto-discovered from this folder."""
 
 import importlib
 import logging
@@ -21,10 +9,7 @@ logger = logging.getLogger(__name__)
 
 def _discover() -> dict:
     models = {}
-    # Sorted for deterministic, predictable ordering in the install-time
-    # picker (pkgutil's own order isn't guaranteed) — this also happens to
-    # put epd1in54_v2 before epd2in9b_v4, i.e. the primary hardware choice
-    # before the dev/secondary one, alphabetically.
+    # Sorted for deterministic ordering in the install-time picker.
     for info in sorted(pkgutil.iter_modules(__path__), key=lambda m: m.name):
         name = info.name
         if name == "epdconfig" or name.startswith("_"):
@@ -32,7 +17,7 @@ def _discover() -> dict:
         try:
             mod = importlib.import_module(f".{name}", package=__name__)
         except Exception as e:
-            logger.warning("Skipping display module '%s' — failed to import: %s", name, e)
+            logger.warning("Skipping display module '%s', failed to import: %s", name, e)
             continue
         if not hasattr(mod, "EPD"):
             continue
@@ -46,7 +31,7 @@ def _discover() -> dict:
                 "margin": getattr(mod, "MARGIN", 4),
             }
         except AttributeError as e:
-            logger.warning("Skipping display module '%s' — missing required metadata: %s", name, e)
+            logger.warning("Skipping display module '%s', missing required metadata: %s", name, e)
     return models
 
 

@@ -56,5 +56,6 @@ This project drives or vendors:
 - [Direwolf](https://github.com/wb2osz/direwolf) (GPL-2.0): run as a separate process, not modified or redistributed
 - [MapLibre GL JS](https://github.com/maplibre/maplibre-gl-js) (BSD-3-Clause): vendored in `DEV_BUILD/web/static/maplibre/`
 - [PMTiles](https://github.com/protomaps/PMTiles) (BSD-3-Clause): vendored in `DEV_BUILD/web/static/maplibre/`
+- [Waveshare e-Paper driver](https://github.com/waveshareteam/e-Paper) (MIT): ported in `DEV_BUILD/display/waveshare/`
 
 Python dependencies (FastAPI, Starlette, Pillow, and others, see [`DEV_BUILD/requirements.txt`](DEV_BUILD/requirements.txt)) are installed via pip and covered by their own licenses, not vendored in this repo.

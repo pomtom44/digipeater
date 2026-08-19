@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""Extracts a coarse whole-world PMTiles layer (maxzoom 8, ~1GB) during
-install, so the wizard's Map caching step always has a usable offline
-basemap to pick a region on (with or without internet at setup time),
-rather than nothing until a specific region has been downloaded.
-
-Run from install.sh with the app's own venv and cwd set to the app
-directory, so the file lands in the same map_data/ the running app later
-reads from (see services/tiles.py: MAP_DATA_DIR, a path relative to cwd).
-"""
+"""Extracts a coarse whole-world PMTiles basemap during install for the setup wizard's map caching step."""
 
 import asyncio
 import logging

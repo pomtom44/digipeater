@@ -1,39 +1,17 @@
-"""
-Low-level GPIO and SPI hardware layer shared by all Waveshare e-Paper drivers.
-
-Default wiring (BCM numbering):
-  RST = 17   DC = 25   CS = 8 (SPI CE0)   BUSY = 24
-  DIN (MOSI) = 10   CLK (SCLK) = 11   VCC = 3.3V   GND = GND
-
-These are the standard Waveshare RPi-HAT pin assignments. Boards like the
-Pico-ePaper series are wired for a Pico's header rather than a direct-plug
-RPi HAT, so when driving one from a Raspberry Pi the 8 signal wires above
-must be connected by hand to these BCM pins (or change the constants below
-to match whatever pins you actually wired).
-
-The project default relay_pin is GPIO 27, which avoids the RST conflict.
-Do not change relay_pin to 17 when an e-ink display is installed.
-
-Falls back to a no-op simulation when RPi.GPIO or spidev are unavailable.
-"""
+"""Low-level GPIO and SPI hardware layer shared by all Waveshare e-Paper drivers, simulated if RPi.GPIO/spidev are unavailable."""
 
 import time
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Immutable reference defaults, separate from the mutable RST_PIN etc.
-# below (which configure() overwrites at boot): used by web/server.py's
-# /api/config/save to tell "the value is still the default" apart from
-# "the value was explicitly changed away from it", regardless of what
-# configure() has already done to the mutable ones earlier in this same
-# process's lifetime. Mirrors services/relay.py's DEFAULT_RELAY_PIN vs.
-# mutable RELAY_PIN split.
+# Immutable reference defaults, separate from the mutable pins below that configure() overwrites at boot.
 DEFAULT_RST_PIN = 17
 DEFAULT_DC_PIN = 25
 DEFAULT_CS_PIN = 8
 DEFAULT_BUSY_PIN = 24
 
+# relay_pin defaults to GPIO 27, not 17, to avoid conflicting with RST_PIN.
 RST_PIN  = DEFAULT_RST_PIN
 DC_PIN   = DEFAULT_DC_PIN
 CS_PIN   = DEFAULT_CS_PIN
@@ -50,13 +28,7 @@ except ImportError:
 
 
 def configure(rst: int = None, dc: int = None, cs: int = None, busy: int = None) -> None:
-    """Overrides the pin constants above (config.yaml's gpio.eink_* fields,
-    see web/server.py's /api/config/save) before module_init() claims
-    them. Must be called before module_init(), i.e. before
-    _load_display_driver() constructs the EPD instance in main.py, since
-    EPD.__init__() snapshots these module-level constants onto itself at
-    construction time; changing them afterward has no effect on an
-    already-constructed EPD. A None argument leaves that pin unchanged."""
+    """Overrides the pin constants above; must be called before the EPD is constructed, since it snapshots them at construction time."""
     global RST_PIN, DC_PIN, CS_PIN, BUSY_PIN
     if rst is not None:
         RST_PIN = rst
@@ -76,13 +48,10 @@ def module_init() -> int:
     GPIO.setup(RST_PIN, GPIO.OUT)
     GPIO.setup(DC_PIN,  GPIO.OUT)
     GPIO.setup(CS_PIN,  GPIO.OUT)
-    # Internal pull-up: BUSY floats and reads a constant LOW without one,
-    # regardless of the panel's real state, confirmed with a multimeter.
+    # Internal pull-up: BUSY floats and reads a constant LOW without one.
     GPIO.setup(BUSY_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     _SPI.open(0, 0)
-    # Kept at 1MHz (below Waveshare's 4MHz reference) since this board is
-    # driven over breadboard jumper wires rather than a direct HAT connection,
-    # confirmed working at this speed during testing.
+    # Kept at 1MHz (below Waveshare's 4MHz reference) for reliability over breadboard jumper wires.
     _SPI.max_speed_hz = 1000000
     _SPI.mode = 0b00
     return 0

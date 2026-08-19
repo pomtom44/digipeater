@@ -1,38 +1,4 @@
-"""Tracks heard stations and beacon transmissions in real time, so the
-dashboard's Heard stations/Beacon stats cards and the e-ink Last beacon/
-Last heard pages show real data instead of placeholders.
-
-Two independent live sources feed the same in-memory state, for different
-reasons:
-
-- Heard-station decoding comes from Direwolf's KISS TCP port (see
-  services/direwolf_config.py's unconditional `KISSPORT 8001`, loopback
-  only, this app is its one and only client): real raw AX.25 frames, not
-  text scraped from a log line, so it doesn't depend on Direwolf's log
-  wording at all, more of a "real" packet capture than parsing a
-  human-readable rendering of one.
-- Beacon-transmission timing still comes from tailing Direwolf's journald
-  output (`journalctl -u direwolf -f`, the DEV_BUILD equivalent of
-  ORIGINAL/core/log_parser.py reading Direwolf's stdout live off a
-  subprocess it supervised directly): "sent to APRS-IS" isn't an RF frame
-  at all, so it never appears over KISS, and there's no other live signal
-  for exactly when a PBEACON fired. The RF/IGate beacon detection regexes
-  here are carried over verbatim from ORIGINAL, which verified them
-  against a real running station; not re-verified here yet (no working
-  audio device in hand this session, see SUPPORTED_HARDWARE.md and
-  TODO.md).
-
-Both paths converge on the same aprslib-based APRS payload parsing
-(_handle_packet_string): KISS decodes an AX.25 frame into a TNC2-style
-"SRC>DEST,PATH:payload" string first (_decode_ax25_ui_frame), then it's
-handed to aprslib exactly the same as a payload found directly in a log
-line would be, one interpretation path either way.
-
-State is in-memory only, not persisted to disk: this is "what's been heard
-since the app last started", not a permanent packet archive, and a station
-worth caring about will be heard again within its own beacon interval
-anyway. Same trade-off web/server.py's session dict already makes.
-"""
+"""Tracks heard stations and beacon transmissions in real time from Direwolf's KISS port and journald log."""
 
 import asyncio
 import logging
@@ -107,12 +73,7 @@ def _kiss_unescape(data: bytes) -> bytes:
 
 
 def _decode_ax25_addr(data: bytes, offset: int) -> tuple[str, bool, bool]:
-    """One 7-byte AX.25 address field. Each callsign character is ASCII
-    shifted left 1 bit (space-padded to 6 chars); the 7th byte packs SSID
-    (bits 1-4), the "has been repeated" digipeater flag (bit 7, shown as a
-    trailing `*` in TNC2 format), and the address-extension bit (bit 0,
-    set on the last address in the frame). Returns (callsign-ssid,
-    has_been_repeated, is_last_address)."""
+    """Decodes one 7-byte AX.25 address field into (callsign-ssid, has_been_repeated, is_last_address)."""
     callsign = "".join(chr(b >> 1) for b in data[offset:offset + 6]).strip()
     ssid_byte = data[offset + 6]
     ssid = (ssid_byte >> 1) & 0x0F
@@ -123,10 +84,7 @@ def _decode_ax25_addr(data: bytes, offset: int) -> tuple[str, bool, bool]:
 
 
 def _decode_ax25_ui_frame(frame: bytes) -> str | None:
-    """Raw AX.25 UI frame bytes (as delivered over KISS, KISS command
-    byte already stripped) -> a TNC2-style "SRC>DEST,PATH:payload"
-    string, the exact shape aprslib.parse() expects, same interpretation
-    path as a packet line found in Direwolf's own log text."""
+    """Converts raw AX.25 UI frame bytes into a TNC2-style "SRC>DEST,PATH:payload" string for aprslib."""
     if len(frame) < 16:
         return None
     dest, _, _ = _decode_ax25_addr(frame, 0)
@@ -176,9 +134,7 @@ class PacketLog:
         return stations[:_MAX_HEARD_STATIONS]
 
     def last_heard(self) -> dict | None:
-        """The single most recently heard station, or None if nothing's
-        been heard yet this run (see e-ink display/rotation.py's Last
-        Heard page)."""
+        """The single most recently heard station, or None if nothing's been heard yet."""
         if not self._heard:
             return None
         info = max(self._heard.values(), key=lambda s: s["_last_heard_at"])
@@ -226,9 +182,7 @@ class PacketLog:
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
         except FileNotFoundError:
-            # No systemctl/journalctl at all (dev sandbox, no systemd):
-            # nothing to tail, and retrying every 5s forever would just be
-            # log noise for a condition that will never change this run.
+            # No journalctl available; back off instead of retrying forever.
             await asyncio.sleep(3600)
             return
         try:
@@ -245,10 +199,7 @@ class PacketLog:
         try:
             reader, writer = await asyncio.open_connection(_KISS_HOST, _KISS_PORT)
         except OSError:
-            # Direwolf isn't listening yet: not started, still starting,
-            # or (pre-boot dev sandbox) not running at all. Backed off and
-            # retried by _kiss_loop above, not an error worth logging
-            # every 5s.
+            # Direwolf's KISS port isn't listening yet; retried by _kiss_loop.
             return
         my_call = _my_callsign()
         buf = bytearray()
@@ -274,18 +225,14 @@ class PacketLog:
             writer.close()
 
     def _handle_log_line(self, line: str) -> None:
-        """journalctl path: beacon-transmission detection only, see this
-        module's own docstring for why heard-packet parsing moved to KISS
-        instead."""
+        """journalctl path: detects beacon transmissions only."""
         if _RE_RF_BEACON.search(line):
             self._last_rf_beacon_at = time.time()
         elif _RE_IG_BEACON.search(line):
             self._last_igate_beacon_at = time.time()
 
     def _handle_packet_string(self, packet_str: str, my_call: str) -> None:
-        """KISS path: packet_str is already a TNC2-style "SRC>DEST,PATH:
-        payload" string (see _decode_ax25_ui_frame), same shape aprslib
-        expects regardless of where it came from."""
+        """KISS path: parses a TNC2-style packet string via aprslib."""
         if not _HAS_APRSLIB:
             return
         try:

@@ -10,7 +10,7 @@ Known gaps in `DEV_BUILD`, collected in one place. See `DEV_BUILD/SUPPORTED_HARD
 ## Not fully implemented or broken
 
 - Direwolf integration not tested against the real `direwolf` binary (sandbox can't run Linux binaries), only checked for well-formed config syntax.
-- Generic 1.54" SPI e-Paper driver is a best-guess port, hardware not in hand, never verified.
+- Waveshare 1.54inch e-Paper (Rev2.1) driver is now a source-verified port of Waveshare's own reference driver, but not yet run against the real panel (hardware in hand, not yet tested end to end).
 - `services/packet_log.py`'s RF/IGate beacon-transmission detection (the regexes matching Direwolf's log wording for "beacon sent") is carried over verbatim from `ORIGINAL`, not re-verified against a real beacon transmit yet (no working audio device in hand this session, see `SUPPORTED_HARDWARE.md`).
 
 ## New nice to have features

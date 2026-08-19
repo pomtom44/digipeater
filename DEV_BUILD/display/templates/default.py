@@ -1,19 +1,10 @@
-"""Default page template — used for any display model without a dedicated
-template file. Sizes and positions itself from the driver's actual
-dimensions so it's reasonable on any screen shape, but a model-specific
-template (see epd2in9b_v4.py / epd1in54_v2.py for examples) will generally
-look better since it can be designed for that exact aspect ratio."""
+"""Default page template for any display model without a dedicated template file, sized from the driver's dimensions."""
 
 from ._shared import load_font, fit_font, wrap_text, FONT_BOLD, FONT_REGULAR
 
 
 def draw_symbol_page(driver, title: str, symbol_image, comment: str):
-    """Icon + wrapped free-text layout: symbol_image is a pre-rendered
-    1-bit PIL Image (see display/rotation.py's _render_symbol_glyph),
-    pasted centered below the title, with the comment word-wrapped
-    underneath it, truncated rather than overflowing if it doesn't all
-    fit. The only page shaped like this today is the Symbol page;
-    everything else uses draw_status_page/draw_table_page instead."""
+    """Icon centered below the title, with the comment word-wrapped underneath."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)
@@ -49,17 +40,7 @@ def draw_symbol_page(driver, title: str, symbol_image, comment: str):
 
 
 def draw_station_page(driver, title: str, symbol_image, callsign: str, lat: str, lon: str, comment: str):
-    """Icon+callsign side by side, a compact Lat/Lon line, then wrapped
-    comment text underneath, everything else on this small a screen has
-    to be compact. Currently only the Last Heard page (a placeholder
-    until real packet history exists, see display/rotation.py), but
-    shaped generally enough ("which station, where, what did they say")
-    to reuse once that's real.
-
-    symbol_image is a pre-rendered 1-bit PIL Image, or None to skip the
-    icon entirely (the placeholder "nothing heard yet" case: there's no
-    real station to represent, so showing this station's own symbol as a
-    stand-in would misleadingly look like an actual heard station)."""
+    """Icon and callsign side by side, a compact Lat/Lon line, then wrapped comment text underneath. symbol_image may be None to skip the icon."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)
@@ -113,9 +94,7 @@ def draw_station_page(driver, title: str, symbol_image, callsign: str, lat: str,
 
 
 def draw_loading_page(driver, text: str = "Loading..."):
-    """Full-screen bordered centered text — used both for the boot-time
-    loading indicator and, with a different string, the normal-boot
-    "Digipeater" idle screen."""
+    """Full-screen bordered centered text."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)
@@ -131,15 +110,7 @@ def draw_loading_page(driver, text: str = "Loading..."):
 
 
 def draw_table_page(driver, title: str, headers: list[str], rows: list[tuple[str, list[str]]]):
-    """A small column table: a header row of right-aligned column labels
-    (e.g. ["Last", "Next"]) above data rows of (row_label, values). A row
-    with fewer values than headers (e.g. a single ["Disabled"]) is drawn
-    as one value spanning the row instead of trying to align it under a
-    column that doesn't apply.
-
-    The only page shaped like this today is Last Beacon (see
-    display/rotation.py); everything else uses draw_status_page's simpler
-    single label:value-per-row layout."""
+    """A small column table: header row of column labels above data rows of (row_label, values)."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)
@@ -165,10 +136,7 @@ def draw_table_page(driver, title: str, headers: list[str], rows: list[tuple[str
     col_w = (content_width - label_col_w) / col_count
     col_x = [margin + label_col_w + col_w * (i + 0.5) for i in range(col_count)]
 
-    # Title/divider always at the same fixed position (margin), not
-    # centered against how tall this particular page's content happens to
-    # be: otherwise the title jumps up and down page to page as rotation
-    # cycles through pages with different row counts.
+    # Title/divider always at the same fixed position, so it doesn't jump between pages with different row counts.
     draw.text(((w - tw) / 2, margin), title, font=title_font, fill=0)
     divider_y = margin + th + divider_gap / 2
     draw.line((margin, divider_y, w - margin, divider_y), fill=0, width=1)
@@ -209,8 +177,7 @@ def draw_status_page(driver, title: str, rows: list[tuple[str, str]]):
     tbbox = draw.textbbox((0, 0), title, font=title_font)
     tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
 
-    # Title/divider always at the same fixed position (margin), see
-    # draw_table_page's identical comment above.
+    # Title/divider always at the same fixed position, see draw_table_page above.
     draw.text(((w - tw) / 2, margin), title, font=title_font, fill=0)
     divider_y = margin + th + divider_gap / 2
     draw.line((margin, divider_y, w - margin, divider_y), fill=0, width=1)

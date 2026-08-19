@@ -1,16 +1,4 @@
-"""Applies the GPS section of config.yaml to the system: gpsd's configured
-device, system timezone, and chrony's GPS time refclock.
-
-Deliberately does NOT touch direwolf.conf or an APRS beacon's position
-source; that's services/direwolf_config.py's job, called separately from
-main.py's own boot sequence, right after this. This module only makes
-gpsd/chrony/the system clock actually use the GPS.
-
-The actual root-level work (editing /etc/default/gpsd, chrony config,
-timedatectl) happens in scripts/apply-gps-config.sh, run via a sudoers
-NOPASSWD rule scoped to exactly that script path (installed by install.sh);
-this service just runs as a normal user, same as network.py's nmcli calls.
-"""
+"""Applies the GPS section of config.yaml to gpsd, system timezone, and chrony's GPS time refclock."""
 
 import asyncio
 import logging
@@ -22,9 +10,7 @@ _HELPER = str(Path(__file__).resolve().parent.parent / "scripts" / "apply-gps-co
 
 
 async def apply(gps_config: dict) -> None:
-    """Re-applied on every normal boot (idempotent), same as network setup
-    (not just once at first-boot setup), so a manually edited config.yaml
-    still takes effect."""
+    """Applies GPS config; idempotent, re-applied on every boot."""
     if not gps_config:
         return
 

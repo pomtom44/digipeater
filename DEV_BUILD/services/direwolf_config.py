@@ -1,23 +1,4 @@
-"""Generates direwolf.conf from config.yaml.
-
-Every other "collected but not applied" item in the wizard sits downstream
-of this file actually existing. Directive syntax here
-was verified against Direwolf's actual config-file parser
-(github.com/wb2osz/direwolf, src/config.c), not just its sample config or
-ORIGINAL's own generator (ORIGINAL/core/config_gen.py): a few things
-ORIGINAL did turned out to be wrong or incomplete when checked against the
-real parser, called out inline below where it matters. Not verified
-against the real `direwolf` binary itself: this sandbox can't run Linux
-binaries (same limitation as services/tiles.py's pmtiles handling), so the
-generator's output has only been checked for well-formed, self-consistent
-directive syntax against the parser source, not by actually feeding it to
-Direwolf. Worth confirming on real hardware.
-
-Written to a plain file in the app's own working directory (not
-/etc/direwolf/, unlike ORIGINAL): the app already owns that directory, so
-no root/sudo is needed just to write a config file, only to actually
-start/stop the direwolf systemd service itself (see services/system.py).
-"""
+"""Generates direwolf.conf from config.yaml."""
 
 import re
 from pathlib import Path
@@ -36,14 +17,7 @@ def _ptt_lines(radio: dict, can_transmit: bool) -> list[str]:
         return []
     method = radio.get("ptt_method", "vox")
     if method == "vox":
-        # Not a real Direwolf directive (confirmed against config.c's PTT
-        # parser: GPIO/GPIOD/LPT/RIG/CM108 and a serial-port form are the
-        # only recognized cases, no VOX keyword exists at all). VOX means
-        # the radio's own hardware keys up off the audio tone by itself;
-        # Direwolf needs no PTT line whatsoever for that to work. ORIGINAL
-        # emitted a "PTT VOX" line that isn't valid syntax, worth noting
-        # since it's exactly the kind of thing this rewrite double-checked
-        # against the real parser rather than assuming prior art was right.
+        # VOX: the radio keys up on its own from audio, no PTT line needed (no VOX directive exists).
         return []
     if method == "gpio":
         pin = radio.get("ptt_gpio_pin", 22)
@@ -53,24 +27,14 @@ def _ptt_lines(radio: dict, can_transmit: bool) -> list[str]:
     if method.startswith("cm108:"):
         return [f"PTT CM108 {method[len('cm108:'):]}"]
     if method.startswith("serial:"):
-        # Direwolf needs to know which serial control line actually keys
-        # PTT: RTS or DTR, picked on the Radio tab (radio.ptt_serial_line),
-        # defaulting to RTS (the more common of the two for a simple PTT
-        # interface) for configs saved before that field existed.
+        # Serial PTT control line (RTS or DTR); defaults to RTS.
         line = radio.get("ptt_serial_line") or "RTS"
         return [f"PTT {method[len('serial:'):]} {line}"]
     return []
 
 
 def _callsign_filter_expr(pattern_str: str) -> str:
-    """User-typed comma/space-separated callsign patterns (e.g. "ZL1ABC,
-    ZL2*") -> a real Direwolf budlist filter expression (b/pat1/pat2/...).
-    Confirmed against pfilter.c's filt_bodgu(): "b" matches the AX.25
-    source address (callsign-SSID, e.g. "ZL1ABC-9") exactly unless a
-    single trailing * wildcard is used for a prefix match; * anywhere
-    else in a pattern is rejected by Direwolf outright, so a pattern
-    without an SSID (e.g. "ZL1ABC") only matches that exact no-SSID
-    address, not every SSID under it, only "ZL1ABC*" does that."""
+    """Converts comma/space-separated callsign patterns into a Direwolf budlist filter expression."""
     patterns = [p.strip().upper() for p in re.split(r"[,\s]+", pattern_str) if p.strip()]
     if not patterns:
         return ""
@@ -78,10 +42,7 @@ def _callsign_filter_expr(pattern_str: str) -> str:
 
 
 def _combine_filters(*parts: str) -> str:
-    """Direwolf's filter language supports AND/OR/NOT/() (confirmed
-    against pfilter.c), so an advanced free-text filter and the simple
-    callsign filter can both apply at once rather than one silently
-    overriding the other."""
+    """Combines multiple filter expressions with AND so none silently overrides the other."""
     parts = [p for p in parts if p]
     if not parts:
         return ""
@@ -114,10 +75,7 @@ def _igate_lines(aprs: dict) -> list[str]:
     passcode = igate.get("passcode") or ""
     lines = [
         f"IGSERVER {server}:{port}",
-        # Login callsign includes the SSID (matches Direwolf's own sample:
-        # "IGLOGIN WB2OSZ-5 123456"), not bare callsign like ORIGINAL used.
-        # The passcode itself is still only ever computed from the base
-        # callsign (see services/aprs.py), that part ORIGINAL had right.
+        # IGLOGIN uses callsign+SSID; the passcode is computed from the base callsign only.
         f"IGLOGIN {_mycall(aprs)} {passcode}",
     ]
     server_filter = (igate.get("filter") or "").strip()
@@ -139,15 +97,7 @@ def _igate_lines(aprs: dict) -> list[str]:
 
 
 def _symbol_tokens(aprs: dict) -> tuple[str, str]:
-    """Returns (OVERLAY= token or '', SYMBOL= token). Confirmed against
-    config.c's beacon_options(): SYMBOL takes either a 2-character
-    table+symbol code (e.g. "/#") or a name to look up via `direwolf -S`:
-    the 2-character form is what the wizard's symbol picker already
-    produces directly, no name-lookup table needed on this end. When an
-    overlay is set, Direwolf takes the table from OVERLAY instead of
-    SYMBOL's first character, but still wants a 2-character SYMBOL value
-    (table char is then ignored); passing the same table+symbol pair
-    either way is simplest and correct in both cases."""
+    """Returns (OVERLAY= token or '', SYMBOL= token) for the beacon's symbol."""
     symbol = aprs.get("symbol") or {}
     table = symbol.get("table") or "/"
     char = symbol.get("symbol") or "#"
@@ -157,15 +107,7 @@ def _symbol_tokens(aprs: dict) -> tuple[str, str]:
 
 
 def _beacon_position(gps: dict) -> str:
-    """LAT=/LONG= tokens for a fixed position, or '' when the beacon
-    should get its position from gpsd instead (see _needs_gpsd). Plain
-    signed decimal degrees: confirmed against config.c's parse_ll(),
-    which accepts that directly (Direwolf's own sample config uses
-    exactly this form: "lat=43.077104 long=-79.075674"), not the
-    DDMM.MM-with-hemisphere-letter format ORIGINAL converted to. No
-    conversion needed at all: config.yaml already stores plain decimal
-    degrees regardless of which format the wizard's GPS step used to
-    collect them (see first_run.html's coordinate-format dropdown)."""
+    """Returns LAT=/LONG= tokens for a fixed position, or '' if the beacon should use gpsd instead."""
     if gps.get("position_source") != "manual":
         return ""
     lat = gps.get("latitude")
@@ -211,19 +153,12 @@ def generate(config: dict) -> str:
     igate_mode = aprs.get("igate_mode", "off")
     is_digipeater = digipeat_mode == "digipeater"
     igate_on = igate_mode != "off"
-    # Whether this station transmits on RF at all: drives whether a PTT
-    # line is needed. IGate RX-only never keys the radio (SENDTO=IG
-    # bypasses RF entirely); IGate RX&TX does, to relay internet messages
-    # back onto RF via IGTXVIA.
+    # Whether this station transmits on RF at all (drives whether a PTT line is needed).
     can_transmit = is_digipeater or igate_mode == "rxtx"
 
     rf_beacon = aprs.get("rf_beacon") or {}
     igate_beacon = aprs.get("igate_beacon") or {}
-    # RF Beacon is only ever collected when digipeat_mode is "digipeater"
-    # (the wizard disables the checkbox otherwise, see first_run.html's
-    # updateModeVisibility), checking is_digipeater here too rather than
-    # trusting rf_beacon.enabled alone protects against a stale value left
-    # over from switching digipeat_mode back to rxonly after enabling it.
+    # Guard against a stale rf_beacon.enabled left over from switching digipeat_mode.
     rf_beacon_on = is_digipeater and bool(rf_beacon.get("enabled"))
     igate_beacon_on = igate_on and bool(igate_beacon.get("enabled"))
     needs_gpsd = gps.get("position_source") == "gps" and (rf_beacon_on or igate_beacon_on)
@@ -240,12 +175,7 @@ def generate(config: dict) -> str:
     lines.append("CHANNEL 0")
     lines.append(f"MYCALL {_mycall(aprs)}")
     lines.append("MODEM 1200")
-    # Loopback only (this app is the one and only client, see
-    # services/packet_log.py's KISS tail): lets it decode real heard
-    # packets straight from raw AX.25 frames instead of scraping
-    # Direwolf's own log text for them. Direwolf itself decodes/reports
-    # heard traffic over KISS the same regardless of digipeat/IGate mode,
-    # so this is unconditional, not gated on can_transmit like PTT is.
+    # KISS port for packet_log.py to decode heard packets; always on regardless of mode.
     lines.append("KISSPORT 8001")
     lines.append("")
 

@@ -1,5 +1,4 @@
-"""Shared helpers for page templates — font loading with a fit-to-width
-fallback so text can't overflow whatever screen it's drawn on."""
+"""Shared helpers for page templates: font loading with a fit-to-width fallback."""
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 FONT_BOLD = f"{FONT_DIR}/DejaVuSans-Bold.ttf"
@@ -27,10 +26,7 @@ def fit_font(draw, text: str, path: str, max_width: int, start_size: int, min_si
 
 
 def wrap_text(draw, text: str, font, max_width: int) -> list[str]:
-    """Greedy word-wrap: as many words as fit per line at max_width. Used
-    by free-text content (currently just the Symbol page's comment field)
-    that, unlike every label/value elsewhere, isn't expected to fit on
-    one line."""
+    """Greedy word-wrap: as many words as fit per line at max_width."""
     words = text.split()
     if not words:
         return []

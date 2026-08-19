@@ -1,18 +1,4 @@
-"""Applies the Startup tab's "restart automatically if it crashes" policy
-(config.yaml's startup.autorestart/restart_attempts/restart_delay_s) to
-direwolf.service.
-
-Deliberately not baked into the unit file at install time (see
-install.sh): that left Restart=on-failure/RestartSec=10 fixed forever
-regardless of what the wizard or config page's Startup tab actually said,
-with no StartLimitBurst at all, so a crash loop just retried forever
-instead of stopping after the configured number of attempts. This module
-writes a systemd drop-in override instead
-(scripts/apply-direwolf-restart-policy.sh, run via a sudoers NOPASSWD rule
-scoped to exactly that script path, installed by install.sh), the same
-pattern as gpsconfig.py/apply-gps-config.sh, so a later change on the
-Startup tab takes effect without re-running the installer.
-"""
+"""Applies the Startup tab's restart-on-crash policy to direwolf.service via a systemd drop-in override."""
 
 import asyncio
 import logging
@@ -27,9 +13,7 @@ DEFAULT_RESTART_DELAY_S = 30
 
 
 async def apply(startup_config: dict) -> None:
-    """Re-applied on every normal boot (idempotent, same as
-    gpsconfig.apply), and whenever the Startup tab is saved post-setup (see
-    web/server.py's /api/config/save)."""
+    """Applies the restart policy; idempotent, re-applied on every boot and whenever the Startup tab is saved."""
     startup_config = startup_config or {}
     autorestart = bool(startup_config.get("autorestart", True))
     attempts = int(startup_config.get("restart_attempts") or DEFAULT_RESTART_ATTEMPTS)

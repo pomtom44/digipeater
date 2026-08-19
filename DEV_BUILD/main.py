@@ -12,28 +12,20 @@ from services import direwolf_config, gpsconfig, network, packet_log, relay, res
 from web.server import create_app
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-# httpx logs one INFO line per request it makes; harmless normally, but the
-# live map proxy (web/server.py's /map-data/live.pmtiles) can fire off
-# dozens of range requests while panning around, flooding journalctl with
-# them. WARNING still surfaces anything that actually goes wrong.
+# Suppress httpx's per-request INFO logs (noisy during map tile proxying).
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path("config.yaml")
-# Written by install.sh's display-selection prompt (the display is needed during
-# first boot, before any web-based config wizard exists, so it can't wait for
-# the wizard: see DEV_BUILD/SETUP.md). Defaults to no display if absent.
+# Written by install.sh's display-selection prompt. Defaults to no display if absent.
 DISPLAY_CONFIG_PATH = Path("display_config.json")
-# Written by web/server.py's /api/network/wifi during first-boot setup.
-# Consumed once here (see _apply_pending_wifi), then deleted.
+# Written by web/server.py's /api/network/wifi, consumed once then deleted.
 WIFI_PENDING_PATH = Path("wifi_pending.json")
 
 HOTSPOT_SSID = "Digipeater"
 HOTSPOT_PASSWORD = "Digi1234"
 
-# How long to wait for an existing ethernet/WiFi connection to come up on its
-# own after boot (DHCP/association can take a few seconds) before concluding
-# neither is connected and starting the hotspot instead.
+# Max time to wait for an existing ethernet/WiFi connection before starting the hotspot.
 CONNECTION_WAIT_TIMEOUT_S = 10.0
 CONNECTION_POLL_INTERVAL_S = 1.0
 
@@ -64,12 +56,7 @@ def _load_display_driver(name: str, model: str):
 
 
 async def _render(driver, draw_fn, *args, fast: bool = False) -> None:
-    """Render via draw_fn(driver, *args) off the event loop thread: a hardware
-    hang here (e.g. a stuck BUSY pin) must not freeze the whole web server with it.
-
-    fast=True uses a partial/fast refresh (no full-screen flash) where the
-    driver supports one, for routine updates. Leave fast=False (full
-    refresh) for the first draw of a session, to clear any prior ghosting."""
+    """Render via draw_fn in a worker thread; fast=True uses a partial refresh instead of full."""
     try:
         from PIL import Image, ImageDraw, ImageFont  # noqa: F401 (import check before threading)
     except ImportError:
@@ -84,14 +71,7 @@ async def _render(driver, draw_fn, *args, fast: bool = False) -> None:
 
 
 async def _wait_for_existing_connection():
-    """Poll for an ethernet or WiFi-client IP for a short window: DHCP/
-    association can take a few seconds, so checking once immediately would
-    too easily miss a connection that's about to come up on its own. Must be
-    called before the hotspot is started, so a wlan0 IP here can only mean
-    an existing client connection, not our own AP.
-
-    Returns ("ethernet"|"wifi", ip) or (None, None) if nothing came up in time.
-    """
+    """Poll for an ethernet or WiFi-client IP for a short window before giving up."""
     elapsed = 0.0
     while True:
         eth_ip = await network.get_ethernet_ip()
@@ -107,13 +87,7 @@ async def _wait_for_existing_connection():
 
 
 async def _apply_pending_wifi() -> bool:
-    """Consume WiFi credentials saved by the first-boot wizard, if any.
-
-    One-time: the pending file is deleted after a successful connection so
-    it's never retried or left sitting on disk on future boots. Once
-    connected, NetworkManager's own autoconnect keeps this WiFi network
-    coming back on its own from here on: see network.connect_wifi.
-    """
+    """Consume WiFi credentials saved by the first-boot wizard, if any."""
     if not WIFI_PENDING_PATH.exists():
         return False
     try:
@@ -128,17 +102,7 @@ async def _apply_pending_wifi() -> bool:
 
 
 async def _resolve_network() -> tuple[str, str]:
-    """Core network policy: runs on every boot, first-time or normal alike,
-    not just during initial setup. Checked in priority order: ethernet, an
-    existing WiFi client connection, WiFi credentials saved (but not yet
-    applied) by the setup wizard, then, only if none of those pan out,
-    our own hotspot as a last resort. This is deliberate: the device should
-    never silently strand itself with no way to reach it, but it also
-    shouldn't start broadcasting a hotspot just because ethernet dropped
-    for a moment while a real connection was still coming up.
-
-    Returns ("ethernet"|"wifi"|"hotspot", ip_or_none).
-    """
+    """Try ethernet, then WiFi, then pending WiFi credentials, then fall back to a hotspot."""
     kind, ip = await _wait_for_existing_connection()
     if kind:
         return kind, ip
@@ -167,14 +131,7 @@ async def _show_network_status(driver, template, title: str, kind: str, ip: str,
 async def main() -> None:
     first_boot = not CONFIG_PATH.exists()
 
-    # Read early, before the display driver is constructed below: GPIO pin
-    # overrides (config.yaml's gpio section, see web/server.py's
-    # /api/config/save) have to be applied before module_init() claims
-    # them, which happens inside display_driver.init() a few lines down.
-    # {} on first boot, same as the normal-boot branch's own read further
-    # below, just done sooner here so the display driver sees it too;
-    # first_boot itself never has GPIO overrides to apply since
-    # config.yaml doesn't exist yet, so this is a no-op there.
+    # Read early so GPIO pin overrides apply before the display driver claims them.
     config = {}
     if not first_boot:
         try:
@@ -214,17 +171,7 @@ async def main() -> None:
         logger.info("No config.yaml found, running first-boot sequence")
         await _show_network_status(display_driver, template, "Initial config", kind, ip, fast=True)
     else:
-        # Normal boot has nothing left to confirm to the user beyond "it's
-        # up": network detail lives on the web UI now, not the screen.
-        # config was already read above, before the display driver was
-        # constructed (needed there for GPIO pin overrides).
-        #
-        # No static idle render here (see display/rotation.py): the
-        # rotation manager's own first tick takes over within moments, and
-        # since it runs concurrently with the sequence below (a background
-        # task, not awaited), it naturally shows the real
-        # starting -> waiting_gps -> running progression live instead of a
-        # frozen placeholder.
+        # Normal boot: no static screen render here, the rotation manager's own first tick takes over.
         packets = packet_log.PacketLog()
         packets.start()
         rotation = RotationManager(
@@ -235,9 +182,7 @@ async def main() -> None:
         await gpsconfig.apply(config.get("gps", {}))
         await restart_policy.apply(config.get("startup", {}))
 
-        # Regenerated fresh on every boot (idempotent, same pattern as
-        # gpsconfig.apply above) so a manually edited config.yaml still
-        # takes effect, not just what the wizard collected at first boot.
+        # Regenerated fresh on every boot so a manually edited config.yaml still takes effect.
         try:
             direwolf_config.write(config)
         except OSError as e:

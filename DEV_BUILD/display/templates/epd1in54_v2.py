@@ -1,15 +1,7 @@
-"""Layout for the generic 1.54" square e-paper (200×200).
-
-Plenty of vertical room relative to width, so each row stacks its label
-above its value on two lines, both centered — rather than squeezing
-label+value onto one line the way the wide 2.9" panel does.
-"""
+"""Layout for the generic 1.54" square e-paper (200x200): each row stacks label above value, both centered."""
 
 from ._shared import load_font, fit_font, FONT_BOLD, FONT_REGULAR
-# Column-table, icon+text, and station-card layouts (currently just the
-# Last Beacon, Symbol, and Last Heard pages) aren't worth a bespoke
-# version of on every model yet, only one page each needs them: reuse
-# default.py's generic versions here rather than duplicating them.
+# Reuse default.py's generic column-table, icon+text, and station-card layouts rather than duplicating them.
 from .default import draw_table_page, draw_symbol_page, draw_station_page  # noqa: F401
 
 MARGIN = 14
@@ -18,9 +10,7 @@ VALUE_ROW_H = 26
 
 
 def draw_loading_page(driver, text: str = "Loading..."):
-    """Full-screen bordered centered text — used both for the boot-time
-    loading indicator and, with a different string, the normal-boot
-    "Digipeater" idle screen."""
+    """Full-screen bordered centered text."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)
@@ -47,10 +37,7 @@ def draw_status_page(driver, title: str, rows: list[tuple[str, str]]):
     tbbox = draw.textbbox((0, 0), title, font=title_font)
     tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
 
-    # Title/divider always at the same fixed position (MARGIN), not
-    # centered against how tall this particular page's content happens to
-    # be: otherwise the title jumps up and down page to page as rotation
-    # cycles through pages with different row counts.
+    # Title/divider always at the same fixed position, so it doesn't jump between pages with different row counts.
     draw.text(((w - tw) / 2, MARGIN), title, font=title_font, fill=0)
     divider_y = MARGIN + th + 10
     draw.line((MARGIN, divider_y, w - MARGIN, divider_y), fill=0, width=1)

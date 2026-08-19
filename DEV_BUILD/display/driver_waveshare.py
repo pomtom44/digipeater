@@ -1,4 +1,4 @@
-"""Waveshare e-Paper display driver — wraps a model-specific EPD class into DisplayDriver."""
+"""Waveshare e-Paper display driver, wraps a model-specific EPD class into DisplayDriver."""
 
 import importlib
 import logging
@@ -10,11 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class WaveshareDriver(DisplayDriver):
-    """
-    Loads the correct Waveshare EPD class for the configured model and adapts it
-    to the DisplayDriver interface.  The display manager always works in landscape
-    coordinates (width × height); this driver handles any internal rotation.
-    """
+    """Loads the configured model's Waveshare EPD class and adapts it to the DisplayDriver interface."""
 
     def __init__(self, model: str):
         info = MODELS.get(model)
@@ -24,8 +20,7 @@ class WaveshareDriver(DisplayDriver):
 
         mod = importlib.import_module(f".waveshare.{info['module']}", package="display")
         self._epd = mod.EPD()
-        # Landscape dimensions + layout metrics exposed to the display manager,
-        # sourced from the model's own metadata (display/waveshare/__init__.py)
+        # Landscape dimensions and layout metrics from the model's own metadata
         self._w = info["w"]
         self._h = info["h"]
         self._line_height = info["line_height"]
@@ -43,8 +38,7 @@ class WaveshareDriver(DisplayDriver):
         self._epd.display(buf)
 
     def show_fast(self, image) -> None:
-        """Fast/partial refresh if the underlying EPD class supports one
-        (display_fast), otherwise falls back to a full refresh."""
+        """Fast/partial refresh if the underlying EPD class supports one, otherwise a full refresh."""
         buf = self._epd.getbuffer(image)
         if hasattr(self._epd, "display_fast"):
             self._epd.display_fast(buf)

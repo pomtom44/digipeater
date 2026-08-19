@@ -9,21 +9,12 @@ logger = logging.getLogger(__name__)
 _HOTSPOT_CON = "digipeater-hotspot"
 _WIFI_CLIENT_CON = "digipeater-wifi"
 
-# Pinned explicitly rather than relying on NetworkManager's default gateway
-# for ipv4.method=shared (which happens to also be 10.42.0.1, but that's an
-# undocumented implementation detail): this value is shown to the user on
-# the e-ink screen and must be guaranteed correct, not "probably correct".
+# Pinned explicitly since it's shown on the e-ink screen and must be guaranteed correct.
 HOTSPOT_IP = "10.42.0.1"
 
 
 async def _nmcli(*args) -> tuple[int, str, str]:
-    """Run an nmcli command and return (returncode, stdout, stderr).
-
-    Runs via sudo: creating/modifying NetworkManager connections (e.g. the
-    hotspot) needs root, and this service runs as a normal user. install.sh
-    installs a sudoers rule scoping NOPASSWD access to nmcli specifically,
-    not blanket root access.
-    """
+    """Runs an nmcli command via sudo and returns (returncode, stdout, stderr)."""
     proc = await asyncio.create_subprocess_exec(
         "sudo", "-n", "nmcli", *args,
         stdout=asyncio.subprocess.PIPE,
@@ -34,14 +25,7 @@ async def _nmcli(*args) -> tuple[int, str, str]:
 
 
 async def get_ip() -> dict:
-    """Return current IP addresses. Returns dict of {interface: ip}.
-
-    Uses `ip addr` rather than `nmcli device show`: nmcli's device-name
-    field there is the dotted `GENERAL.DEVICE`, not bare `DEVICE`, which a
-    prior version of this function filtered for incorrectly (silently
-    matching nothing, so no address ever got attributed to a device). `ip`
-    has a flat, unambiguous format and doesn't need sudo either.
-    """
+    """Returns current IP addresses as {interface: ip}, using `ip addr` (no sudo needed)."""
     proc = await asyncio.create_subprocess_exec(
         "ip", "-4", "-o", "addr", "show",
         stdout=asyncio.subprocess.PIPE,
@@ -72,20 +56,13 @@ async def get_ethernet_ip() -> Optional[str]:
 
 
 async def get_wifi_client_ip() -> Optional[str]:
-    """Return wlan0's IP if it already has one. Only meaningful when called
-    BEFORE our own hotspot is started; at that point an IP here can only
-    mean wlan0 is connected to some other network as a client, not our AP."""
+    """Returns wlan0's IP if connected as a client; only meaningful before our hotspot starts."""
     ips = await get_ip()
     return ips.get("wlan0")
 
 
 async def scan_wifi() -> list[dict]:
-    """Scan for nearby WiFi networks. Returns list of {ssid, signal, security}.
-
-    Works even while wlan0 is currently our own hotspot (AP mode): scanning
-    is a passive listen, unlike actually connecting, which needs to leave AP
-    mode and would drop the hotspot the caller is likely using right now.
-    """
+    """Scans for nearby WiFi networks, returning list of {ssid, signal, security}."""
     await _nmcli("device", "wifi", "rescan")
     await asyncio.sleep(2)
     code, out, _ = await _nmcli("-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list")
@@ -104,13 +81,7 @@ async def scan_wifi() -> list[dict]:
 
 
 async def connect_wifi(ssid: str, password: str) -> bool:
-    """Create (or replace) a WiFi client connection profile and bring it up.
-
-    Unlike setup_hotspot's autoconnect=no, this is deliberately autoconnect=
-    yes: once connected here, NetworkManager should keep reconnecting this
-    on every future boot on its own, the same way its default ethernet
-    profile already does, without this function needing to run again.
-    """
+    """Creates (or replaces) a WiFi client connection profile and brings it up; autoconnect=yes."""
     await _nmcli("connection", "delete", _WIFI_CLIENT_CON)
 
     args = [
@@ -140,7 +111,6 @@ async def connect_wifi(ssid: str, password: str) -> bool:
 
 async def setup_hotspot(ssid: str, password: str) -> bool:
     """Create or reconfigure the WiFi hotspot."""
-    # Remove existing connection if present
     await _nmcli("connection", "delete", _HOTSPOT_CON)
 
     code, out, err = await _nmcli(
@@ -148,13 +118,7 @@ async def setup_hotspot(ssid: str, password: str) -> bool:
         "type", "wifi",
         "ifname", "wlan0",
         "con-name", _HOTSPOT_CON,
-        # autoconnect=no is deliberate: NetworkManager must never bring this
-        # up on its own at boot. The app decides whether the hotspot is
-        # needed each boot (via _resolve_network's priority check); if this
-        # were "yes", NetworkManager would reactivate the hotspot itself
-        # before that check runs, leaving wlan0 already holding the
-        # hotspot's own gateway IP (10.42.0.1) and making it indistinguishable
-        # from a real WiFi client connection to get_wifi_client_ip().
+        # autoconnect=no: the app decides at boot whether the hotspot is needed, not NetworkManager.
         "autoconnect", "no",
         "ssid", ssid,
         "mode", "ap",

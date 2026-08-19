@@ -2,11 +2,7 @@
 
 
 def calculate_passcode(callsign: str) -> int:
-    """Calculate the APRS-IS login passcode from a callsign (official algorithm).
-
-    Ported from ORIGINAL/core/config_gen.py, same algorithm, same result,
-    kept here since DEV_BUILD doesn't share code with ORIGINAL.
-    """
+    """Calculate the APRS-IS login passcode from a callsign."""
     call = callsign.upper().split("-")[0]
     code = 0x73E2
     for i, char in enumerate(call):

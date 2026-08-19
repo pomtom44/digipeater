@@ -21,28 +21,14 @@ from services import aprs, auth, direwolf_config, gps, gpsconfig, hardware, netw
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
-# Session cookie for the web UI's security mode (none/readonly/full; see
-# services/auth.py). Sessions live
-# in memory only (see `sessions` below); a restart forces re-login, which
-# is an acceptable trade-off for a single-admin embedded device that
-# doesn't restart often, and avoids needing any persistent token storage.
-# Not marked Secure: this device is typically reached over plain HTTP on a
-# LAN or its own setup hotspot, no TLS anywhere in this project.
+# Session cookie for the web UI's security mode (none/readonly/full). In-memory only, not marked Secure (plain HTTP).
 SESSION_COOKIE_NAME = "digi_session"
 SESSION_TTL_S = 7 * 24 * 3600
-# Saved but not connected to yet; actually applying this is part of the
-# "normal boot" network flow, which is separate/later work. First boot only
-# ever stores the intent here.
+# WiFi credentials saved during first boot, applied later by main.py's normal-boot network flow.
 WIFI_PENDING_PATH = Path("wifi_pending.json")
-# Its mere existence is what main.py's first_boot check looks for: see
-# CONFIG_PATH there. Written only by the wizard's final "Finish & Reboot"
-# step, once all setup steps have been completed.
+# Its existence marks first-boot setup complete; written by the wizard's Finish step.
 CONFIG_PATH = Path("config.yaml")
-# Written by install.sh's display-selection prompt, read by main.py on
-# every boot (see main.py: _load_display_config). The E-Ink display wizard
-# step reads this to preset its dropdown, and can overwrite it; unlike
-# most of the wizard, this one takes effect for real, since Finish always
-# reboots right after.
+# Written by install.sh's display-selection prompt and by the wizard's display step; read by main.py on every boot.
 DISPLAY_CONFIG_PATH = Path("display_config.json")
 
 
@@ -72,28 +58,16 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title="APRS Digipeater")
 
-    # Static assets referenced by URL from within the served HTML (e.g. the
-    # APRS symbol sprite sheets), separate from the explicit FileResponse
-    # routes below, which serve the HTML pages themselves at clean paths.
+    # Static assets referenced by URL from the served HTML (e.g. APRS symbol sprite sheets).
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-    # Holds the in-progress region download, if any: one at a time. A
-    # plain closure-local dict rather than a module global, since this is
-    # runtime state scoped to this app instance, not app configuration.
+    # Tracks the in-progress region download, if any (one at a time).
     map_download_state = {"downloader": None}
 
-    # token -> expiry (unix time). Closure-local for the same reason as
-    # map_download_state above: one process's worth of runtime state.
+    # token -> expiry (unix time)
     sessions: dict[str, float] = {}
 
-    # Reused across every /map-data/live.pmtiles request so TCP/TLS
-    # connections to build.protomaps.com stay alive between range requests
-    # instead of paying a fresh handshake per request: a single viewport can
-    # trigger dozens of small range requests (directory lookups plus tile
-    # data), and that handshake cost, doubled by this proxy's browser-to-Pi
-    # then Pi-to-upstream hop, was the actual source of the slowdown, not
-    # the data volume (cached region/world files skip all of this, served
-    # straight off local disk).
+    # Reused across live tile requests to keep upstream connections alive between range requests.
     live_tile_client = httpx.AsyncClient(timeout=15.0)
 
     def _read_security() -> dict:
@@ -127,18 +101,14 @@ def create_app(
     async def root(request: Request):
         if first_boot:
             return FileResponse(STATIC_DIR / "first_run.html")
-        # "Full" security means viewing needs a password too, not just
-        # changes: everything else (none/readonly) leaves the dashboard
-        # itself open.
+        # "Full" security mode requires login to view the dashboard, not just to change settings.
         if _read_security().get("mode") == "full" and not _is_logged_in(request):
             return FileResponse(STATIC_DIR / "login.html")
         return FileResponse(STATIC_DIR / "normal.html")
 
     @app.get("/login")
     async def login_page():
-        # No security config exists yet during first boot (there's nothing
-        # to log into), and the wizard is the only page that should be
-        # reachable at all then: see root()'s own first_boot check above.
+        # No login during first boot; only the setup wizard should be reachable then.
         if first_boot:
             return RedirectResponse(url="/")
         return FileResponse(STATIC_DIR / "login.html")
@@ -147,8 +117,7 @@ def create_app(
     async def config_page(request: Request):
         if first_boot:
             return RedirectResponse(url="/")
-        # Config changes need a password under both readonly and full,
-        # unlike root() above, which only gates full.
+        # Config changes require login under both readonly and full modes.
         mode = _read_security().get("mode", "none")
         if mode != "none" and not _is_logged_in(request):
             return FileResponse(STATIC_DIR / "login.html")
@@ -158,20 +127,7 @@ def create_app(
     async def auth_status(request: Request):
         return {"mode": _read_security().get("mode", "none"), "logged_in": _is_logged_in(request)}
 
-    # A native <form> POST, not a fetch()-then-redirect: verified live
-    # (real Chromium, not just reasoning about it) that a cookie set by a
-    # fetch() response is reliably visible to a same-tab *fetch* made
-    # right after, but NOT to a subsequent top-level navigation
-    # (location.href, or even a fresh page load moments later): the
-    # cookie sat in the browser's own jar the whole time, just never got
-    # attached to the navigation request, bouncing straight back to the
-    # login page despite the password having been accepted. A real
-    # browser's native form submission goes through its own
-    # navigation-with-body machinery, where the redirect this returns and
-    # the Set-Cookie on it are part of the same round trip: this is the
-    # standard, battle-tested pattern for exactly this reason, not a
-    # workaround. 303 (not a plain redirect default) so the browser
-    # reissues the follow-up as GET rather than replaying the POST.
+    # Uses a native form POST (not fetch+redirect) so the Set-Cookie reliably lands before navigation; 303 makes the browser follow up with GET.
     @app.post("/api/auth/login")
     async def auth_login(password: str = Form("")):
         security = _read_security()
@@ -210,13 +166,7 @@ def create_app(
 
     @app.post("/api/network/wifi")
     async def network_save_wifi(request: Request):
-        # Unauthenticated at first boot (no login system is even active
-        # yet at that point), but this same endpoint is also reachable
-        # from the post-setup config page's Network tab now, where a
-        # readonly/full session should be required same as any other
-        # change: see _require_login_for_action below. A no-op check
-        # during first boot itself, since _read_security() reports mode
-        # "none" before config.yaml exists.
+        # Unauthenticated at first boot; requires login when reached later from the config page.
         _require_login_for_action(request)
         body = await request.json()
         ssid = (body.get("ssid") or "").strip()
@@ -225,16 +175,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="SSID is required")
         if password and len(password) < 8:
             raise HTTPException(status_code=400, detail="WiFi password must be at least 8 characters")
-        # Saved only: not connected now. Applying this is part of the normal
-        # boot network flow, so the hotspot this request likely arrived over
-        # isn't interrupted mid-setup.
-        #
-        # Written owner-only (0600) from the moment it's created: the
-        # password has to be stored in plaintext (nmcli needs it verbatim to
-        # actually connect later, unlike a login credential that could be
-        # hashed), so the file permission is the only protection it gets.
-        # os.open with an explicit mode avoids the brief window a
-        # write-then-chmod would leave the file world-readable in.
+        # Saved only, not connected now; written owner-only (0600) since the password is stored in plaintext.
         fd = os.open(WIFI_PENDING_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(json.dumps({"ssid": ssid, "password": password}))
@@ -261,9 +202,7 @@ def create_app(
 
     @app.get("/api/aprs/heard")
     async def aprs_heard():
-        # None (not empty-and-hidden) when there's no live tracking at all
-        # (first boot, or packets=None in some other code path), so the
-        # frontend can tell "nothing heard yet" apart from "not tracking".
+        # None distinguishes "not tracking" from "nothing heard yet".
         return {"stations": packets.heard_stations() if packets else None}
 
     @app.get("/api/aprs/beacon-stats")
@@ -286,21 +225,16 @@ def create_app(
 
     @app.get("/api/system/direwolf/status")
     async def direwolf_status():
-        # Read-only, not gated: same as everything else "viewing is open"
-        # covers, and under "full" mode the dashboard itself already
-        # required login before this could ever be called anyway.
+        # Read-only, ungated.
         return await system.get_direwolf_status()
 
     @app.get("/api/system/direwolf/logs")
     async def direwolf_logs():
-        # Read-only, same gating (none) as direwolf_status above: backs
-        # the dashboard's error-badge "view logs" modal.
+        # Read-only, backs the dashboard's error-badge "view logs" modal.
         return {"logs": await system.get_direwolf_logs()}
 
     def _require_login_for_action(request: Request) -> None:
-        # Starting/stopping Direwolf is a change, so both "readonly" and
-        # "full" gate it (unlike viewing, where only "full" does): same
-        # split /api/config/save below uses for the same reason.
+        # Changes require login under both "readonly" and "full" modes, unlike viewing.
         if _read_security().get("mode", "none") != "none" and not _is_logged_in(request):
             raise HTTPException(status_code=401, detail="Login required")
 
@@ -331,11 +265,7 @@ def create_app(
 
     @app.post("/api/system/reboot")
     async def system_reboot(request: Request):
-        # The one other place system.reboot() gets called is
-        # /api/setup/complete's own background task, first-boot only. This
-        # is the post-setup equivalent: the config page's "Reboot now"
-        # button, for GPIO/display/network changes that need one to apply
-        # (see /api/config/save's reboot_required list).
+        # Post-setup equivalent of /api/setup/complete's reboot: the config page's "Reboot now" button.
         _require_login_for_action(request)
         async def _delayed_reboot():
             await asyncio.sleep(1.5)
@@ -355,13 +285,7 @@ def create_app(
     async def map_region_status():
         return {"available": tiles.REGION_PATH.exists()}
 
-    # Range-request serving (needed by the PMTiles JS reader, which reads
-    # chunks of the archive on demand rather than the whole file at once;
-    # Starlette's FileResponse has supported Range since 0.39, see
-    # requirements.txt) for whichever local map data exists. 404 rather
-    # than a partial/placeholder response if a file isn't there yet: the
-    # frontend checks availability via world-status/cache-status first and
-    # shouldn't be requesting a path that can't exist.
+    # Serves cached map data with Range support for the PMTiles JS reader; 404 if not downloaded yet.
     @app.get("/map-data/world.pmtiles")
     async def serve_world_pmtiles():
         if not tiles.WORLD_PMTILES_PATH.exists():
@@ -376,14 +300,7 @@ def create_app(
 
     @app.get("/map-data/live.pmtiles")
     async def serve_live_pmtiles(request: Request):
-        """Same-origin proxy for Protomaps' hosted planet build, letting the
-        dashboard map stream live tiles for areas outside the local cache
-        (see services/tiles.py's module docstring for why this proxy has to
-        exist at all: build.protomaps.com itself has no CORS headers, so
-        the browser can't range-request it directly). Forwards the
-        browser's Range header upstream and passes the response straight
-        back through, unbuffered, rather than downloading a whole (~100+ GB)
-        planet archive to the Pi first."""
+        """Same-origin proxy for Protomaps' hosted planet build, streaming ranged tile requests through (no CORS upstream)."""
         try:
             source_url = await tiles.resolve_cached_source_url()
         except RuntimeError as e:
@@ -419,12 +336,7 @@ def create_app(
             headers=passthrough_headers,
         )
 
-    # No size/tile-count estimate endpoint: unlike the old per-tile raster
-    # approach, a PMTiles region extract's size depends on how much actual
-    # map data exists in the area (a dense city vs. open countryside at the
-    # same bbox/zoom can differ by an order of magnitude), not a clean
-    # geometric formula. Better to say so honestly than show a fake-precise
-    # number.
+    # No size/tile-count estimate endpoint: region extract size depends on actual map data density, not a formula.
 
     @app.post("/api/map/cache/start")
     async def map_cache_start(request: Request):
@@ -443,15 +355,7 @@ def create_app(
         if existing and existing.status()["active"]:
             raise HTTPException(status_code=409, detail="A download is already in progress")
         bounds = {"north": north, "south": south, "east": east, "west": west}
-        # Persisted immediately here, not deferred to a later "save"
-        # step: matches how this endpoint already behaves during the
-        # wizard (the download itself starts immediately too), and the
-        # config page's Map tab doesn't have a "Next"/Finish to defer to.
-        # Gated on config.yaml already existing so this can't accidentally
-        # create it during first-boot setup, before Finish: config.yaml's
-        # mere existence is what main.py's first_boot check looks for
-        # (see CONFIG_PATH there), so creating it early here would corrupt
-        # that check and skip the rest of the wizard on next restart.
+        # Persisted immediately; gated on config.yaml already existing so this can't create it mid-wizard.
         if CONFIG_PATH.exists():
             config = _read_config()
             config["map"] = {**config.get("map", {}), **bounds, "zoom_max": zoom_max}
@@ -483,21 +387,10 @@ def create_app(
         if not first_boot:
             raise HTTPException(status_code=400, detail="Setup has already been completed")
         body = await request.json()
-        # Radio/APRS config (and GPS's beacon-position piece) have no
-        # dedicated backend yet: nothing generates direwolf.conf from this
-        # in DEV_BUILD. It's saved here as-is so it's not lost, ready for
-        # whatever actually consumes it once that lands. GPS's device/time-
-        # sync/timezone settings are applied for real on the next boot (see
-        # services/gpsconfig.py); map tiles are already downloaded live
-        # during the wizard itself, not deferred.
         display_cfg = body.get("display", {})
         user_cfg = body.get("user", {})
         security_mode = user_cfg.get("mode", "none")
-        # Only ever a hash + salt on disk, never the password itself: see
-        # services/auth.py. Enforced by root()/get_config()/config_page()
-        # and Direwolf start/stop above once this is written; nothing
-        # retroactively re-checks pages/endpoints added before this
-        # config existed, since first_boot gates them out entirely anyway.
+        # Only ever a hash + salt on disk, never the password itself.
         security = {"mode": security_mode}
         password = user_cfg.get("password", "")
         if security_mode != "none" and password:
@@ -509,14 +402,10 @@ def create_app(
             "gps": body.get("gps", {}),
             "map": body.get("map", {}),
             "startup": body.get("startup", {}),
-            # Only the page-rotation list: driver/model live in
-            # display_config.json instead (see below), not duplicated here.
+            # Only the page-rotation list; driver/model live in display_config.json instead.
             "display": {"pages": display_cfg.get("pages", [])},
             "security": security,
         }
-        # Unlike everything else in config.yaml, this one takes effect for
-        # real: main.py reads display_config.json fresh on every boot, and
-        # Finish always reboots right after this request completes.
         DISPLAY_CONFIG_PATH.write_text(json.dumps({
             "driver": display_cfg.get("driver", "none"),
             "model": display_cfg.get("model", ""),
@@ -526,11 +415,7 @@ def create_app(
             "# Its existence is what marks first-boot setup as complete.\n"
             + yaml.safe_dump(config, sort_keys=False)
         )
-        # Reboot is fired off in the background rather than awaited here:
-        # awaiting it would mean the process (and the connection carrying
-        # this response) gets killed by the reboot itself before the client
-        # ever sees a reply. The short delay gives the response time to
-        # actually reach the browser first.
+        # Reboot fires in the background with a short delay so the response reaches the client first.
         async def _delayed_reboot():
             await asyncio.sleep(1.5)
             await system.reboot()
@@ -541,9 +426,7 @@ def create_app(
     async def status():
         return {"ok": True, "first_boot": first_boot}
 
-    # Deliberately unauthenticated even under "full" security mode: a
-    # callsign is public information by regulation, not a secret, so the
-    # login page can show it in its title without needing a session first.
+    # Unauthenticated even under "full" mode: a callsign is public information, not a secret.
     @app.get("/api/station-id")
     async def station_id():
         if not CONFIG_PATH.exists():
@@ -557,15 +440,9 @@ def create_app(
 
     @app.get("/api/config")
     async def get_config(request: Request):
-        # Only meaningful once setup's actually run: the dashboard that
-        # calls this only renders post-setup anyway (see root() above), but
-        # guard it directly rather than relying on that.
         if not CONFIG_PATH.exists():
             raise HTTPException(status_code=404, detail="Setup has not been completed yet")
-        # Mirrors root()'s gating: "full" mode means viewing needs a
-        # password too, not just changes. Defense in depth: root() already
-        # keeps normal.html's JS from ever calling this unauthenticated,
-        # but this endpoint shouldn't rely on that alone.
+        # Mirrors root()'s gating: "full" mode requires login to view, not just to change.
         if _read_security().get("mode") == "full" and not _is_logged_in(request):
             raise HTTPException(status_code=401, detail="Login required")
         try:
@@ -573,25 +450,13 @@ def create_app(
         except Exception as e:
             logger.error("Failed to read %s: %s", CONFIG_PATH, e)
             raise HTTPException(status_code=500, detail="Failed to read config")
-        # Never hand the password hash/salt back to the frontend: nothing
-        # legitimate needs them client-side (login posts a plaintext
-        # password for the server to check, see auth.verify_password),
-        # only a reason to leak crackable material for no benefit.
+        # Never hand the password hash/salt back to the frontend.
         security = config.get("security", {})
         config["security"] = {"mode": security.get("mode", "none")}
         return config
 
     def _normalize_gpio(gpio_cfg: dict | None) -> dict:
-        """Fills in the same fixed defaults services/relay.py and
-        display/waveshare/epdconfig.py themselves fall back to when a key
-        is absent, so "the section was never written" and "the section
-        was written with exactly the default values" compare as equal.
-        Without this, the very first save through this page (any
-        config.yaml the wizard produced has no gpio section at all, since
-        first_run.html has no GPIO tab) would always report a reboot as
-        needed even though the effective pin values, and therefore actual
-        post-reboot behavior, haven't changed at all.
-        """
+        """Fills in default GPIO pin values so a missing section compares equal to explicit defaults."""
         gpio_cfg = gpio_cfg or {}
         return {
             "relay_pin": gpio_cfg.get("relay_pin", relay.DEFAULT_RELAY_PIN),
@@ -603,20 +468,7 @@ def create_app(
 
     @app.post("/api/config/save")
     async def config_save(request: Request):
-        """The config page's global "Save all changes" button: unlike
-        /api/setup/complete (first-boot only, whole-config, always reboots),
-        this applies live wherever the codebase actually allows it and
-        reports back what did vs. what still needs a reboot, rather than
-        rebooting unconditionally.
-
-        Body: any subset of {radio, aprs, gps, startup, gpio, display,
-        user}. map and network are intentionally not accepted here: map
-        saves itself as part of its own live download action
-        (/api/map/cache/start), and network changes go through
-        /api/network/wifi's own reboot-required flow, both to avoid this
-        endpoint silently doing something as disruptive as reconnecting
-        the network out from under the session making the request.
-        """
+        """The config page's "Save all changes" button: applies changes live where possible and reports what still needs a reboot."""
         _require_login_for_action(request)
         if not CONFIG_PATH.exists():
             raise HTTPException(status_code=400, detail="Setup has not been completed yet")
@@ -641,27 +493,13 @@ def create_app(
             config["display"] = {
                 "pages": display_cfg.get("pages", (config.get("display") or {}).get("pages", []))
             }
-            # Unlike everything else here, driver/model take effect for
-            # real only after a reboot (see main.py: display_driver.init()
-            # runs once, early in main(), same as /api/setup/complete's
-            # own note about this file). Only actually written, and only
-            # counted as a reboot-required change below, if it's
-            # genuinely different from what's already on disk: the
-            # frontend always includes the full hydrated display section
-            # in every save (not just what was actually edited), so
-            # presence in the payload alone isn't a real signal of change.
+            # Driver/model take effect only after a reboot; only written if genuinely changed from disk.
             if "driver" in display_cfg or "model" in display_cfg:
                 new_display_config = {
                     "driver": display_cfg.get("driver", "none"),
                     "model": display_cfg.get("model", ""),
                 }
-                # Same "missing == explicit default" normalization as
-                # _normalize_gpio below: a brand new install with no
-                # display_config.json yet (main.py's own _load_display_
-                # config() falls back to exactly "none"/"") shouldn't
-                # report a reboot as needed just because this file didn't
-                # exist before, if what's being written matches that same
-                # fallback anyway.
+                # Missing file normalizes to the same default main.py falls back to.
                 before_normalized = before_display_config or {"driver": "none", "model": ""}
                 if new_display_config != before_normalized:
                     DISPLAY_CONFIG_PATH.write_text(json.dumps(new_display_config))
@@ -677,13 +515,7 @@ def create_app(
                 if password:
                     security.update(auth.hash_password(password))
                 else:
-                    # No new password given: keep the existing hash/salt
-                    # rather than requiring a fresh one on every save, the
-                    # way the wizard's own always-mandatory password field
-                    # does (fine for a one-time setup step, hostile in an
-                    # edit context). GET /api/config never hands the hash
-                    # back to the frontend, so "leave it blank" is the only
-                    # sane contract for "keep the current password".
+                    # Blank password means keep the existing hash/salt rather than requiring a fresh one each save.
                     security["hash"] = existing_security.get("hash", "")
                     security["salt"] = existing_security.get("salt", "")
             config["security"] = security
@@ -713,11 +545,7 @@ def create_app(
                 logger.error("Failed to write direwolf.conf: %s", e)
             status = await system.get_direwolf_status()
             if status.get("running"):
-                # Direwolf only reads its config at its own startup, so a
-                # running instance needs a stop/start cycle to actually
-                # pick up the new radio/APRS settings: a brief on-air
-                # interruption, which is why this only happens when
-                # something that actually feeds direwolf.conf changed.
+                # Direwolf only reads config at startup, so a running instance needs a stop/start to pick up changes.
                 await system.set_direwolf_running(False, config)
                 restart_result = await system.set_direwolf_running(True, config)
                 if not restart_result["ok"]:
@@ -725,31 +553,19 @@ def create_app(
                         "Failed to restart direwolf after config save: %s",
                         restart_result["reason"],
                     )
-            # Reported separately, not as one combined "radio/aprs" entry:
-            # only one of the two may have actually changed, and the
-            # frontend shows this list verbatim in its summary banner.
+            # Reported separately since only one of the two may have actually changed.
             if radio_changed:
                 applied.append("radio")
             if aprs_changed:
                 applied.append("aprs")
 
         if rotation is not None and config.get("display", {}).get("pages") != before_pages:
-            # Unlike driver/model (see display_driver_changed below), the
-            # page-rotation list has a live re-apply path: it's just data
-            # RotationManager reads, not a GPIO pin claimed once at process
-            # start, so no reboot is needed for an edited page list to
-            # actually take effect.
+            # Page-rotation list re-applies live, unlike driver/model changes.
             rotation.reload_pages(load_pages(config["display"]))
             applied.append("display_pages")
 
         if _normalize_gpio(config.get("gpio")) != _normalize_gpio(before["gpio"]):
-            # Relay/e-ink pins are claimed once at process start (see
-            # services/relay.py's init() and display/waveshare/
-            # epdconfig.py's configure(), both called from main.py before
-            # config.yaml is even fully read the normal-boot way): no live
-            # re-claim path exists, so this always needs a reboot, unlike
-            # the PTT pin (which lives under radio, not gpio, and is
-            # already covered by the radio/aprs branch above).
+            # Relay/e-ink pins are claimed once at process start, so changing them always needs a reboot.
             reboot_required.append("gpio")
         if display_driver_changed:
             reboot_required.append("display")
@@ -780,9 +596,7 @@ def create_app(
             return {"driver": "none", "model": ""}
         return {"driver": data.get("driver", "none"), "model": data.get("model", "")}
 
-    # Display calls run in a worker thread, not on the event loop: a hardware
-    # hang (e.g. a stuck BUSY pin) would otherwise freeze every other request
-    # the server is handling, not just the display endpoint.
+    # Display calls run in a worker thread so a hardware hang doesn't freeze the whole server.
 
     @app.post("/api/display/clear")
     async def display_clear():

@@ -20,7 +20,7 @@ I.E. Display resolutions and screen layouts
 
 | Make / Model | Status |
 |---|---|
-| Generic 1.54" SPI e-Paper (200×200, "LA-SPI" AliExpress module) | ⚠️ Not confirmed yet, hardware still in testing |
+| Waveshare 1.54inch e-Paper Module (Rev2.1, 200x200, SSD1681) | ⚠️ Driver rewritten against Waveshare's own source, not yet run on real hardware |
 | Waveshare Pico-ePaper-2.9-B (296×128, B/W/R) | ✅ Confirmed |
 
 ---
