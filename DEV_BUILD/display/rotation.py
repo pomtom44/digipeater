@@ -98,6 +98,8 @@ _DIREWOLF_STATE_LABELS = {
     "error": "Error",
 }
 _EMPTY_ROTATION_POLL_S = 5
+# Partial refresh leaves faint ghosting over time, so every Nth tick forces a full refresh instead.
+_FULL_REFRESH_EVERY = 10
 
 
 def _format_duration(seconds: float) -> str:
@@ -121,6 +123,7 @@ class RotationManager:
         self._network_status = network_status
         self._packets = packets
         self._index = 0
+        self._render_count = 0
         self._task: asyncio.Task | None = None
         # Monotonic clock, unaffected by GPS time sync jumps at runtime.
         self._started_at = asyncio.get_event_loop().time()
@@ -180,9 +183,11 @@ class RotationManager:
             from PIL import Image, ImageDraw, ImageFont  # noqa: F401 (import check before threading)
         except ImportError:
             return
+        self._render_count += 1
+        use_fast = fast and self._render_count % _FULL_REFRESH_EVERY != 0
         try:
             image = await asyncio.to_thread(draw_fn, self._driver, *args)
-            show = self._driver.show_fast if fast else self._driver.show
+            show = self._driver.show_fast if use_fast else self._driver.show
             await asyncio.to_thread(show, image)
         except Exception as e:
             logger.error("Display render failed: %s", e)

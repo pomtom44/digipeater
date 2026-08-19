@@ -169,7 +169,7 @@ async def main() -> None:
     packets = None
     if first_boot:
         logger.info("No config.yaml found, running first-boot sequence")
-        await _show_network_status(display_driver, template, "Initial config", kind, ip, fast=True)
+        await _show_network_status(display_driver, template, "Initial config", kind, ip, fast=False)
     else:
         # Normal boot: no static screen render here, the rotation manager's own first tick takes over.
         packets = packet_log.PacketLog()
