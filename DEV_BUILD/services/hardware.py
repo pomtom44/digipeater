@@ -24,7 +24,8 @@ async def list_audio_devices() -> list[dict]:
         index, name, desc = m.groups()
         has_input = any(Path(f"/proc/asound/card{index}").glob("pcm*c"))
         devices.append({
-            "id": f"hw:{index}", "name": name.strip(), "description": desc.strip(),
+            # plughw, not hw: hw needs an exact native format match, which most USB audio adapters don't support.
+            "id": f"plughw:{index},0", "name": name.strip(), "description": desc.strip(),
             "has_input": has_input,
         })
     return devices

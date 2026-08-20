@@ -99,11 +99,13 @@
       color: #fff;
     }
 
-    /* Fixed, not a flex sibling: matches the dashboard's sidebar width and
-       background, but deliberately doesn't push the centered tab/form
-       content over (see .tabbar/.save-banner/main.container below, all still
-       centered on the full viewport via margin:0 auto, same as before this
-       sidebar existed). */
+    /* Fixed, not a flex sibling: matches the dashboard's sidebar width, but
+       deliberately doesn't push the centered tab/form content over (see
+       .tabbar/.save-banner/main.container below, all still centered on the
+       full viewport via margin:0 auto, same as before this sidebar
+       existed). No background/border since at narrow widths the centered
+       content can end up underneath it; pointer-events:none lets clicks
+       fall through to that content everywhere except the actual buttons. */
     #sidebar {
       position: fixed;
       top: 0;
@@ -113,10 +115,9 @@
       z-index: 50;
       display: flex;
       flex-direction: column;
-      background: var(--panel);
-      border-right: 1px solid var(--border);
       padding: 16px;
       overflow-y: auto;
+      pointer-events: none;
     }
     #sidebar h1 {
       font-size: 20px;
@@ -131,6 +132,7 @@
       gap: 8px;
       margin-top: auto;
       padding-top: 16px;
+      pointer-events: auto;
     }
     .sidebar-actions .msg { flex-basis: 100%; margin-top: 0; }
     @media (max-width: 480px) {

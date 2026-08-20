@@ -382,7 +382,6 @@
         </div>
         <div class="station-comment" id="station-comment"></div>
         <div class="badge-row" id="station-badges"></div>
-        <p class="msg" id="direwolf-msg"></p>
       </div>
 
       <div class="card">
@@ -683,19 +682,11 @@
         const ok = await confirmModal(`${wantRunning ? 'Start' : 'Stop'} Direwolf?`);
         if (!ok) return;
       }
-      const msg = document.getElementById('direwolf-msg');
-      msg.textContent = '';
-      msg.className = 'msg';
+      // Failure surfaces via the badge's error state and log modal, not text here.
       try {
-        const res = await fetch(`/api/system/direwolf/${wantRunning ? 'start' : 'stop'}`, { method: 'POST' });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          msg.textContent = body.detail || 'Failed to change Direwolf state.';
-          msg.className = 'msg error';
-        }
+        await fetch(`/api/system/direwolf/${wantRunning ? 'start' : 'stop'}`, { method: 'POST' });
       } catch (e) {
-        msg.textContent = 'Could not reach the server.';
-        msg.className = 'msg error';
+        // Server unreachable; the badge poll will reflect whatever state comes back.
       }
       renderSystemStatusBody();
     }

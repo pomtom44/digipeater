@@ -3,7 +3,7 @@
 from ._shared import load_font, fit_font, wrap_text, FONT_BOLD, FONT_REGULAR
 
 
-def draw_symbol_page(driver, title: str, symbol_image, comment: str):
+def draw_symbol_page(driver, title: str, symbol_image, comment: str, *, title_size: int = 16, comment_size: int = 12):
     """Icon centered below the title, with the comment word-wrapped underneath."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
@@ -13,7 +13,7 @@ def draw_symbol_page(driver, title: str, symbol_image, comment: str):
     divider_gap = 8
 
     content_width = w - 2 * margin
-    title_font = fit_font(draw, title, FONT_BOLD, content_width, 16)
+    title_font = fit_font(draw, title, FONT_BOLD, content_width, title_size)
     tbbox = draw.textbbox((0, 0), title, font=title_font)
     tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
     draw.text(((w - tw) / 2, margin), title, font=title_font, fill=0)
@@ -24,9 +24,9 @@ def draw_symbol_page(driver, title: str, symbol_image, comment: str):
     icon_x = (w - symbol_image.width) / 2
     image.paste(symbol_image, (int(icon_x), int(icon_top)))
 
-    comment_font = load_font(FONT_REGULAR, 12)
+    comment_font = load_font(FONT_REGULAR, comment_size)
     lines = wrap_text(draw, comment or "(no comment set)", comment_font, content_width)
-    line_height = 15
+    line_height = comment_size + 3
     y = icon_top + symbol_image.height + 6
     for line in lines:
         if y + line_height > h - margin:
@@ -39,7 +39,10 @@ def draw_symbol_page(driver, title: str, symbol_image, comment: str):
     return image
 
 
-def draw_station_page(driver, title: str, symbol_image, callsign: str, lat: str, lon: str, comment: str):
+def draw_station_page(
+    driver, title: str, symbol_image, callsign: str, lat: str, lon: str, comment: str,
+    *, title_size: int = 16, call_size: int = 18, text_size: int = 12,
+):
     """Icon and callsign side by side, a compact Lat/Lon line, then wrapped comment text underneath. symbol_image may be None to skip the icon."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
@@ -49,7 +52,7 @@ def draw_station_page(driver, title: str, symbol_image, callsign: str, lat: str,
     divider_gap = 6
 
     content_width = w - 2 * margin
-    title_font = fit_font(draw, title, FONT_BOLD, content_width, 16)
+    title_font = fit_font(draw, title, FONT_BOLD, content_width, title_size)
     tbbox = draw.textbbox((0, 0), title, font=title_font)
     tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
     draw.text(((w - tw) / 2, margin), title, font=title_font, fill=0)
@@ -63,7 +66,7 @@ def draw_station_page(driver, title: str, symbol_image, callsign: str, lat: str,
         icon_w, icon_h = symbol_image.width, symbol_image.height
 
     call_max_w = content_width - icon_w - (8 if icon_w else 0)
-    call_font = fit_font(draw, callsign, FONT_BOLD, call_max_w, 18)
+    call_font = fit_font(draw, callsign, FONT_BOLD, call_max_w, call_size)
     cbbox = draw.textbbox((0, 0), callsign, font=call_font)
     ch = cbbox[3] - cbbox[1]
     call_x = margin + icon_w + (8 if icon_w else 0)
@@ -71,17 +74,16 @@ def draw_station_page(driver, title: str, symbol_image, callsign: str, lat: str,
     draw.text((call_x, call_y), callsign, font=call_font, fill=0)
 
     y = row_top + max(icon_h, ch) + 6
-    loc_font = load_font(FONT_REGULAR, 12)
     loc_text = f"Lat {lat}  Lon {lon}"
-    loc_font = fit_font(draw, loc_text, FONT_REGULAR, content_width, 12, min_size=8)
+    loc_font = fit_font(draw, loc_text, FONT_REGULAR, content_width, text_size, min_size=8)
     lbbox = draw.textbbox((0, 0), loc_text, font=loc_font)
     lw = lbbox[2] - lbbox[0]
     draw.text(((w - lw) / 2, y), loc_text, font=loc_font, fill=0)
-    y += 18
+    y += text_size + 6
 
-    comment_font = load_font(FONT_REGULAR, 12)
+    comment_font = load_font(FONT_REGULAR, text_size)
     lines = wrap_text(draw, comment or "-", comment_font, content_width)
-    line_height = 15
+    line_height = text_size + 3
     for line in lines:
         if y + line_height > h - margin:
             break
@@ -109,24 +111,26 @@ def draw_loading_page(driver, text: str = "Loading..."):
     return image
 
 
-def draw_table_page(driver, title: str, headers: list[str], rows: list[tuple[str, list[str]]]):
+def draw_table_page(
+    driver, title: str, headers: list[str], rows: list[tuple[str, list[str]]],
+    *, title_size: int = 16, header_size: int = 11, value_size: int = 12, row_height: int = 20,
+):
     """A small column table: header row of column labels above data rows of (row_label, values)."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)
     draw = ImageDraw.Draw(image)
     margin = 8
-    row_height = 20
     divider_gap = 10
 
     content_width = w - 2 * margin
-    title_font = fit_font(draw, title, FONT_BOLD, content_width, 16)
+    title_font = fit_font(draw, title, FONT_BOLD, content_width, title_size)
     tbbox = draw.textbbox((0, 0), title, font=title_font)
     tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
 
-    label_font = load_font(FONT_BOLD, 12)
-    header_font = load_font(FONT_REGULAR, 11)
-    value_font = load_font(FONT_REGULAR, 12)
+    label_font = load_font(FONT_BOLD, value_size)
+    header_font = load_font(FONT_REGULAR, header_size)
+    value_font = load_font(FONT_REGULAR, value_size)
 
     label_col_w = 40
     for row_label, _ in rows:
