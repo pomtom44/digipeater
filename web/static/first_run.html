@@ -4,21 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APRS Digipeater</title>
-  <!-- Applied before the stylesheet below is parsed, so the page never
-       paints in the wrong theme and then flips: see the matching
-       :root[data-theme] rules in <style> and the theme-toggle wiring
-       further down for how 'ui-theme' gets set. -->
+  <!-- Applied before the stylesheet parses, so the page doesn't flash the wrong theme -->
   <script>
     (function() {
       var t = localStorage.getItem('ui-theme');
       if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
     })();
   </script>
-  <!-- Vendored locally (no CDN), see web/static/maplibre/. Only actually
-       loaded/used by the Map caching step's region picker, which renders
-       from the locally-cached PMTiles map data (see services/tiles.py),
-       not a live tile server, so this needs a vector renderer rather than
-       Leaflet's raster tile layer (what this used before). -->
+  <!-- Vendored locally (no CDN), see web/static/maplibre/; used by the Map caching step's region picker -->
   <link rel="stylesheet" href="/static/maplibre/maplibre-gl.css">
   <style>
     :root {
@@ -572,12 +565,7 @@
 
   </div>
 
-  <!-- Shared help modal: one instance for the whole wizard, not one per
-       field. Every "?" icon (see helpIcon() in the script below) opens
-       this same overlay with different content, via event delegation
-       rather than a listener wired up per icon (icons get thrown away and
-       recreated every time a step re-renders; a single delegated listener
-       on document doesn't need rewiring each time). -->
+  <!-- Shared help modal: one instance for the whole wizard, opened via helpIcon()'s delegated listener -->
   <div class="help-overlay hidden" id="help-overlay">
     <div class="help-box" role="dialog" aria-modal="true" aria-labelledby="help-box-text">
       <button type="button" class="help-close" id="help-close" aria-label="Close">&times;</button>
@@ -585,9 +573,7 @@
     </div>
   </div>
 
-  <!-- Reuses the help modal's exact look (same two classes) for a
-       Yes/No confirm dialog instead of a dismiss-only info box; see
-       confirmModal() below. -->
+  <!-- Reuses the help modal's look for a Yes/No confirm dialog, see confirmModal() below -->
   <div class="help-overlay hidden" id="confirm-overlay">
     <div class="help-box" role="dialog" aria-modal="true" aria-labelledby="confirm-box-text">
       <p id="confirm-box-text"></p>
@@ -627,16 +613,9 @@
     });
 
     // ── Shared help modal ────────────────────────────────────────────
-    // helpIcon(text) returns a "?" button carrying its explanation in a
-    // data attribute: used inline wherever a field used to have a
-    // <p class="hint"> underneath it. One delegated click listener (below)
-    // handles every icon on every step, current or future, without needing
-    // rewiring after each step's innerHTML gets replaced.
+    // Returns a "?" button carrying its help text in a data attribute
     function helpIcon(text) {
-      // Escaped even though this is always static wizard copy, never user
-      // input. A broken attribute from an unescaped quote would be a
-      // silent authoring bug, not a security issue, but escaping costs
-      // nothing and rules that out.
+      // Escape quotes/ampersands so the attribute doesn't break
       const escaped = text.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
       return `<button type="button" class="help-icon" data-help="${escaped}" aria-label="Help">?</button>`;
     }
@@ -645,11 +624,7 @@
     const helpBoxText = document.getElementById('help-box-text');
 
     function showHelp(text) {
-      // innerHTML, not textContent: a couple of help texts (e.g. the
-      // security mode levels) read better as a short list than a run-on
-      // sentence crammed into a modal. Safe here specifically because
-      // every helpIcon() call site is static wizard copy written by hand,
-      // never anything derived from user input at runtime.
+      // innerHTML, not textContent: help text is static wizard copy, some of it lists
       helpBoxText.innerHTML = text;
       helpOverlay.classList.remove('hidden');
     }
@@ -658,8 +633,6 @@
     }
 
     // ── Shared confirm modal (Yes/No, not just dismiss) ─────────────────
-    // Used by the APRS step to double-check before leaving IGate region on
-    // Automatic. See saveAprsStep.
     const confirmOverlay = document.getElementById('confirm-overlay');
     const confirmBoxText = document.getElementById('confirm-box-text');
     const confirmBoxYes = document.getElementById('confirm-box-yes');
@@ -684,8 +657,7 @@
       });
     }
 
-    // Global scope, not step-local: used by both the Map caching step's
-    // own progress display and the Finish step's active-download warning.
+    // Shared by Map caching's progress display and Finish's download warning
     function formatBytes(bytes) {
       if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
       if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
@@ -693,8 +665,7 @@
       return `${bytes} B`;
     }
 
-    // m:ss / h:mm formatting for elapsed time, also global for the same
-    // reason as formatBytes above.
+    // m:ss / h:mm formatting for elapsed time
     function formatDuration(totalSeconds) {
       const s = Math.max(0, Math.round(totalSeconds));
       if (s < 60) return `${s}s`;
@@ -718,9 +689,7 @@
       if (e.key === 'Escape' && !helpOverlay.classList.contains('hidden')) hideHelp();
     });
 
-    // Accumulates values across steps as the wizard progresses: each
-    // step's content gets replaced in the DOM when you move on, so this is
-    // the only place data survives between steps until Finish sends it all.
+    // Accumulates values across steps, the only place data survives between them
     const wizardData = {};
 
     const steps = [
@@ -774,25 +743,17 @@
     let currentStep = 0;
 
     function showStep() {
-      // Stop polling a download's progress if we're navigating away from
-      // the Map caching step; the download itself keeps running server-
-      // side regardless, this just stops this page from asking about it.
+      // Stop polling the Map caching step's download progress when navigating away
       if (mapStatusPollTimer) {
         clearInterval(mapStatusPollTimer);
         mapStatusPollTimer = null;
       }
-      // Explicit teardown, unlike Leaflet before it: MapLibre holds a
-      // WebGL context per map instance, and browsers only allow a small
-      // number of those at once (typically ~8-16). Just letting the old
-      // container get thrown away via innerHTML (as every other step
-      // does) would leak a context every time this step re-renders.
+      // Dispose the MapLibre WebGL context so re-rendering the step doesn't leak one
       if (currentRegionMap) {
         currentRegionMap.remove();
         currentRegionMap = null;
       }
-      // Reset before render() runs, not after: a step that needs live
-      // validation (e.g. User management's password fields) disables this
-      // itself from inside its own render, and that must be the last word.
+      // Reset before render() so a step's own render can re-disable it for validation
       document.getElementById('btn-next').disabled = false;
       const step = steps[currentStep];
       document.getElementById('step-title').textContent = step.title;
@@ -862,8 +823,7 @@
           const item = document.createElement('button');
           item.type = 'button';
           item.className = 'scan-result';
-          // SSIDs are attacker-controllable broadcast strings: build with
-          // textContent, not innerHTML, so a hostile SSID can't inject markup.
+          // Use textContent so a hostile SSID can't inject markup
           const ssidSpan = document.createElement('span');
           ssidSpan.textContent = n.ssid;
           const signalSpan = document.createElement('span');
@@ -916,11 +876,7 @@
     }
 
     // ── Radio setup step ─────────────────────────────────────────────
-    // Radio model and TX power level are still placeholder dummy lists:
-    // no radio-control backend exists yet. Audio device and the serial
-    // entries in PTT method are read live from this device (see
-    // services/hardware.py), since those're just hardware enumeration and
-    // don't need that backend to exist first.
+    // Radio model and TX power level are placeholder lists, no radio-control backend yet
     const PLACEHOLDER_RADIOS = [
       'Baofeng UV-5R',
       'Yaesu FT-2980R',
@@ -928,16 +884,9 @@
       'Icom IC-2730A',
     ];
     const PLACEHOLDER_POWER_LEVELS = ['Low', 'Medium', 'High'];
-    // GPIO PTT pin is a config item, but deliberately not wizard-editable:
-    // this hardware target has one fixed wiring convention (see
-    // PINOUT.md), same as the e-ink display pins hardcoded in
-    // display/waveshare/epdconfig.py. Update here (and in PINOUT.md)
-    // together if the physical wiring convention ever changes; it's not
-    // meant to vary per install.
+    // Fixed GPIO PTT pin, not wizard-editable, see PINOUT.md
     const RADIO_DEFAULT_PTT_GPIO_PIN = 22;
-    // Physical header pin for RADIO_DEFAULT_PTT_GPIO_PIN above: shown in
-    // the dropdown label only (BCM 22 = physical pin 15 on every 40-pin Pi
-    // header). Update both together if the pin ever changes.
+    // Physical header pin for RADIO_DEFAULT_PTT_GPIO_PIN, shown in the dropdown label only
     const RADIO_DEFAULT_PTT_GPIO_PHYSICAL_PIN = 15;
 
     function addOption(select, value, label) {
@@ -996,17 +945,13 @@
       const powerSelect = document.getElementById('radio-power');
       PLACEHOLDER_POWER_LEVELS.forEach(p => addOption(powerSelect, p, p));
 
-      // Restore any values already picked earlier in this session (e.g.
-      // Back then Next again); renderRadioStep rebuilds the DOM from
-      // scratch each time, wiping whatever was previously selected.
+      // Restore any values picked earlier this session, renderRadioStep rebuilds the DOM each time
       if (wizardData.radio) {
         modelSelect.value = wizardData.radio.model ?? modelSelect.value;
         powerSelect.value = wizardData.radio.power_level ?? powerSelect.value;
         document.getElementById('radio-frequency').value = wizardData.radio.frequency_mhz ?? '';
       }
-      // GPIO is the recommended default PTT method (a fixed, hardcoded
-      // pin, see RADIO_DEFAULT_PTT_GPIO_PIN) unless something else was
-      // already picked earlier this session.
+      // GPIO is the recommended default PTT method unless something else was already picked
       document.getElementById('radio-ptt').value = wizardData.radio?.ptt_method ?? 'gpio';
       document.getElementById('radio-ptt-serial-line').value = wizardData.radio?.ptt_serial_line ?? 'RTS';
       document.getElementById('radio-ptt').addEventListener('change', updatePttSerialLineVisibility);
@@ -1022,17 +967,13 @@
       loadSerialPttOptions();
     }
 
-    // Serial PTT line (RTS/DTR) only means anything once a serial: device
-    // is actually the picked PTT method; hidden otherwise so it doesn't
-    // read as relevant to GPIO/VOX/CM108.
+    // Serial PTT line only matters when a serial device is the picked PTT method
     function updatePttSerialLineVisibility() {
       const isSerial = document.getElementById('radio-ptt').value.startsWith('serial:');
       document.getElementById('radio-ptt-serial-line-wrap').classList.toggle('hidden', !isSerial);
     }
 
-    // Set once the wizard's own "Yes, I understand" button is clicked, so
-    // the warning doesn't reappear if the Radio step re-renders (e.g. Back
-    // then Next again) within this same session.
+    // Set once "Yes, I understand" is clicked, so the warning doesn't reappear on re-render
     let audioInputWarningAcked = false;
 
     function updateAudioInputWarning(devices) {
@@ -1094,11 +1035,7 @@
     }
 
     async function saveRadioStep() {
-      // No frequency programmed at all is easy to miss (it's just an
-      // empty field, nothing visually flags it the way a wrong default
-      // would), and Direwolf needs a real one to transmit on: worth a
-      // confirm rather than silently moving on, without blocking it
-      // outright for anyone genuinely deciding this later.
+      // Confirm rather than silently proceed if no frequency was set, Direwolf needs one to transmit
       const frequency = document.getElementById('radio-frequency').value;
       if (!frequency) {
         const proceed = await confirmModal(
@@ -1127,16 +1064,9 @@
     }
 
     // ── APRS settings step ───────────────────────────────────────────
-    // Symbol table verified against aprs.org's official reference
-    // (aprs.org/symbols/symbolsX.txt) and the alternate-table overlay
-    // convention for igate capability signalling (symbols-new.txt):
-    // I=generic igate, R=RX-only, T=1-hop TX-capable, 2=2-hop TX-capable.
-    // Icon art is bundled locally (web/static/aprs-symbols/): no network
-    // fetch, so the picker works fully offline over the hotspot.
+    // Symbol table verified against aprs.org's reference; icon art is bundled locally, works offline
     const APRS_DEFAULT_SERVER = 'rotate.aprs2.net';
-    // Regional Tier 2 rotate addresses, straight from Direwolf's own sample
-    // config; its own comment there calls these "the current preferred
-    // way" over the single global rotate.
+    // Regional Tier 2 rotate addresses, from Direwolf's own sample config
     const APRS_IGATE_REGIONS = {
       automatic: APRS_DEFAULT_SERVER,
       noam: 'noam.aprs2.net',
@@ -1147,31 +1077,19 @@
     };
     const APRS_DEFAULT_PORT = '14580';
     const APRS_DEFAULT_TXVIA = 'WIDE1-1,WIDE2-1';
-    // Deliberately different from APRS_DEFAULT_TXVIA above: that's the
-    // path for relaying internet-sourced messages onto RF, this is the
-    // path for the station's own beacon. Best practice for a fixed
-    // digipeater's own beacon is to keep it short (often just one hop)
-    // rather than a wide-area path, since the station's presence is
-    // already implicit in whatever it digipeats for others.
+    // Kept short (unlike APRS_DEFAULT_TXVIA) since this is the station's own beacon path
     const APRS_DEFAULT_RF_BEACON_PATH = 'WIDE1-1';
     const APRS_DEFAULT_RATE_1MIN = '6';
     const APRS_DEFAULT_RATE_5MIN = '10';
     const APRS_DEFAULT_DEDUPE = '60';
 
-    // Straight from Direwolf's own official sample config (conf/generic.conf):
-    // "Most people will probably use one of the two examples" is their
-    // own guidance, so these are presented as presets rather than asking
-    // people to write digipeat regex from scratch.
+    // Presets from Direwolf's own sample config, rather than asking people to write regex
     const DIGIPEAT_PRESETS = {
       fillin: { alias: '^TEST$', wide: '^WIDE1-1$' },
       widearea: { alias: '^WIDE[3-7]-[1-7]$|^TEST$', wide: '^WIDE[12]-[12]$' },
     };
 
-    // Full base symbol set (no overlay variants: overlay is a separate,
-    // free-form character typed directly into the code field on top of
-    // whichever base symbol is picked here); table+symbol+label sourced
-    // from hessu/aprs-symbol-index's symbols.csv (same author/project as
-    // the icon art itself), filtered to the 159 assigned/labeled entries.
+    // Base symbol set only (overlay is a separate free-form char), from hessu/aprs-symbol-index
     const APRS_SYMBOLS = [
       { table: '/', symbol: '!', label: 'Police station' },
       { table: '/', symbol: '#', label: 'Digipeater' },
@@ -1334,15 +1252,7 @@
       { table: '\\', symbol: '{', label: 'Fog' },
     ];
 
-    // Real APRS symbol art from hessu/aprs-symbols (github.com/hessu/aprs-symbols,
-    // CC BY-SA 4.0; see aprs-symbols/COPYRIGHT.md alongside these sprite sheets).
-    // Grid is 16 columns x 6 rows of SQUARE 64x64 cells, sequential ASCII from
-    // '!' (94 printable chars fit exactly in 16x6=96 cells). Confirmed by
-    // overlaying a 16x6 grid on the unscaled 128px sheet, where every icon
-    // lines up exactly. (An earlier 16x8/64x48 assumption, based on a stray
-    // "rows=8" in the asset's own export script, happened to also divide the
-    // sheet height evenly, which is what let it go undetected until visual
-    // inspection caught the resulting clipping/misalignment.)
+    // Sprite sheets from hessu/aprs-symbols (CC BY-SA 4.0, see aprs-symbols/COPYRIGHT.md); grid is 16x6 cells of 64x64, sequential ASCII from '!'
     const SPRITE_CELL_W = 64;
     const SPRITE_CELL_H = 64;
     const SPRITE_SHEET_W = 1024;
@@ -1371,11 +1281,7 @@
       return APRS_SYMBOLS.find(s => s.table === table && s.symbol === symbol) || APRS_SYMBOLS[0];
     }
 
-    // The code is just the raw APRS symbol reference: table char + symbol
-    // char, plus an overlay char for alternate-table icons, e.g. "/#" or
-    // "\&T". Typing one directly reaches every symbol in both tables, not
-    // just the ones listed in the dropdown (which only covers base symbols:
-    // overlay is a free-form extra character on top of that).
+    // Code is the raw APRS symbol reference (table + symbol + optional overlay char, e.g. "/#" or "\&T")
     function symbolCodeFromSymbol(sym) {
       return sym.table + sym.symbol + (sym.overlay || '');
     }
@@ -1451,11 +1357,7 @@
       return parseSymbolCode(input.value) || { table: '/', symbol: '#', overlay: '' };
     }
 
-    // Shared markup for the RF beacon / IGate beacon sections: identical
-    // fields apart from Path, which only makes sense for an RF beacon.
-    // Location (GPS/manual/lat-lon) is deliberately not here: it's moving
-    // to its own dedicated GPS settings page, shared across everything
-    // that needs a position rather than duplicated per beacon.
+    // Shared markup for RF/IGate beacon sections, identical apart from Path (RF-only)
     function beaconFieldsHTML(prefix, { includePath }) {
       return `
         ${includePath ? `
@@ -1683,8 +1585,7 @@
         </section>
       `;
 
-      // Restore anything entered earlier this session before wiring events,
-      // so initial visibility/state below is computed from real values.
+      // Restore anything entered earlier this session before wiring events
       if (d.callsign) document.getElementById('aprs-callsign').value = d.callsign;
       if (d.ssid) document.getElementById('aprs-ssid').value = d.ssid;
       document.getElementById('aprs-digipeat-mode').value = d.digipeat_mode || 'rxonly';
@@ -1736,22 +1637,15 @@
         const igateOn = igateMode.value !== 'off';
         const igateTx = igateMode.value === 'rxtx';
 
-        // An icon only matters once something actually transmits a beacon
-        // with a position on it: RX-only (either mode) never does, so
-        // there's nothing for it to show up on.
+        // Only shown once something actually transmits a beacon with a position on it
         stationIconField.classList.toggle('hidden', !(isDigi || igateTx));
 
-        // Fully hidden (not just greyed out): these are entire settings
-        // blocks that are meaningless until the matching mode is on, unlike
-        // the RF/IGate Beacon subsections below, which stay visible-but-
-        // disabled so it's clear they exist and why they're unavailable.
+        // Fully hidden, not just greyed out like the RF/IGate Beacon subsections below
         digipeatSection.classList.toggle('hidden', !isDigi);
 
         rfEnabled.disabled = !isDigi;
         if (!isDigi) rfEnabled.checked = false;
-        // .disabled = genuinely unavailable (mode wrong), not just unchecked:
-        // those need to look different, since one is clickable and the
-        // other isn't.
+        // .disabled = mode wrong (unavailable), distinct from just unchecked
         rfSection.classList.toggle('disabled', !isDigi);
         rfSection.classList.toggle('active', isDigi && rfEnabled.checked);
 
@@ -1795,20 +1689,14 @@
       digipeatMode.addEventListener('change', updateModeVisibility);
       igateMode.addEventListener('change', updateModeVisibility);
       rfEnabled.addEventListener('change', () => {
-        // Only ever fires when rfEnabled isn't html-disabled to begin with
-        // (mode is already correct), so .disabled never applies here:
-        // just toggling on/off within the "available" state.
+        // Only fires when rfEnabled isn't html-disabled, so just toggle active
         rfSection.classList.toggle('active', rfEnabled.checked);
       });
       igEnabled.addEventListener('change', () => {
         igSection.classList.toggle('active', igEnabled.checked);
       });
 
-      // Passcode auto-fills from the callsign as it's typed, so there's
-      // usually nothing to click: an existing saved value (this render or
-      // a manual override typed in directly) is left alone rather than
-      // silently overwritten. Generate is still there for when someone
-      // clears the field and wants it back.
+      // Passcode auto-fills from the callsign; an existing/manual value is left alone
       const passcodeInput = document.getElementById('aprs-igate-passcode');
       let passcodeManuallySet = !!(d.igate && d.igate.passcode);
       passcodeInput.addEventListener('input', () => { passcodeManuallySet = true; });
@@ -1841,11 +1729,7 @@
       const digipeatMode = document.getElementById('aprs-digipeat-mode').value;
       const igateMode = document.getElementById('aprs-igate-mode').value;
 
-      // IGate needs a real server either way: Automatic just means
-      // "whichever server APRS-IS picks for you", which works, but a
-      // region-specific rotate is lower-latency and more reliable. Worth
-      // a confirm rather than a silent default, without being so heavy-
-      // handed as to block it outright.
+      // Confirm rather than silently default to Automatic; a regional rotate is more reliable
       if (igateMode !== 'off' && document.getElementById('aprs-igate-region').value === 'automatic') {
         const proceed = await confirmModal(
           "IGate region is still set to Automatic, are you sure? It's recommended to switch to a local region if possible.",
@@ -1908,10 +1792,7 @@
 
     // ── GPS setup step ───────────────────────────────────────────────
     // ── Manual position: coordinate format conversions ──────────────────
-    // All pure client-side math: no API key, no network call, works fully
-    // offline over the setup hotspot, unlike e.g. what3words (which needs
-    // a live call to a commercial API just to resolve three words to a
-    // position). Deliberately not offered here for that reason.
+    // Pure client-side math, no API key or network call, works fully offline
     const MAIDENHEAD_LETTERS = 'ABCDEFGHIJKLMNOPQR';
 
     function formatDMS(decimal, isLat) {
@@ -1924,10 +1805,7 @@
       return `${deg}°${min}'${sec.toFixed(1)}"${dir}`;
     }
 
-    // Accepts the common punctuation variants (°/'/", spaces, commas) and
-    // either a leading or trailing N/S/E/W, or a bare leading minus,
-    // whichever the user actually typed. Minutes/seconds are optional
-    // (DDM or plain D both parse fine, not just full DMS).
+    // Accepts common punctuation variants, leading/trailing N/S/E/W or a bare minus, optional min/sec
     function parseDMS(raw) {
       if (!raw) return null;
       let s = raw.trim().toUpperCase();
@@ -1953,11 +1831,7 @@
       return sign * (deg + min / 60 + sec / 3600);
     }
 
-    // Standard Maidenhead algorithm (field/square/subsquare, see
-    // Wikipedia's "Maidenhead Locator System"), capped at 6 characters
-    // (~4km precision at NZ latitudes): the common ham "grid square"
-    // length; 8-character extended precision isn't offered since almost
-    // nothing beyond specialist logging tools goes finer than that.
+    // Standard Maidenhead algorithm, capped at 6 characters (~4km precision at NZ latitudes)
     function formatMaidenhead(lat, lon) {
       let adjLon = lon + 180;
       let adjLat = lat + 90;
@@ -1971,11 +1845,7 @@
       adjLat -= squareLat * 1;
       const subLon = Math.floor(adjLon / (2 / 24));
       const subLat = Math.floor(adjLat / (1 / 24));
-      // Subsquare letters run a-x (24 of them, one per 1/24th of a square):
-      // a distinct, wider range than the field letters above (A-R, 18 of
-      // them, one per 20°/10° of the whole globe), so this needs its own
-      // char-code arithmetic rather than reusing MAIDENHEAD_LETTERS, which
-      // is too short and would go out of bounds past 'R'.
+      // Subsquare letters run a-x (24), wider than MAIDENHEAD_LETTERS (A-R, 18), needs its own arithmetic
       return MAIDENHEAD_LETTERS[fieldLon] + MAIDENHEAD_LETTERS[fieldLat] + squareLon + squareLat
         + String.fromCharCode(97 + subLon) + String.fromCharCode(97 + subLat);
     }
@@ -2001,15 +1871,7 @@
       return { lat, lon };
     }
 
-    // Module-level, not renderGpsStep-local: saveGpsStep() (a separate
-    // top-level function, called from the wizard's onNext, long after
-    // renderGpsStep()'s own closure exited) needs to read the same
-    // format-aware position, not just the UI-refresh logic that lives in
-    // renderGpsStep. Reads whichever format's fields are currently
-    // visible (not just the decimal ones): the decimal inputs are only
-    // "canonical" in the sense that config.yaml stores decimal degrees;
-    // day to day, whichever format is selected is the source of truth
-    // the user is actually looking at.
+    // Module-level so saveGpsStep() can call it after renderGpsStep()'s closure has exited
     function getManualLatLon(format) {
       format = format || document.getElementById('gps-loc-format').value;
       let lat, lon;
@@ -2144,9 +2006,7 @@
         document.getElementById('gps-loc-maidenhead').classList.toggle('hidden', format !== 'maidenhead');
       }
 
-      // A live "≈ decimal" readout for DMS/grid square, so there's some
-      // confirmation of what's actually being entered before Next: the
-      // decimal fields show the value directly, so they don't need this.
+      // Live "≈ decimal" readout for DMS/grid square, confirming what's being entered
       function updateLocPreview() {
         const format = formatSelect.value;
         if (format === 'decimal') {
@@ -2154,9 +2014,7 @@
           locMsg.className = 'msg';
           return;
         }
-        // Nothing typed yet (e.g. just switched formats with no prior
-        // position to carry over) isn't a parse failure: stay quiet
-        // rather than greeting an empty field with an error.
+        // An empty field isn't a parse failure, stay quiet rather than erroring
         const isEmpty = format === 'dms'
           ? !document.getElementById('gps-lat-dms').value.trim() && !document.getElementById('gps-lon-dms').value.trim()
           : !document.getElementById('gps-grid').value.trim();
@@ -2177,9 +2035,7 @@
       }
 
       formatSelect.addEventListener('change', () => {
-        // Read the position using the format being switched away FROM,
-        // before its fields get hidden, so the new format's fields open
-        // already showing the same place rather than blank.
+        // Read the position from the format being switched away from, before fields hide
         const previousFormat = formatSelect.dataset.prev || 'decimal';
         const latLon = getManualLatLon(previousFormat);
         formatSelect.dataset.prev = formatSelect.value;
@@ -2294,10 +2150,7 @@
         if (g.timezone) tzSelect.value = g.timezone;
       }
 
-      // Restore anything entered earlier this session. Decimal degrees is
-      // what's actually stored (see saveGpsStep) regardless of which
-      // format was used to enter it: re-derive the saved format's display
-      // fields from that rather than storing/restoring raw per-format text.
+      // Restore anything entered earlier, re-deriving the display fields from stored decimal degrees
       sourceSelect.value = g.position_source || 'manual';
       const savedFormat = g.location_format || 'decimal';
       formatSelect.value = savedFormat;
@@ -2344,38 +2197,20 @@
     }
 
     // ── Map caching step ─────────────────────────────────────────────
-    // Downloads happen live, right here in the wizard (like the GPS step's
-    // "Get current position") rather than being deferred: there's nothing
-    // for a later backend to "apply", the tiles just need to end up on
-    // disk. Entirely optional: never blocks Next, whether or not anything
-    // was actually downloaded.
+    // Downloads happen live in the wizard, straight to disk; entirely optional, never blocks Next
     const MAP_DEFAULT_RADIUS_KM = 50;
-    // Min zoom is fixed at 1 for the region-picker's own live basemap
-    // (which is unaffected by any of this, see below); the download
-    // itself always extracts a full pyramid from 0, matching the pmtiles
-    // CLI's documented efficient path, so there's no min-zoom control on
-    // the download side at all anymore.
+    // Min zoom fixed at 1; the download always extracts a full pyramid from 0 (matches pmtiles CLI)
     const MAP_MIN_ZOOM = 1;
     const MAP_SLIDER_MAX_ZOOM = 15; // matches Protomaps' hosted planet build, which only goes to z15
     const MAP_DEFAULT_MAX_ZOOM = 10;
-    // Off-peak by default: a large-ish background download at 3am is far
-    // less likely to compete with the station's own RF/APRS traffic or a
-    // dashboard someone's actively looking at than any daytime default.
+    // Off-peak default so a background download doesn't compete with RF/APRS traffic
     const MAP_DEFAULT_AUTO_UPDATE_TIME = '03:00';
     let mapStatusPollTimer = null;
-    // Module-level so showStep() can tear it down on navigation (see
-    // above): a fresh MapLibre map is created each time this step is
-    // shown, same as the old Leaflet one was, just with an explicit
-    // cleanup step now that a WebGL context is involved.
+    // Module-level so showStep() can tear down the WebGL context on navigation
     let currentRegionMap = null;
-    // Registered once globally on first use, not per-render: re-adding
-    // the same protocol handler on every visit to this step would be
-    // harmless but pointless.
+    // Registered once globally on first use, not per-render
     let pmtilesProtocolRegistered = false;
-    // Module-level, not render-local: saveMapStep() needs to read the
-    // current region after renderMapStep()'s own closure has done its
-    // work. There's no input field holding this anymore (GUI-only, no
-    // coordinate text boxes), so this plain object is the only copy.
+    // Module-level so saveMapStep() can read the region after renderMapStep()'s closure has exited
     let mapRegionBounds = null;
 
     function renderMapStep() {
@@ -2423,32 +2258,19 @@
       const progressWrap = document.getElementById('map-progress-wrap');
       const progressMsg = document.getElementById('map-progress-msg');
 
-      // Local to this render: the map container is thrown away and
-      // recreated (innerHTML above) each time this step is shown, so a
-      // fresh MapLibre map is created fresh each time too (currentRegionMap
-      // handles disposing of the old one; see showStep()). mapRegionBounds
-      // (the actual region data) is module-level though: saveMapStep()
-      // needs it after this closure is gone, and there's no input field
-      // holding a copy of it anymore.
+      // mapRegionBounds is module-level so saveMapStep() can read it after this closure is gone
       let regionMarker = null;
       let edgeHandleN = null, edgeHandleS = null, edgeHandleE = null, edgeHandleW = null;
       let interactive = false;
 
-      // Same flat-earth approximation the backend used to use for its own
-      // (now-removed) radius-based path: kept here client-side only, to
-      // seed the initial box size when there's nothing saved to restore.
-      // Everything after that works directly off mapRegionBounds; the
-      // backend only ever sees explicit north/south/east/west now.
+      // Flat-earth approximation used client-side only to seed the initial box size
       function boundsFromRadius(lat, lon, radiusKm) {
         const latDelta = radiusKm / 111.0;
         const lonDelta = radiusKm / (111.0 * Math.max(Math.cos(lat * Math.PI / 180), 0.01));
         return { north: lat + latDelta, south: lat - latDelta, east: lon + lonDelta, west: lon - lonDelta };
       }
 
-      // MapLibre has no L.rectangle-style helper: the region box is a
-      // plain GeoJSON polygon source/layer instead, redrawn by feeding it
-      // fresh coordinates (closed ring, [lon,lat] pairs, GeoJSON order,
-      // the opposite of Leaflet's [lat,lon]).
+      // MapLibre has no rectangle helper, so the region box is a GeoJSON polygon (lon,lat order)
       function rectGeoJSON(b) {
         return {
           type: 'Feature',
@@ -2461,9 +2283,7 @@
         };
       }
 
-      // Redraws the rectangle, center pin, and all four edge handles from
-      // mapRegionBounds: the single source of truth. Every interaction
-      // (drag a handle, drag the pin, click the map) ends by calling this.
+      // Redraws the rectangle, center pin, and edge handles from mapRegionBounds
       function redrawRegion() {
         if (!currentRegionMap || !mapRegionBounds) return;
         const b = mapRegionBounds;
@@ -2478,10 +2298,7 @@
         edgeHandleW.setLngLat([b.west, centerLat]);
       }
 
-      // Moves the whole box by the same delta in every direction: used by
-      // both dragging the center pin and clicking elsewhere on the map.
-      // Resizing (making it a rectangle) only ever happens via the edge
-      // handles, never this.
+      // Moves the whole box by the same delta, used by dragging the pin or clicking the map
       function recenterTo(lat, lon, panMap) {
         const b = mapRegionBounds;
         const centerLat = (b.north + b.south) / 2;
@@ -2494,11 +2311,7 @@
         redrawRegion();
       }
 
-      // Applied once the map's loaded, and again whenever the live
-      // internet check (at the bottom of this function) resolves: a
-      // region can't actually be downloaded without a connection to
-      // Protomaps' build host, so there's no point letting it be edited
-      // either; only viewing the pre-cached world map still works.
+      // Region editing needs a connection to Protomaps' build host; viewing the cached map doesn't
       function setInteractive(enabled) {
         interactive = enabled;
         offlineNote.classList.toggle('hidden', enabled);
@@ -2513,12 +2326,7 @@
         return new maplibregl.Marker({ element: el, draggable: interactive }).setLngLat(lngLat).addTo(currentRegionMap);
       }
 
-      // Builds the MapLibre map from Protomaps' basemap style (vendored
-      // locally, see web/static/maplibre/), pointed at the local
-      // world.pmtiles via the pmtiles:// protocol: HTTP range requests
-      // straight from the browser to our own /map-data/world.pmtiles
-      // endpoint (Starlette's FileResponse honors Range, see
-      // requirements.txt), no internet involved at all.
+      // Builds the map from Protomaps' vendored style, pointed at local world.pmtiles, no internet needed
       async function initRegionMap(bounds) {
         mapRegionBounds = bounds;
         const b = bounds;
@@ -2531,11 +2339,7 @@
           pmtilesProtocolRegistered = true;
         }
 
-        // Follows the page's own UI theme toggle above (no separate map
-        // toggle here, unlike the dashboard's map: this picker only ever
-        // exists for the duration of a one-time setup wizard, not worth a
-        // second independent theme control for), so an explicit override
-        // wins over the raw OS preference the same way the page CSS does.
+        // Follows the page's own UI theme toggle rather than a separate map control
         const uiIsDark = uiTheme === 'dark' || (uiTheme !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
         const styleUrl = `/static/maplibre/style-${uiIsDark ? 'dark' : 'light'}.json`;
         const style = await (await fetch(styleUrl)).json();
@@ -2575,11 +2379,7 @@
         edgeHandleE = makeEdgeHandle([b.east, centerLat], 'ew');
         edgeHandleW = makeEdgeHandle([b.west, centerLat], 'ew');
 
-        // Each handle only ever moves its own edge: dragging North only
-        // changes north, regardless of how far sideways the pointer drifts
-        // during the drag; redrawRegion() snaps it back onto the midpoint
-        // of that edge once done. A small minimum gap stops the box from
-        // inverting if a handle gets dragged past its opposite edge.
+        // Each handle only moves its own edge; MIN_GAP_DEG stops the box inverting on overdrag
         const MIN_GAP_DEG = 0.001;
         edgeHandleN.on('drag', () => {
           mapRegionBounds.north = Math.max(edgeHandleN.getLngLat().lat, mapRegionBounds.south + MIN_GAP_DEG);
@@ -2607,10 +2407,7 @@
       updateZoomLabel();
       zoomMaxInput.addEventListener('input', updateZoomLabel);
 
-      // Deliberately NOT gated on interactive: this only reads a position
-      // already known locally (a manual value, or gpsd running on this
-      // same device), no internet involved, unlike editing/downloading a
-      // region.
+      // Not gated on interactive: only reads a locally-known position, no internet involved
       useStationBtn.addEventListener('click', async () => {
         const g = wizardData.gps || {};
         if (g.position_source === 'manual' && g.latitude && g.longitude) {
@@ -2630,10 +2427,7 @@
         }
       });
 
-      // No tile-by-tile count or percent to show anymore (this is one CLI
-      // extraction, not thousands of individual requests): progress is
-      // read straight from the growing size of the actual output file on
-      // disk, which is honest, rather than parsing pmtiles' own log output.
+      // Progress is read from the growing size of the output file, not tile counts
       function pollDownloadStatus() {
         mapStatusPollTimer = setInterval(async () => {
           try {
@@ -2701,9 +2495,7 @@
         const unavailableWarning = document.getElementById('map-unavailable-warning');
         const mapFields = document.getElementById('map-fields');
 
-        // The world cache existing at all is a precondition for showing
-        // anything here: without it there's no local basemap to render,
-        // pre-cached or otherwise (see scripts/precache_world.py).
+        // The world cache must exist, otherwise there's no local basemap to render
         let worldAvailable = false;
         try {
           const res = await fetch('/api/map/world-status');
@@ -2716,13 +2508,10 @@
           unavailableWarning.classList.remove('hidden');
           return;
         }
-        // The map container must actually be visible before MapLibre
-        // initialises against it, or it measures a zero-size box.
+        // The map container must be visible before MapLibre initialises, or it measures zero-size
         mapFields.classList.remove('hidden');
 
-        // Restore whatever was picked earlier this session, if anything;
-        // otherwise seed a default-sized box centered on the station's own
-        // position (manual entry or a live GPS fix), else the 0,0 default.
+        // Restore whatever was picked earlier; otherwise seed a box centered on the station position
         let initialBounds = null;
         if (m.north !== undefined && m.south !== undefined && m.east !== undefined && m.west !== undefined) {
           initialBounds = {
@@ -2756,10 +2545,7 @@
 
         await initRegionMap(initialBounds);
 
-        // Only the actual download (and editing the region, which is
-        // pointless if you can't act on it) needs a live connection to
-        // Protomaps' build host: viewing the pre-cached world map above
-        // already works regardless, since it just loaded from disk.
+        // Only downloading/editing the region needs a live connection; viewing the cached map doesn't
         let online = false;
         try {
           const res = await fetch('/api/network/internet');
@@ -2773,9 +2559,7 @@
 
     function saveMapStep() {
       if (!mapRegionBounds) {
-        // Auto-update's own settings (set on the Finish step) still need
-        // to survive even if no region was ever picked here: merge onto
-        // whatever's already in wizardData.map rather than overwriting it.
+        // Merge onto wizardData.map so Finish step's auto-update settings survive
         wizardData.map = wizardData.map || {};
         return true;
       }
@@ -2788,15 +2572,7 @@
     }
 
     // ── User management step ─────────────────────────────────────────
-    // Simplified from ORIGINAL's four web.security.mode levels to three:
-    // dropped "Config password" (start/stop free, config locked). A
-    // separate start/stop gate with no config gate isn't useful without a
-    // dashboard that actually distinguishes the two, and ORIGINAL's own
-    // "Read only" mode didn't gate config changes either despite its label
-    // implying it should: three clear levels beats four confusable ones.
-    // One real change from ORIGINAL: the password is hashed (PBKDF2,
-    // services/auth.py) before it ever touches disk, rather than
-    // ORIGINAL's plaintext config.yaml field.
+    // Three security levels; password is hashed (PBKDF2, services/auth.py) before touching disk
     const USER_SECURITY_MODES = [
       { value: 'none', label: 'No security' },
       { value: 'readonly', label: 'Read only' },
@@ -2833,20 +2609,13 @@
       const msg = document.getElementById('user-msg');
       const nextBtn = document.getElementById('btn-next');
       modeSelect.value = u.mode || 'none';
-      // Restore anything entered earlier this session (e.g. Back then
-      // Next through this step again): saveUserStep() stores the
-      // password in plain wizardData.user, it just never got read back
-      // into the fields here, so Next re-disabled itself until it was
-      // retyped.
+      // Restore anything entered earlier this session
       if (u.password) {
         passwordInput.value = u.password;
         confirmInput.value = u.password;
       }
 
-      // Next stays disabled until the password is actually valid: no
-      // clicking through to a mismatched-password error after the fact.
-      // There's no confirm-on-click fallback below because this makes it
-      // structurally impossible to reach saveUserStep() in an invalid state.
+      // Next stays disabled until the password is valid, so saveUserStep() can't be reached invalid
       function updateState() {
         const needsPassword = modeSelect.value !== 'none';
         passwordField.classList.toggle('hidden', !needsPassword);
@@ -2889,12 +2658,7 @@
     }
 
     // ── E-Ink display step ───────────────────────────────────────────
-    // Display driver/model actually takes effect for real: it's written
-    // straight to display_config.json (same file install.sh writes), and
-    // Finish always reboots, so there's no "collected but not applied"
-    // gap here like most of the rest of the wizard. The page-rotation
-    // list below feeds display/rotation.py's RotationManager directly
-    // (see config.yaml's display.pages), same page IDs both places.
+    // Written straight to display_config.json; page-rotation list feeds display/rotation.py directly
     const EINK_DEFAULT_PAGES = [
       { id: 'status', label: 'Status' },
       { id: 'config_summary', label: 'Config summary' },
@@ -2951,9 +2715,7 @@
         }));
     }
 
-    // Swaps the two enabled pages themselves, wherever they sit in the
-    // underlying array: disabled pages interspersed between them don't
-    // affect an enabled page's position relative to other enabled pages.
+    // Swaps the two enabled pages, ignoring disabled pages interspersed between them
     function moveEinkPage(id, delta) {
       const enabledIds = einkPages.filter(p => p.enabled).map(p => p.id);
       const from = enabledIds.indexOf(id);
@@ -2965,10 +2727,7 @@
       renderEinkPageLists();
     }
 
-    // Re-enabling always appends to the end of the live rotation, rather
-    // than trying to restore its old position: simpler to reason about,
-    // and "goes back to the bottom of the list" is the expected behavior
-    // for this kind of enable/disable list.
+    // Re-enabling always appends to the end of the rotation rather than restoring its old position
     function setEinkPageEnabled(id, enabled) {
       const idx = einkPages.findIndex(p => p.id === id);
       if (idx === -1) return;
@@ -3011,8 +2770,7 @@
         // "None" still works without this
       }
 
-      // Preset to whatever was already picked this session, else whatever
-      // install.sh configured, else "None".
+      // Preset to whatever was picked this session, else install.sh's config, else "None"
       if (d.driver !== undefined) {
         select.value = `${d.driver}|${d.model || ''}`;
       } else {
@@ -3037,10 +2795,6 @@
     }
 
     // ── Startup step ─────────────────────────────────────────────────
-    // Its own step, last before Finish: not tucked under Radio, and not
-    // early enough to skim past. Everything here is about how the station
-    // behaves once it's running unattended, so it belongs right before the
-    // wizard actually commits and reboots into that state.
     const STARTUP_DEFAULT_RESTART_ATTEMPTS = 3;
     const STARTUP_DEFAULT_RESTART_DELAY_S = 30;
 
@@ -3110,13 +2864,10 @@
       autoUpdateCheckbox.addEventListener('change', updateAutoUpdateTimeVisibility);
 
       if (m.auto_update && typeof m.auto_update.enabled === 'boolean') {
-        // A value already exists (e.g. Back then Next through this step
-        // again); that always wins over re-deriving a default.
+        // An existing value always wins over re-deriving a default
         autoUpdateCheckbox.checked = m.auto_update.enabled;
       } else {
-        // No saved preference yet: default on if there's internet right
-        // now, off otherwise, so a background task doesn't sit there
-        // failing every day on a station that's normally offline.
+        // No saved preference: default on only if there's internet right now
         try {
           const res = await fetch('/api/network/internet');
           autoUpdateCheckbox.checked = (await res.json()).online;
@@ -3137,9 +2888,7 @@
         wizardData.startup.restart_attempts = document.getElementById('startup-restart-attempts').value;
         wizardData.startup.restart_delay_s = document.getElementById('startup-restart-delay').value;
       }
-      // Independent of the rest of this step: merged onto wizardData.map
-      // (Map caching's own step, earlier in the wizard, owns
-      // north/south/east/west/zoom_max) rather than overwriting it.
+      // Merged onto wizardData.map so Map caching's own fields aren't overwritten
       wizardData.map = {
         ...wizardData.map,
         auto_update: {
@@ -3167,13 +2916,7 @@
         </section>
       `;
 
-      // Blocks Finish & Reboot while a region download (started on the Map
-      // caching step, possibly still running after visiting several steps
-      // since) is active: reusing mapStatusPollTimer (module-level;
-      // showStep() already clears it when navigating away from whichever
-      // step started it, Map caching or here). Best-effort: a request that
-      // fails outright is treated as "can't tell, try again next tick"
-      // rather than either blocking or unblocking on bad information.
+      // Blocks Finish & Reboot while a region download is still active; best-effort, keeps polling on failure
       const downloadProgressWrap = document.getElementById('finish-download-progress');
       const downloadProgressMsg = document.getElementById('finish-download-progress-msg');
       const nextBtn = document.getElementById('btn-next');

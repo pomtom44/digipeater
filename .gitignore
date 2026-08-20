@@ -1,4 +1,4 @@
-# ── Config (contains callsign, passwords — never commit) ──────
+# ── Config (contains callsign, passwords, never commit) ────────
 config.yaml
 
 # ── Python ────────────────────────────────────────────────────
@@ -15,35 +15,28 @@ build/
 # ── Runtime data (stored outside repo on the Pi) ──────────────
 *.log
 *.json
-# ...except the vendored MapLibre basemap style JSON below — *.json above
-# is meant for runtime-generated files (display_config.json etc.), but
-# matches these too unless carved out explicitly. They're static vendored
-# assets (generated once via @protomaps/basemaps, not regenerated at
-# install/runtime), so they need to actually be in the repo or the wizard's
-# map step 404s trying to fetch them on a fresh clone.
-!DEV_BUILD/web/static/maplibre/style-*.json
+# Vendored MapLibre basemap style JSON is static, not runtime-generated, so it's carved out here.
+!web/static/maplibre/style-*.json
 
+# ── Downloaded third-party binary (go-pmtiles, see services/tiles.py) and the extracts it produces ──
+bin/
+map_data/
 
-# ── Downloaded third-party binary (go-pmtiles, fetched by install.sh —
-# see DEV_BUILD/services/tiles.py) and the region/world extracts it
-# produces ──
-DEV_BUILD/bin/
-DEV_BUILD/map_data/
-
-# ── Basemap fonts/sprites (protomaps/basemaps-assets, fetched by
-# install.sh — see DEV_BUILD/web/static/first_run.html's MapLibre style
-# loading) ──
-DEV_BUILD/web/static/maplibre-assets/
+# ── Basemap fonts/sprites (protomaps/basemaps-assets, fetched by install.sh) ──
+web/static/maplibre-assets/
 
 # ── Direwolf generated config ─────────────────────────────────
 direwolf.conf
+
+# ── Direwolf source build (install.sh builds Direwolf from source, see .direwolf_version) ──
+direwolf-src/
+.direwolf_version
 
 # ── Legacy ────────────────────────────────────────────────────
 digipeater_legacy-main/
 
 # ── Third-party vendor software (not ours to redistribute) ────
-# Alinco's official DR_X38.exe + Prolific PL-2303 driver installers, kept
-# locally only as a reference for reverse-engineering hardware/radio_programmer.py.
+# Alinco's official DR_X38.exe + Prolific PL-2303 driver installers, kept for reference only.
 alinco/
 
 # ── IDE / OS ──────────────────────────────────────────────────

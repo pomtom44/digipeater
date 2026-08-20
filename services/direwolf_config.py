@@ -20,8 +20,9 @@ def _ptt_lines(radio: dict, can_transmit: bool) -> list[str]:
         # VOX: the radio keys up on its own from audio, no PTT line needed (no VOX directive exists).
         return []
     if method == "gpio":
+        # GPIOD, not the legacy sysfs GPIO directive, which current Raspberry Pi OS kernels dropped.
         pin = radio.get("ptt_gpio_pin", 22)
-        return [f"PTT GPIO {pin}"]
+        return [f"PTT GPIOD gpiochip0 {pin}"]
     if method == "cm108":
         return ["PTT CM108"]
     if method.startswith("cm108:"):

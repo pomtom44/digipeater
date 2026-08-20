@@ -2,17 +2,14 @@
 set -e
 
 # ─────────────────────────────────────────────
-# APRS Digipeater — Reset Script
-# Full uninstall — reverses everything install.sh
-# sets up, back to a clean state.
+# APRS Digipeater: Reset Script
+# Full uninstall, reverses everything install.sh sets up, back to a clean state.
 # ─────────────────────────────────────────────
 
 INSTALL_DIR="/opt/digipeater"
 SERVICE_NAME="digipeater"
 VAR_DIR="/var/digipeater"
-DIREWOLF_CONF_DIR="/etc/direwolf"
-SUDOERS_FILE="/etc/sudoers.d/digipeater-nmcli"
-REBOOT_SUDOERS_FILE="/etc/sudoers.d/digipeater-reboot"
+DIREWOLF_BIN="/usr/local/bin/direwolf"
 
 # ── Colours ──────────────────────────────────
 GREEN='\033[0;32m'
@@ -26,7 +23,7 @@ fail() { echo -e "${RED}  ✗ $1${NC}"; exit 1; }
 
 echo ""
 echo "╔══════════════════════════════════════╗"
-echo "║      APRS Digipeater — Reset         ║"
+echo "║      APRS Digipeater: Reset          ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
@@ -37,23 +34,23 @@ fi
 
 echo -e "${YELLOW}This will permanently remove:${NC}"
 echo "    - the digipeater systemd service"
-echo "    - $INSTALL_DIR (application, venv, config.yaml, saved WiFi credentials)"
+echo "    - $INSTALL_DIR (application, venv, config.yaml, saved WiFi credentials, Direwolf source build)"
 echo "    - $VAR_DIR (tile cache, packet history)"
-echo "    - $DIREWOLF_CONF_DIR (generated direwolf.conf)"
-echo "    - $SUDOERS_FILE (nmcli sudo permission)"
-echo "    - $REBOOT_SUDOERS_FILE (reboot sudo permission)"
+echo "    - $DIREWOLF_BIN (Direwolf, built from source by install.sh)"
+echo "    - /etc/sudoers.d/digipeater-* (all sudo permissions this app granted)"
 echo "    - the digipeater-hotspot NetworkManager connection profile"
 echo "    - the SPI interface (disabled again)"
 echo "    - the WiFi country setting (radio re-blocked, same as before install)"
-echo "    - system packages: direwolf, gpsd, gpsd-clients, libhamlib-utils,"
+echo "    - system packages: gpsd, gpsd-clients, libhamlib-utils,"
 echo "      python3-rpi.gpio, python3-spidev, fonts-dejavu-core, python3-pip,"
 echo "      python3-venv, git"
 echo ""
 echo -e "${YELLOW}Deliberately NOT touched (real risk of bricking the Pi or losing SSH access):${NC}"
-echo "    - python3 itself — a dependency root for much of the base OS; purging"
+echo "    - python3 itself: a dependency root for much of the base OS, purging"
 echo "      it can cascade into removing core system tooling, needing a reflash"
-echo "    - NetworkManager — Bookworm's actual network stack; disabling it would"
+echo "    - NetworkManager: Bookworm's actual network stack, disabling it would"
 echo "      very likely cut off SSH access to the Pi entirely"
+echo "    - build tools (build-essential, cmake, lib*-dev): generically useful, not project-specific"
 echo ""
 read -p "  Continue? [y/N] " confirm < /dev/tty
 [[ "$confirm" =~ ^[Yy]$ ]] || exit 1
@@ -68,7 +65,7 @@ if systemctl list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}.service"; t
     sudo systemctl daemon-reload
     ok "Service removed"
 else
-    info "No systemd service found — skipping"
+    info "No systemd service found, skipping"
 fi
 
 # ── Remove application directory ─────────────
@@ -76,7 +73,7 @@ if [ -d "$INSTALL_DIR" ]; then
     sudo rm -rf "$INSTALL_DIR"
     ok "Removed $INSTALL_DIR"
 else
-    info "$INSTALL_DIR not present — skipping"
+    info "$INSTALL_DIR not present, skipping"
 fi
 
 # ── Remove runtime data directory ────────────
@@ -84,41 +81,32 @@ if [ -d "$VAR_DIR" ]; then
     sudo rm -rf "$VAR_DIR"
     ok "Removed $VAR_DIR"
 else
-    info "$VAR_DIR not present — skipping"
+    info "$VAR_DIR not present, skipping"
 fi
 
-# ── Remove direwolf config directory ─────────
-if [ -d "$DIREWOLF_CONF_DIR" ]; then
-    sudo rm -rf "$DIREWOLF_CONF_DIR"
-    ok "Removed $DIREWOLF_CONF_DIR"
+# ── Remove Direwolf binary (built from source by install.sh) ─
+if [ -x "$DIREWOLF_BIN" ]; then
+    sudo rm -f "$DIREWOLF_BIN"
+    ok "Removed $DIREWOLF_BIN"
 else
-    info "$DIREWOLF_CONF_DIR not present — skipping"
+    info "$DIREWOLF_BIN not present, skipping"
 fi
 
-# ── Remove nmcli sudoers rule ────────────────
-if [ -f "$SUDOERS_FILE" ]; then
-    sudo rm -f "$SUDOERS_FILE"
-    ok "Removed $SUDOERS_FILE"
+# ── Remove sudoers rules ──────────────────────
+if compgen -G "/etc/sudoers.d/digipeater-*" > /dev/null; then
+    sudo rm -f /etc/sudoers.d/digipeater-*
+    ok "Removed digipeater sudoers rules"
 else
-    info "$SUDOERS_FILE not present — skipping"
-fi
-
-# ── Remove reboot sudoers rule ───────────────
-if [ -f "$REBOOT_SUDOERS_FILE" ]; then
-    sudo rm -f "$REBOOT_SUDOERS_FILE"
-    ok "Removed $REBOOT_SUDOERS_FILE"
-else
-    info "$REBOOT_SUDOERS_FILE not present — skipping"
+    info "No digipeater sudoers rules present, skipping"
 fi
 
 # ── Remove hotspot NetworkManager connection profile ─
-# Created by the app itself (services/network.py's setup_hotspot), stored
-# outside every other path this script already cleans up.
+# Created by services/network.py's setup_hotspot, stored outside every other path cleaned up above.
 if sudo nmcli -t -f NAME connection show 2>/dev/null | grep -qx "digipeater-hotspot"; then
     sudo nmcli connection delete digipeater-hotspot
     ok "Removed digipeater-hotspot connection profile"
 else
-    info "digipeater-hotspot connection profile not present — skipping"
+    info "digipeater-hotspot connection profile not present, skipping"
 fi
 
 # ── Disable SPI ───────────────────────────────
@@ -127,8 +115,7 @@ sudo raspi-config nonint do_spi 1
 ok "SPI disabled"
 
 # ── Re-block WiFi radio ───────────────────────
-# Restores the soft-blocked state install.sh's WiFi-country step lifted.
-# Doesn't touch NetworkManager or ethernet — only the WiFi radio itself.
+# Restores the soft-blocked state install.sh's WiFi-country step lifted, WiFi only, not ethernet.
 info "Re-blocking WiFi radio..."
 sudo rfkill block wifi
 ok "WiFi radio re-blocked"
@@ -140,16 +127,11 @@ if [ -f /etc/network/interfaces.bak ]; then
 fi
 
 # ── Remove system packages ───────────────────
-# python3, network-manager, and curl are deliberately excluded — curl is
-# needed to re-run install.sh/this script itself via the documented
-# `curl | bash` command; see the warning shown before the confirmation
-# prompt above for python3/NetworkManager.
+# python3, network-manager, and curl are deliberately excluded, curl is needed to re-run install.sh itself.
 info "Removing system packages..."
 sudo apt-get purge -y -qq \
-    direwolf \
     gpsd \
     gpsd-clients \
-    libhamlib-utils \
     python3-rpi.gpio \
     python3-spidev \
     fonts-dejavu-core \

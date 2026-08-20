@@ -9,7 +9,7 @@ INSTALL_DIR="/opt/digipeater"
 SERVICE_NAME="digipeater"
 VENV_DIR="$INSTALL_DIR/venv"
 REPO_URL="https://github.com/pomtom44/digipeater.git"
-APP_DIR="$INSTALL_DIR/DEV_BUILD"
+APP_DIR="$INSTALL_DIR"
 
 # ── Colours ──────────────────────────────────
 GREEN='\033[0;32m'
@@ -108,6 +108,7 @@ run_with_spinner "Updating package lists..." sudo apt-get update -qq
 ok "Package lists updated"
 
 # ── Install system packages ───────────────────
+# direwolf isn't apt-installed (Bookworm's package is stuck on 1.6, no libgpiod); built from source below instead.
 run_with_spinner "Installing system packages..." sudo apt-get install -y -qq \
     git \
     python3 \
@@ -119,9 +120,43 @@ run_with_spinner "Installing system packages..." sudo apt-get install -y -qq \
     gpsd \
     gpsd-clients \
     chrony \
-    direwolf \
-    curl
+    curl \
+    build-essential \
+    cmake \
+    libasound2-dev \
+    libudev-dev \
+    libavahi-client-dev \
+    libgpiod-dev \
+    libgps-dev \
+    libhamlib-dev
 ok "System packages installed"
+
+# ── Build Direwolf from source ────────────────
+# Skips the rebuild on a repeat install if DIREWOLF_VERSION_MARKER already matches.
+DIREWOLF_VERSION="1.8.1"
+DIREWOLF_SRC_DIR="$INSTALL_DIR/direwolf-src"
+DIREWOLF_VERSION_MARKER="$INSTALL_DIR/.direwolf_version"
+if [ -x /usr/local/bin/direwolf ] && [ "$(cat "$DIREWOLF_VERSION_MARKER" 2>/dev/null)" = "$DIREWOLF_VERSION" ]; then
+    ok "Direwolf $DIREWOLF_VERSION already built"
+else
+    run_with_spinner "Fetching Direwolf $DIREWOLF_VERSION source..." bash -c "
+        if [ -d '$DIREWOLF_SRC_DIR/.git' ]; then
+            git -C '$DIREWOLF_SRC_DIR' fetch --quiet --tags
+        else
+            git clone --quiet https://github.com/wb2osz/direwolf.git '$DIREWOLF_SRC_DIR'
+        fi &&
+        git -C '$DIREWOLF_SRC_DIR' checkout --quiet '$DIREWOLF_VERSION'
+    "
+    run_with_spinner "Building Direwolf $DIREWOLF_VERSION (several minutes on a Pi)..." bash -c "
+        mkdir -p '$DIREWOLF_SRC_DIR/build' &&
+        cd '$DIREWOLF_SRC_DIR/build' &&
+        cmake -DCMAKE_BUILD_TYPE=Release .. &&
+        make -j\"\$(nproc)\" &&
+        sudo make install
+    "
+    echo "$DIREWOLF_VERSION" > "$DIREWOLF_VERSION_MARKER"
+    ok "Direwolf $DIREWOLF_VERSION built and installed"
+fi
 
 # ── Use chrony for system time, not systemd-timesyncd ──
 # chrony is what lets the GPS setup step's "update system time from GPS"
@@ -399,23 +434,8 @@ run_with_spinner "Installing systemd service..." bash -c "
 ok "Systemd service installed and enabled; it will start automatically on boot"
 
 # ── Install direwolf systemd service ──────────
-# Deliberately NOT enabled here (no `systemctl enable`): whether it should
-# be running at all is a config.yaml setting (aprs's mode plus
-# startup.autostart), decided by main.py's own boot sequence each time
-# (which regenerates direwolf.conf fresh from config.yaml and then starts
-# or stops this unit accordingly, via the sudoers-scoped systemctl access
-# above), not something systemd should unconditionally do on its own.
-# ExecStart points at $APP_DIR/direwolf.conf: a plain file the app already
-# owns and regenerates directly (see services/direwolf_config.py), not
-# /etc/direwolf/ like ORIGINAL used, so no root access is needed just to
-# write it, only to start/stop the service itself.
-# Restart=/RestartSec= below are just install-time fallbacks; the real,
-# user-configured values (Startup tab's "restart automatically if it
-# crashes") are applied on top via a systemd drop-in at
-# /etc/systemd/system/direwolf.service.d/override.conf, written by
-# services/restart_policy.py (see RESTARTPOLICY_PATH above) on every normal
-# boot before direwolf is ever started, so these fallbacks are never
-# actually what a running station sees in practice.
+# Not enabled here; main.py starts/stops it based on config.yaml. Restart=/RestartSec= are
+# just install-time fallbacks, overridden by services/restart_policy.py's drop-in on every boot.
 sudo tee /etc/systemd/system/direwolf.service > /dev/null <<EOF
 [Unit]
 Description=Direwolf (APRS soundcard TNC/digipeater)
@@ -425,7 +445,7 @@ After=network.target sound.target
 Type=simple
 User=$USER
 WorkingDirectory=$APP_DIR
-ExecStart=/usr/bin/direwolf -c $APP_DIR/direwolf.conf -t 0
+ExecStart=/usr/local/bin/direwolf -c $APP_DIR/direwolf.conf -t 0
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal

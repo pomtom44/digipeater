@@ -41,7 +41,7 @@ Once flashing finishes, insert the SD card into the Pi and power it on. After ~6
 
 ```bash
 ssh pi@digipeater.local
-curl -sSL https://raw.githubusercontent.com/pomtom44/digipeater/main/DEV_BUILD/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/pomtom44/digipeater/main/install.sh | bash
 ```
 
 You'll be asked for a WiFi country code (only if one isn't already set) and which e-ink display is connected (pick "None" if there isn't one).

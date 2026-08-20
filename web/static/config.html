@@ -4,21 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APRS Digipeater: Settings</title>
-  <!-- Applied before the stylesheet below is parsed, so the page never
-       paints in the wrong theme and then flips: see the matching
-       :root[data-theme] rules in <style> and the theme-toggle wiring
-       further down for how 'ui-theme' gets set. -->
+  <!-- Set the saved theme before the stylesheet parses to avoid a flash. -->
   <script>
     (function() {
       var t = localStorage.getItem('ui-theme');
       if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
     })();
   </script>
-  <!-- Vendored locally (no CDN), see web/static/maplibre/. Only actually
-       loaded/used by the Map tab's region picker, ported from
-       first_run.html's Map caching step: it renders from the locally
-       cached PMTiles map data, not a live tile server, so it needs a
-       vector renderer rather than a raster tile layer. -->
+  <!-- Vendored MapLibre stylesheet, used by the Map tab's region picker. -->
   <link rel="stylesheet" href="/static/maplibre/maplibre-gl.css">
   <style>
     :root {
@@ -625,8 +618,7 @@
   <script src="/static/maplibre/maplibre-gl.js"></script>
   <script src="/static/maplibre/pmtiles.js"></script>
   <script>
-    // ── UI theme toggle (identical pattern across every page in this
-    // project: first_run.html, normal.html, login.html) ─────────────────
+    // ── UI theme toggle ──────────────────────────────────────────────
     const UI_THEME_KEY = 'ui-theme';
     const THEME_CYCLE = [null, 'light', 'dark'];
     const THEME_LABELS = { null: 'Theme: System', light: 'Theme: Light', dark: 'Theme: Dark' };
@@ -651,7 +643,7 @@
       applyUiTheme(uiTheme);
     });
 
-    // ── Shared help modal (ported from first_run.html) ──────────────────
+    // ── Shared help modal ─────────────────────────────────────────────
     function helpIcon(text) {
       const escaped = text.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
       return `<button type="button" class="help-icon" data-help="${escaped}" aria-label="Help">?</button>`;
@@ -725,24 +717,12 @@
       return opt;
     }
 
-    // ── In-memory config state, hydrated once from GET /api/config +
-    // GET /api/display/config on load, then read/written by each tab's
-    // own render/collect pair. Same one-key-per-section shape as
-    // first_run.html's wizardData, since config.yaml's sections were
-    // originally written straight from that object's shape (see
-    // /api/setup/complete in web/server.py). ──────────────────────────
+    // ── In-memory config state, hydrated from the config APIs on load ───
     const state = { radio: {}, aprs: {}, gps: {}, map: {}, startup: {}, display: {}, user: {}, gpio: {} };
 
     let authState = { mode: 'none', logged_in: false };
 
-    // ── Tabs: every panel's HTML is built once at load and left in the
-    // DOM (not torn down/rebuilt on every click, unlike first_run.html's
-    // step-at-a-time wizard): each tab is independently reachable, and
-    // ids don't collide across tabs (every wizard step already used its
-    // own distinct id namespace, so porting them verbatim carries that
-    // property over for free). Only the Map tab's MapLibre instance is
-    // deferred to first click: it needs a visible, non-zero-size
-    // container to measure itself against. ─────────────────────────────
+    // ── Tabs: each panel's HTML is built once at load; Map is deferred to first click ──
     const TABS = [
       { id: 'network', label: 'Network' },
       { id: 'aprs', label: 'APRS' },
@@ -779,10 +759,7 @@
       }
     }
 
-    // ── Network tab (ported from first_run.html's Network setup step;
-    // has its own "Save WiFi credentials" button rather than feeding the
-    // global Save-all, since a WiFi change is its own reboot-required
-    // flow through POST /api/network/wifi, unrelated to config.yaml). ──
+    // ── Network tab: has its own Save WiFi credentials button, separate from global Save-all ──
     function renderNetworkTab() {
       document.getElementById('network-tab-content').innerHTML = `
         <section>
@@ -903,11 +880,8 @@
       }
     }
 
-    // ── Radio tab (ported from first_run.html's Radio setup step) ───────
-    // Radio model and TX power level are still placeholder dummy lists:
-    // no radio-control backend exists yet, same as the wizard. Audio
-    // device and the serial/CM108 entries in PTT method are read live
-    // from this device (see services/hardware.py).
+    // ── Radio tab ─────────────────────────────────────────────────────
+    // Radio model and TX power level are placeholder dummy lists, no radio-control backend yet
     const PLACEHOLDER_RADIOS = [
       'Baofeng UV-5R',
       'Yaesu FT-2980R',
@@ -915,10 +889,7 @@
       'Icom IC-2730A',
     ];
     const PLACEHOLDER_POWER_LEVELS = ['Low', 'Medium', 'High'];
-    // Same fixed wiring convention as first_run.html (see PINOUT.md):
-    // this is just the fallback shown/used when the GPIO tab hasn't
-    // overridden it. The GPIO tab is the one editable home for the real
-    // value; see collectRadioTab below.
+    // Fallback PTT GPIO pin used until overridden on the GPIO tab
     const RADIO_DEFAULT_PTT_GPIO_PIN = 22;
     const RADIO_DEFAULT_PTT_GPIO_PHYSICAL_PIN = 15;
 
@@ -1009,20 +980,13 @@
       loadSerialPttOptions();
     }
 
-    // Serial PTT line (RTS/DTR) only means anything once a serial: device
-    // is actually the picked PTT method; hidden otherwise so it doesn't
-    // read as relevant to GPIO/VOX/CM108. Top-level (not nested in
-    // renderRadioTab) so loadCm108PttOptions/loadSerialPttOptions below,
-    // which can change radio-ptt's value once their device lists arrive,
-    // can also call it.
+    // Shows the serial PTT line field only when Serial is the selected PTT method
     function updatePttSerialLineVisibility() {
       const isSerial = document.getElementById('radio-ptt').value.startsWith('serial:');
       document.getElementById('radio-ptt-serial-line-wrap').classList.toggle('hidden', !isSerial);
     }
 
-    // Set once this tab's own "Yes, I understand" button is clicked, so
-    // the warning doesn't reappear if the Radio tab re-renders within
-    // this same session.
+    // Set once "Yes, I understand" is clicked, so the warning doesn't reappear on re-render
     let audioInputWarningAcked = false;
 
     function updateAudioInputWarning(devices) {
@@ -1086,10 +1050,7 @@
       }
     }
 
-    // No confirm-modal gate here (unlike the wizard's saveRadioStep):
-    // there's no Next to block, so a blank frequency just keeps showing
-    // its inline warning above (see updateFreqWarning) and Save proceeds
-    // regardless.
+    // A blank frequency shows an inline warning but doesn't block Save
     function collectRadioTab() {
       const pttMethod = document.getElementById('radio-ptt').value;
       const radio = {
@@ -1100,9 +1061,7 @@
         power_level: document.getElementById('radio-power').value,
       };
       if (pttMethod === 'gpio') {
-        // The GPIO tab is the one editable home for this value (see
-        // collectGpioTab), so it's read live from there, not from
-        // anything on this tab.
+        // Read live from the GPIO tab, the editable home for this value
         const pinEl = document.getElementById('gpio-ptt-gpio-pin');
         radio.ptt_gpio_pin = pinEl ? (parseInt(pinEl.value, 10) || RADIO_DEFAULT_PTT_GPIO_PIN) : RADIO_DEFAULT_PTT_GPIO_PIN;
       }
@@ -1113,13 +1072,7 @@
       return radio;
     }
 
-    // ── APRS tab (ported from first_run.html's APRS settings step) ──────
-    // Symbol table verified against aprs.org's official reference
-    // (aprs.org/symbols/symbolsX.txt) and the alternate-table overlay
-    // convention for igate capability signalling (symbols-new.txt):
-    // I=generic igate, R=RX-only, T=1-hop TX-capable, 2=2-hop TX-capable.
-    // Icon art is bundled locally (web/static/aprs-symbols/): no network
-    // fetch needed to render the picker.
+    // ── APRS tab: overlay letters signal igate capability (I=generic, R=RX-only, T=1-hop TX, 2=2-hop TX) ──
     const APRS_DEFAULT_SERVER = 'rotate.aprs2.net';
     const APRS_IGATE_REGIONS = {
       automatic: APRS_DEFAULT_SERVER,
@@ -1141,11 +1094,7 @@
       widearea: { alias: '^WIDE[3-7]-[1-7]$|^TEST$', wide: '^WIDE[12]-[12]$' },
     };
 
-    // Full base symbol set (no overlay variants: overlay is a separate,
-    // free-form character typed directly into the code field on top of
-    // whichever base symbol is picked here); table+symbol+label sourced
-    // from hessu/aprs-symbol-index's symbols.csv (same author/project as
-    // the icon art itself), filtered to the 159 assigned/labeled entries.
+    // Base symbol set; overlay is a separate character typed into the code field
     const APRS_SYMBOLS = [
       { table: '/', symbol: '!', label: 'Police station' },
       { table: '/', symbol: '#', label: 'Digipeater' },
@@ -1308,10 +1257,7 @@
       { table: '\\', symbol: '{', label: 'Fog' },
     ];
 
-    // Real APRS symbol art from hessu/aprs-symbols (github.com/hessu/aprs-symbols,
-    // CC BY-SA 4.0). Grid is 16 columns x 6 rows of square 64x64 cells,
-    // sequential ASCII from '!' (94 printable chars fit exactly in
-    // 16x6=96 cells).
+    // Sprite sheet is a 16x6 grid of 64x64 cells, sequential ASCII from '!'
     const SPRITE_CELL_W = 64;
     const SPRITE_CELL_H = 64;
     const SPRITE_SHEET_W = 1024;
@@ -1324,10 +1270,7 @@
       return { sheet, col: code % 16, row: Math.floor(code / 16) };
     }
 
-    // display:inline-block + flex-shrink:0 in the inline style: a bare
-    // <span> is display:inline, so width/height are spec-ignored unless
-    // something blockifies it (see web/static/normal.html's own copy of
-    // this function for the full story on the bug this fixes).
+    // Needs display:inline-block or width/height on the span are ignored
     function symbolGlyphHTML(sym, displayW) {
       const { sheet, col, row } = spriteCellFor(sym);
       const scale = displayW / SPRITE_CELL_W;
@@ -1418,8 +1361,7 @@
       return parseSymbolCode(input.value) || { table: '/', symbol: '#', overlay: '' };
     }
 
-    // Shared markup for the RF beacon / IGate beacon sections: identical
-    // fields apart from Path, which only makes sense for an RF beacon.
+    // Shared markup for RF beacon / IGate beacon sections; Path only applies to RF
     function beaconFieldsHTML(prefix, { includePath }) {
       return `
         ${includePath ? `
@@ -1649,12 +1591,7 @@
         </section>
       `;
 
-      // Declared before any of the restore/preset calls below, several of
-      // which (applyIgateRegionPreset -> updateIgateRegionWarning) read
-      // igateMode/digipeatMode through this closure: referencing a const
-      // before its own declaration line has run throws a ReferenceError
-      // even from within a nested function, since the TDZ covers the
-      // whole enclosing scope from its start, not just the point of use.
+      // Must be declared before the restore/preset calls below that read them via closure (TDZ)
       const digipeatMode = document.getElementById('aprs-digipeat-mode');
       const igateMode = document.getElementById('aprs-igate-mode');
       const digipeatSection = document.getElementById('digipeat-section');
@@ -1798,10 +1735,7 @@
       updateModeVisibility();
     }
 
-    // No confirm-modal gate here (unlike the wizard's saveAprsStep): the
-    // "IGate region still Automatic" check becomes the inline warning
-    // banner wired up in renderAprsTab above (updateIgateRegionWarning),
-    // and Save proceeds regardless of whether it's showing.
+    // IGate region Automatic warning is just an inline banner, doesn't block Save
     function collectAprsTab() {
       const digipeatMode = document.getElementById('aprs-digipeat-mode').value;
       const igateMode = document.getElementById('aprs-igate-mode').value;
@@ -1857,9 +1791,8 @@
       return aprsConfig;
     }
 
-    // ── GPS tab (ported from first_run.html's GPS setup step) ───────────
+    // ── GPS tab ───────────────────────────────────────────────────────
     // ── Manual position: coordinate format conversions ──────────────────
-    // All pure client-side math: no API key, no network call needed.
     const MAIDENHEAD_LETTERS = 'ABCDEFGHIJKLMNOPQR';
 
     function formatDMS(decimal, isLat) {
@@ -2227,11 +2160,7 @@
       updateLocPreview();
     }
 
-    // Returns null (rather than blocking a Next button, as the wizard's
-    // saveGpsStep does) when a manual position doesn't parse: saveAll()
-    // treats that as a reason to abort the whole save and point back at
-    // this tab, since sending a garbage position to gpsconfig.apply()
-    // isn't something worth doing quietly.
+    // Returns null when a manual position doesn't parse, aborting saveAll()
     function collectGpsTab() {
       const positionSource = document.getElementById('gps-position-source').value;
       let latitude = '', longitude = '';
@@ -2259,14 +2188,7 @@
       return gps;
     }
 
-    // ── Map tab (ported from first_run.html's Map caching step) ─────────
-    // Unlike every other tab, this one's content is built lazily on first
-    // click (see switchTab in the boot section below), not eagerly at
-    // load: MapLibre needs a visible, non-zero-size container to measure
-    // itself against, and this tab's panel is display:none until chosen.
-    // Downloads started here persist their own bounds into config.yaml
-    // server-side (see /api/map/cache/start), so this tab has no
-    // "Save" of its own and isn't part of the global Save-all payload.
+    // ── Map tab: content is built lazily on first click, has no Save of its own ──
     const MAP_DEFAULT_RADIUS_KM = 50;
     const MAP_MIN_ZOOM = 1;
     const MAP_SLIDER_MAX_ZOOM = 15; // matches Protomaps' hosted planet build, which only goes to z15
@@ -2604,10 +2526,7 @@
       })();
     }
 
-    // ── E-Ink tab (ported from first_run.html's E-Ink display step) ─────
-    // Driver/model are hydrated from GET /api/display/config (a separate
-    // file, display_config.json, not config.yaml) rather than state.display,
-    // which only ever carries the page-rotation list; see the boot IIFE.
+    // ── E-Ink tab: driver/model come from GET /api/display/config, not config.yaml ──
     const EINK_DEFAULT_PAGES = [
       { id: 'status', label: 'Status' },
       { id: 'config_summary', label: 'Config summary' },
@@ -2717,10 +2636,7 @@
       } catch (e) {
         // "None" still works without this
       }
-      // driver/model come from GET /api/display/config, stashed onto
-      // state.display alongside the page list during the boot hydrate
-      // (see the boot IIFE): a separate file from config.yaml, same as
-      // the wizard sources them from two places.
+      // driver/model come from state.display, hydrated during boot
       select.value = `${d.driver || 'none'}|${d.model || ''}`;
     }
 
@@ -2735,12 +2651,7 @@
       return display;
     }
 
-    // ── User tab (ported from first_run.html's User management step) ────
-    // Unlike the wizard, the password field is optional here: leaving it
-    // blank means "keep the current password" (enforced server-side in
-    // /api/config/save, since GET /api/config never hands the hash back
-    // to the frontend to begin with, so there's nothing to prefill it
-    // with even if this wanted to).
+    // ── User tab: leaving the password field blank keeps the current password ──
     const USER_SECURITY_MODES = [
       { value: 'none', label: 'No security' },
       { value: 'readonly', label: 'Read only' },
@@ -2777,9 +2688,7 @@
       const msg = document.getElementById('user-msg');
       modeSelect.value = u.mode || 'none';
 
-      // Live validation, but never disables anything: there's no Next
-      // button to gate here, only collectUserTab()'s own check at Save
-      // time (see below), which blocks just this section of the payload.
+      // Live validation only, actual gating happens in collectUserTab() at Save
       function updateState() {
         const needsPassword = modeSelect.value !== 'none';
         passwordField.classList.toggle('hidden', !needsPassword);
@@ -2813,9 +2722,7 @@
       updateState();
     }
 
-    // Returns null (instead of blocking a Next button) when a mode needs
-    // a password and what was typed is invalid: saveAll() treats that as
-    // a reason to abort the whole save and point back at this tab.
+    // Returns null when a required password is invalid, aborting saveAll()
     function collectUserTab() {
       const mode = document.getElementById('user-security-mode').value;
       const msg = document.getElementById('user-msg');
@@ -2835,19 +2742,12 @@
         msg.className = 'msg error';
         return null;
       }
-      // Empty password: the backend keeps whatever hash/salt is already
-      // on disk (see /api/config/save's handling of body.user.password).
+      // Empty password means the backend keeps the existing hash/salt
       state.user = { mode, password };
       return state.user;
     }
 
-    // ── Startup tab (ported from first_run.html's Startup step) ─────────
-    // Also touches map.auto_update.{enabled,time}, same as the wizard:
-    // kept inside state.map.auto_update so the Map tab's own bounds
-    // (north/south/east/west/zoom_max, which the Map tab manages
-    // directly through its own live download action, not through
-    // state.map at all) are never clobbered by a save that doesn't
-    // touch the Map tab.
+    // ── Startup tab: also touches map.auto_update, leaving the Map tab's own bounds alone ──
     const STARTUP_DEFAULT_RESTART_ATTEMPTS = 3;
     const STARTUP_DEFAULT_RESTART_DELAY_S = 30;
 
@@ -2950,12 +2850,7 @@
       return startup;
     }
 
-    // ── GPIO tab (new: no wizard equivalent). Overrides for pin
-    // assignments otherwise hardcoded in services/relay.py and
-    // display/waveshare/epdconfig.py, plus the one editable home for
-    // radio.ptt_gpio_pin (which lives under the radio section, not gpio,
-    // see collectRadioTab above). Defaults match PINOUT.md's documented
-    // wiring convention. ──────────────────────────────────────────────
+    // ── GPIO tab: overrides pin assignments hardcoded in relay.py and epdconfig.py ──
     const GPIO_DEFAULT_RELAY_PIN = 27;
     const GPIO_DEFAULT_EINK_RST = 17;
     const GPIO_DEFAULT_EINK_DC = 25;
@@ -3015,10 +2910,7 @@
       updateConflictWarning();
     }
 
-    // radio.ptt_gpio_pin is deliberately NOT collected here: it's read
-    // directly off this tab's own input by collectRadioTab() instead,
-    // since the backend's gpio config-save key means only these five
-    // pins (see /api/config/save in web/server.py).
+    // radio.ptt_gpio_pin is read by collectRadioTab() instead, not collected here
     function collectGpioTab() {
       const gpio = {
         relay_pin: parseInt(document.getElementById('gpio-relay-pin').value, 10) || GPIO_DEFAULT_RELAY_PIN,
@@ -3031,8 +2923,7 @@
       return gpio;
     }
 
-    // ── Save-all (the page's single global save action; Map and Network
-    // are excluded, see their own tabs above) ───────────────────────────
+    // ── Save-all: the global save action; Map and Network save separately ──
     const APPLIED_LABELS = { gps: 'GPS', radio: 'Radio', aprs: 'APRS', startup: 'Startup (restart policy)', display_pages: 'E-Ink page rotation' };
     const REBOOT_LABELS = { gpio: 'GPIO pins (relay and e-ink)', display: 'E-Ink display driver/model' };
 
@@ -3065,13 +2956,7 @@
     }
 
     async function rebootNow() {
-      // A region download doesn't survive a reboot and can't be resumed
-      // (see services/tiles.py's RegionDownloader): the wizard's own
-      // Finish step already blocks on this (first_run.html), but this is
-      // a separate, later reboot path (post-setup, from a GPIO/display
-      // save), so it needs its own check. Best-effort: a failed status
-      // check is treated as "can't tell, don't block on it" rather than
-      // trapping the user if the endpoint itself is having trouble.
+      // Checks for an in-progress region download, which can't survive a reboot
       try {
         const res = await fetch('/api/map/cache/status');
         const data = await res.json();
@@ -3095,9 +2980,7 @@
         if (!res.ok) throw new Error('reboot endpoint unavailable');
         if (btn) btn.textContent = 'Rebooting, this page will stop responding shortly...';
       } catch (e) {
-        // No standalone reboot endpoint exists outside first-boot setup's
-        // own /api/setup/complete (see web/server.py): degrades to asking
-        // for a manual power-cycle rather than pretending this worked.
+        // No standalone reboot endpoint exists, so ask for a manual power-cycle
         showSaveBanner('error', 'Could not trigger a reboot automatically. Please power-cycle the device by hand for the changes above to take effect.');
       }
     }
@@ -3167,9 +3050,7 @@
       }
     }
 
-    // ── Boot: hydrate state from GET /api/config + GET /api/display/config,
-    // then render every tab except Map (deferred to first click; see
-    // switchTab). ────────────────────────────────────────────────────────
+    // ── Boot: hydrate state, then render every tab except Map (deferred to first click) ──
     (async () => {
       document.getElementById('btn-save-all').textContent = 'Save all changes';
 
@@ -3188,9 +3069,7 @@
         }
         if (res.ok) cfg = await res.json();
       } catch (e) {
-        // Degrades to an empty cfg: every tab below handles missing
-        // sections by falling back to defaults, same as the wizard does
-        // for a fresh, never-configured field.
+        // Degrades to an empty cfg; each tab falls back to defaults for missing sections
       }
 
       state.radio = cfg.radio || {};
@@ -3199,10 +3078,7 @@
       state.map = cfg.map || {};
       state.startup = cfg.startup || {};
       state.gpio = cfg.gpio || {};
-      // GET /api/config's security section only ever carries {mode}: see
-      // get_config() in web/server.py, which strips hash/salt before
-      // this response is even built. "user" isn't a real config.yaml
-      // section, it's this page's (and the wizard's) name for that data.
+      // "user" is this page's name for config.yaml's security section, which only carries {mode}
       state.user = { mode: (cfg.security && cfg.security.mode) || 'none' };
       state.display = { pages: (cfg.display && cfg.display.pages) || [] };
 

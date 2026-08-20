@@ -20,8 +20,8 @@ except ImportError:
 CONFIG_PATH = Path("config.yaml")
 _DIREWOLF_UNIT = "direwolf"
 
-_RE_RF_BEACON = re.compile(r"(?:Transmitting|Sending).*?beacon", re.IGNORECASE)
-_RE_IG_BEACON = re.compile(r"Sending\s+to\s+(?:IS|APRS-IS)", re.IGNORECASE)
+_RE_RF_XMIT = re.compile(r"^\[\d[HL][^\]]*\]\s*([^>\s]+)>")
+_RE_IG_XMIT = re.compile(r"^\[ig\]\s*([^>\s]+)>")
 
 _MAX_HEARD_STATIONS = 50
 # How long to wait before reconnecting journalctl/KISS if either drops
@@ -185,12 +185,13 @@ class PacketLog:
             # No journalctl available; back off instead of retrying forever.
             await asyncio.sleep(3600)
             return
+        my_call = _my_callsign()
         try:
             while True:
                 line = await proc.stdout.readline()
                 if not line:
                     break
-                self._handle_log_line(line.decode(errors="replace").rstrip())
+                self._handle_log_line(line.decode(errors="replace").rstrip(), my_call)
         finally:
             if proc.returncode is None:
                 proc.terminate()
@@ -224,11 +225,17 @@ class PacketLog:
         finally:
             writer.close()
 
-    def _handle_log_line(self, line: str) -> None:
-        """journalctl path: detects beacon transmissions only."""
-        if _RE_RF_BEACON.search(line):
+    def _handle_log_line(self, line: str, my_call: str) -> None:
+        """journalctl path: matches Direwolf's own TX log line, source callsign must be ours."""
+        if not my_call:
+            return
+        call_root = my_call.split("-")[0]
+        m = _RE_RF_XMIT.match(line)
+        if m and m.group(1).split("-")[0].upper() == call_root:
             self._last_rf_beacon_at = time.time()
-        elif _RE_IG_BEACON.search(line):
+            return
+        m = _RE_IG_XMIT.match(line)
+        if m and m.group(1).split("-")[0].upper() == call_root:
             self._last_igate_beacon_at = time.time()
 
     def _handle_packet_string(self, packet_str: str, my_call: str) -> None:

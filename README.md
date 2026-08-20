@@ -20,13 +20,14 @@ You still are, under the hood, this project doesn't replace Direwolf's TNC/modem
 
 ## Hardware
 
-**Required**
-- Raspberry Pi (3B confirmed, others may work, see [`SUPPORTED_HARDWARE.md`](DEV_BUILD/SUPPORTED_HARDWARE.md))
+- Raspberry Pi (3B recommended, others may work, see [`SUPPORTED_HARDWARE.md`](SUPPORTED_HARDWARE.md))
 - MicroSD card and power supply
-- A radio with a PTT interface: GPIO, VOX, USB (CM108), or serial
-
-**Recommended**
 - External USB audio device with both mic and headphone jacks (the Pi's own jack is playback-only)
+OR
+- Serial connection to a radio that supports audio over serial
+- A radio with PTT control (Pin in, modified handset, etc)
+OR
+- A radio that supports PTT over serial / data connnections
 - USB GPS module, for live position beaconing and system time sync
 - Radio power relay, to power the radio on/off automatically
 - E-ink display, for at-a-glance status without opening the dashboard
@@ -37,11 +38,11 @@ You still are, under the hood, this project doesn't replace Direwolf's TNC/modem
 2. Assemble your hardware (skip anything you're not using)
 3. Boot the Pi and follow the setup wizard from your phone or laptop, over its own WiFi hotspot
 
-For the full walkthrough, see [`DEV_BUILD/SETUP.md`](DEV_BUILD/SETUP.md). For how it all works under the hood, see [`DEV_BUILD/OVERVIEW.md`](DEV_BUILD/OVERVIEW.md). For supported hardware and GPIO wiring specifics, see [`DEV_BUILD/SUPPORTED_HARDWARE.md`](DEV_BUILD/SUPPORTED_HARDWARE.md) and [`DEV_BUILD/PINOUT.md`](DEV_BUILD/PINOUT.md).
+For the full walkthrough, see [`SETUP.md`](SETUP.md). For how it all works under the hood, see [`OVERVIEW.md`](OVERVIEW.md). For supported hardware and GPIO wiring specifics, see [`SUPPORTED_HARDWARE.md`](SUPPORTED_HARDWARE.md) and [`PINOUT.md`](PINOUT.md).
 
 ## Project Structure
 
-- **`DEV_BUILD/`**: the active, current codebase. Everything above points here.
+- **`main.py`**, **`services/`**, **`display/`**, **`web/`**: the application itself.
 - **`ORIGINAL/`**: an earlier prototype, kept for reference only, not actively developed.
 - **`TODO.md`**: known gaps and in-progress work.
 
@@ -54,8 +55,8 @@ MIT, see [LICENSE](LICENSE).
 This project drives or vendors:
 
 - [Direwolf](https://github.com/wb2osz/direwolf) (GPL-2.0): run as a separate process, not modified or redistributed
-- [MapLibre GL JS](https://github.com/maplibre/maplibre-gl-js) (BSD-3-Clause): vendored in `DEV_BUILD/web/static/maplibre/`
-- [PMTiles](https://github.com/protomaps/PMTiles) (BSD-3-Clause): vendored in `DEV_BUILD/web/static/maplibre/`
-- [Waveshare e-Paper driver](https://github.com/waveshareteam/e-Paper) (MIT): ported in `DEV_BUILD/display/waveshare/`
+- [MapLibre GL JS](https://github.com/maplibre/maplibre-gl-js) (BSD-3-Clause): vendored in `web/static/maplibre/`
+- [PMTiles](https://github.com/protomaps/PMTiles) (BSD-3-Clause): vendored in `web/static/maplibre/`
+- [Waveshare e-Paper driver](https://github.com/waveshareteam/e-Paper) (MIT): ported in `display/waveshare/`
 
-Python dependencies (FastAPI, Starlette, Pillow, and others, see [`DEV_BUILD/requirements.txt`](DEV_BUILD/requirements.txt)) are installed via pip and covered by their own licenses, not vendored in this repo.
+Python dependencies (FastAPI, Starlette, Pillow, and others, see [`requirements.txt`](requirements.txt)) are installed via pip and covered by their own licenses, not vendored in this repo.

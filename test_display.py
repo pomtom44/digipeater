@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""
-Standalone e-ink refresh-mode test — Waveshare Pico-ePaper-2.9-B (296x128, B/W/R).
-
-Draws large text to the panel using each of the four refresh modes the
-SSD1680-family controller supports, so they can be compared directly on real
-hardware to decide which one the app should actually use. Every pin, SPI
-setting, and command byte below is copied from the real driver —
-DEV_BUILD/display/waveshare/epd2in9b_v4.py and epdconfig.py — so nothing
-tested here can diverge from what the app actually runs. If those files
-change, update this to match.
+"""Standalone e-ink refresh-mode test for the Waveshare Pico-ePaper-2.9-B (296x128, B/W/R), must match display/waveshare/epd2in9b_v4.py and epdconfig.py.
 
 Usage:
     python3 test_display.py slide1   # draws "Slide 1"        (full refresh,    0xF7)
@@ -16,16 +7,12 @@ Usage:
     python3 test_display.py fast     # draws "Reset Fast"      (fast refresh,    0xC7)
     python3 test_display.py base     # draws "Reset Base"      (base refresh,    0xF4)
     python3 test_display.py partial  # draws "Reset Partial"   (partial refresh, 0x1C)
-
-Each run is independent — init() re-runs every time, then draws with
-whichever refresh mode that slide uses. Run them one at a time and watch
-the panel between runs.
 """
 
 import sys
 import time
 
-# ── Pins / SPI — must match DEV_BUILD/display/waveshare/epdconfig.py ────
+# ── Pins / SPI, must match display/waveshare/epdconfig.py ──
 RST_PIN = 17
 DC_PIN = 25
 CS_PIN = 8
@@ -41,7 +28,7 @@ try:
     HW = True
 except ImportError:
     HW = False
-    print("!! RPi.GPIO/spidev not available — simulation mode, no real hardware access")
+    print("!! RPi.GPIO/spidev not available, simulation mode, no real hardware access")
 
 spi = None
 
@@ -100,7 +87,7 @@ def spi_writebytes(data):
             spi.writebytes(data[i:i + 4096])
 
 
-# ── EPD driver — mirrors epd2in9b_v4.py exactly ──────────────────────
+# ── EPD driver, mirrors epd2in9b_v4.py exactly ──────────────────────
 
 def reset():
     digital_write(RST_PIN, 1)
@@ -139,33 +126,28 @@ def wait_busy():
 
 
 def turn_on():
-    """Full refresh — visible black/white flash."""
+    """Full refresh, visible black/white flash."""
     cmd(0x22); data(0xF7)
     cmd(0x20)
     wait_busy()
 
 
 def turn_on_fast():
-    """Fast refresh — shorter waveform."""
+    """Fast refresh, shorter waveform."""
     cmd(0x22); data(0xC7)
     cmd(0x20)
     wait_busy()
 
 
 def turn_on_base():
-    """'Base' refresh — used internally by Waveshare's own driver as a
-    reference frame before partial updates, not really meant as a standalone
-    refresh. Included anyway to see how it actually behaves here."""
+    """"Base" refresh, Waveshare's internal reference frame before partial updates."""
     cmd(0x22); data(0xF4)
     cmd(0x20)
     wait_busy()
 
 
 def turn_on_partial():
-    """'Partial' refresh — designed for a restricted sub-region (set via
-    0x44/0x45 before writing), tested here against a full-screen write like
-    the other modes since that's what the app actually does on every update
-    (always redraws the whole page, never just a region)."""
+    """"Partial" refresh, tested here against a full-screen write since that's what the app always does."""
     cmd(0x22); data(0x1C)
     cmd(0x20)
     wait_busy()
@@ -247,7 +229,7 @@ SLIDES = {
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "slide1"
     if mode not in SLIDES:
-        print(f"Unknown mode '{mode}' — use: {', '.join(SLIDES)}")
+        print(f"Unknown mode '{mode}', use: {', '.join(SLIDES)}")
         sys.exit(1)
 
     text, refresh_fn = SLIDES[mode]

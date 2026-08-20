@@ -4,10 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APRS Digipeater: Login</title>
-  <!-- Applied before the stylesheet below is parsed, so the page never
-       paints in the wrong theme and then flips: see the matching
-       :root[data-theme] rules in <style> and the theme-toggle wiring
-       further down for how 'ui-theme' gets set. -->
+  <!-- Sets the theme before first paint to avoid a flash of the wrong theme. -->
   <script>
     (function() {
       var t = localStorage.getItem('ui-theme');
@@ -37,8 +34,7 @@
         --error: #b03a3a;
       }
     }
-    /* Explicit override via the theme toggle, wins over system preference
-       in both directions. */
+    /* Explicit override via the theme toggle, wins over system preference. */
     :root[data-theme="light"] {
       color-scheme: light;
       --bg: #f4f6f6;
@@ -158,14 +154,7 @@
   <div class="card">
     <h1 id="title">APRS Digipeater</h1>
     <p class="hint">Enter the password to continue.</p>
-    <!-- A native form POST, not fetch()+JS redirect: see the long comment
-         on web/server.py's /api/auth/login for why. The browser's own
-         navigation-with-body handling keeps the Set-Cookie and the
-         resulting page load in the same round trip, which a JS-driven
-         fetch-then-location.href sequence turned out not to reliably do
-         (confirmed live: the cookie was set and sat in the browser's own
-         jar the whole time, it just never made it onto the follow-up
-         navigation request). -->
+    <!-- Native form POST, not fetch()+JS redirect, since that dropped the Set-Cookie header on the follow-up navigation. -->
     <form method="POST" action="/api/auth/login">
       <input type="password" name="password" id="password" placeholder="Password" autofocus autocomplete="current-password" required>
       <button type="submit" id="btn-login">Log in</button>
@@ -199,9 +188,7 @@
       applyUiTheme(uiTheme);
     });
 
-    // Backend redirects here with ?error=... on a failed attempt (see
-    // /api/auth/login) rather than the page itself knowing why, since a
-    // native form submission is a fresh page load either way.
+    // Backend redirects here with ?error=... on a failed login attempt.
     const params = new URLSearchParams(location.search);
     const error = params.get('error');
     if (error === '1') {
@@ -212,9 +199,7 @@
       document.getElementById('msg').className = 'msg error';
     }
 
-    // Non-essential: shows the station's callsign in the title if it's
-    // reachable without logging in first (see /api/station-id). Silently
-    // stays generic if not: the actual login form works either way.
+    // Shows the station's callsign in the title if reachable without logging in.
     fetch('/api/station-id')
       .then((res) => res.json())
       .then((data) => {

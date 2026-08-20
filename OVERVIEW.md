@@ -79,5 +79,5 @@ cat direwolf.conf   # in the app's working directory; regenerated from config.ya
 
 **Re-run the installer** to pull the latest code and redeploy:
 ```bash
-curl -sSL https://raw.githubusercontent.com/pomtom44/digipeater/main/DEV_BUILD/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/pomtom44/digipeater/main/install.sh | bash
 ```
