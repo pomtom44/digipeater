@@ -131,33 +131,6 @@ run_with_spinner "Installing system packages..." sudo apt-get install -y -qq \
     libhamlib-dev
 ok "System packages installed"
 
-# ── Build Direwolf from source ────────────────
-# Skips the rebuild on a repeat install if DIREWOLF_VERSION_MARKER already matches.
-DIREWOLF_VERSION="1.8.1"
-DIREWOLF_SRC_DIR="$INSTALL_DIR/direwolf-src"
-DIREWOLF_VERSION_MARKER="$INSTALL_DIR/.direwolf_version"
-if [ -x /usr/local/bin/direwolf ] && [ "$(cat "$DIREWOLF_VERSION_MARKER" 2>/dev/null)" = "$DIREWOLF_VERSION" ]; then
-    ok "Direwolf $DIREWOLF_VERSION already built"
-else
-    run_with_spinner "Fetching Direwolf $DIREWOLF_VERSION source..." bash -c "
-        if [ -d '$DIREWOLF_SRC_DIR/.git' ]; then
-            git -C '$DIREWOLF_SRC_DIR' fetch --quiet --tags
-        else
-            git clone --quiet https://github.com/wb2osz/direwolf.git '$DIREWOLF_SRC_DIR'
-        fi &&
-        git -C '$DIREWOLF_SRC_DIR' checkout --quiet '$DIREWOLF_VERSION'
-    "
-    run_with_spinner "Building Direwolf $DIREWOLF_VERSION (several minutes on a Pi)..." bash -c "
-        mkdir -p '$DIREWOLF_SRC_DIR/build' &&
-        cd '$DIREWOLF_SRC_DIR/build' &&
-        cmake -DCMAKE_BUILD_TYPE=Release .. &&
-        make -j\"\$(nproc)\" &&
-        sudo make install
-    "
-    echo "$DIREWOLF_VERSION" > "$DIREWOLF_VERSION_MARKER"
-    ok "Direwolf $DIREWOLF_VERSION built and installed"
-fi
-
 # ── Use chrony for system time, not systemd-timesyncd ──
 # chrony is what lets the GPS setup step's "update system time from GPS"
 # option actually work (via a GPS refclock, see services/gpsconfig.py);
@@ -199,6 +172,33 @@ if [ -d "$INSTALL_DIR/.git" ]; then
 else
     run_with_spinner "Downloading application..." git clone --quiet "$REPO_URL" "$INSTALL_DIR"
     ok "Application downloaded"
+fi
+
+# ── Build Direwolf from source ────────────────
+# Skips the rebuild on a repeat install if DIREWOLF_VERSION_MARKER already matches.
+DIREWOLF_VERSION="1.8.1"
+DIREWOLF_SRC_DIR="$INSTALL_DIR/direwolf-src"
+DIREWOLF_VERSION_MARKER="$INSTALL_DIR/.direwolf_version"
+if [ -x /usr/local/bin/direwolf ] && [ "$(cat "$DIREWOLF_VERSION_MARKER" 2>/dev/null)" = "$DIREWOLF_VERSION" ]; then
+    ok "Direwolf $DIREWOLF_VERSION already built"
+else
+    run_with_spinner "Fetching Direwolf $DIREWOLF_VERSION source..." bash -c "
+        if [ -d '$DIREWOLF_SRC_DIR/.git' ]; then
+            git -C '$DIREWOLF_SRC_DIR' fetch --quiet --tags
+        else
+            git clone --quiet https://github.com/wb2osz/direwolf.git '$DIREWOLF_SRC_DIR'
+        fi &&
+        git -C '$DIREWOLF_SRC_DIR' checkout --quiet '$DIREWOLF_VERSION'
+    "
+    run_with_spinner "Building Direwolf $DIREWOLF_VERSION (several minutes on a Pi)..." bash -c "
+        mkdir -p '$DIREWOLF_SRC_DIR/build' &&
+        cd '$DIREWOLF_SRC_DIR/build' &&
+        cmake -DCMAKE_BUILD_TYPE=Release .. &&
+        make -j\"\$(nproc)\" &&
+        sudo make install
+    "
+    echo "$DIREWOLF_VERSION" > "$DIREWOLF_VERSION_MARKER"
+    ok "Direwolf $DIREWOLF_VERSION built and installed"
 fi
 
 # ── Enable SPI (required for the e-ink display) ──
