@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only smoke test for the TYT TH-9000D clone-mode protocol: handshake, then dump the full 16KB memory image to a file for comparison against a CHIRP-exported dump. No writes, safe to run against a real radio. Protocol independently reimplemented from CHIRP's th9000.py (GPLv2+) as a reference for the byte-level facts, not a port of its code (see TODO.md)."""
+"""Read-only smoke test for the TYT TH-9000D clone-mode protocol: handshake, then dump the full 16KB memory image to a file for comparison against a CHIRP-exported dump. No writes, safe to run against a real radio. Protocol independently reimplemented from CHIRP's th9000.py (GPLv2+) as a reference for the byte-level facts, not a port of its code."""
 
 import argparse
 import struct
@@ -7,6 +7,10 @@ import sys
 import time
 
 import serial
+
+# Some programming cables power their internal chip parasitically off DTR/RTS; CHIRP
+# asserts both by default (WANTS_DTR/WANTS_RTS in chirp_common.py), so we match that.
+DTR_RTS_SETTLE_S = 0.3
 
 BAUD = 9600
 TIMEOUT_S = 1
@@ -21,6 +25,7 @@ def checksum8(data: bytes) -> int:
 
 def ident(port: serial.Serial) -> bytes:
     for attempt in range(IDENT_RETRIES):
+        port.reset_input_buffer()
         port.write(b"PROGRAM")
         resp = port.read(3)
         if resp == b"QX\x06":
@@ -57,6 +62,10 @@ def main():
 
     with serial.Serial(args.port, BAUD, timeout=TIMEOUT_S) as port:
         print(f"Connecting to {args.port} at {BAUD} baud...")
+        port.dtr = True
+        port.rts = True
+        time.sleep(DTR_RTS_SETTLE_S)
+        port.reset_input_buffer()
         radio_id = ident(port)
         print(f"Radio identified: {radio_id!r}")
 
