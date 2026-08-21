@@ -23,10 +23,16 @@ def checksum8(data: bytes) -> int:
     return sum(data) & 0xFF
 
 
+def echo_write(port: serial.Serial, data: bytes) -> None:
+    """This radio always echoes back whatever it's sent, before its real reply; write and discard that echo."""
+    port.write(data)
+    port.read(len(data))
+
+
 def ident(port: serial.Serial) -> bytes:
     for attempt in range(IDENT_RETRIES):
         port.reset_input_buffer()
-        port.write(b"PROGRAM")
+        echo_write(port, b"PROGRAM")
         resp = port.read(3)
         if resp == b"QX\x06":
             break
@@ -34,7 +40,7 @@ def ident(port: serial.Serial) -> bytes:
     else:
         raise RuntimeError(f"No QX\\x06 response after {IDENT_RETRIES} attempts, check port/cable/power.")
 
-    port.write(b"\x02")
+    echo_write(port, b"\x02")
     radio_id = port.read(16)
     if b"TH-9000" not in radio_id:
         raise RuntimeError(f"Unexpected radio ID {radio_id!r}, expected it to contain b'TH-9000'.")
@@ -42,7 +48,7 @@ def ident(port: serial.Serial) -> bytes:
 
 
 def read_block(port: serial.Serial, addr: int) -> bytes:
-    port.write(struct.pack(">cHb", b"R", addr, BLOCK_SIZE))
+    echo_write(port, struct.pack(">cHb", b"R", addr, BLOCK_SIZE))
     resp = port.read(BLOCK_SIZE + 6)
     if len(resp) != BLOCK_SIZE + 6:
         raise RuntimeError(f"Short read at 0x{addr:04x}: got {len(resp)} bytes, expected {BLOCK_SIZE + 6}.")
@@ -77,7 +83,7 @@ def main():
             if i % 100 == 0 or i == total_blocks - 1:
                 print(f"  read {i + 1}/{total_blocks} blocks ({addr:04x}/{MMAP_SIZE:04x})")
 
-        port.write(b"END")
+        echo_write(port, b"END")
         port.read(1)  # ACK if the radio sends one; empty is also fine here
 
     elapsed = time.monotonic() - start
