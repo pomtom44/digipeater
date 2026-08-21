@@ -142,7 +142,6 @@ run_with_spinner "Switching to chrony for time sync..." bash -c "
     sudo systemctl enable chrony --quiet &&
     sudo systemctl restart chrony
 "
-ok "chrony configured"
 
 # ── Ensure gpsd is running (required for the GPS setup step) ──
 # gpsd's own postinst usually enables its socket-activated unit already,
@@ -156,23 +155,21 @@ run_with_spinner "Configuring gpsd..." bash -c "
     sudo systemctl enable gpsd.socket --quiet &&
     sudo systemctl start gpsd.socket
 "
-ok "gpsd configured"
+ok "Time sync and GPS configured"
 
 # ── Create directories ────────────────────────
 run_with_spinner "Creating application directories..." bash -c "
     sudo mkdir -p '$INSTALL_DIR' &&
     sudo chown -R '$USER:$USER' '$INSTALL_DIR'
 "
-ok "Directories created"
 
 # ── Clone or update repository ────────────────
 if [ -d "$INSTALL_DIR/.git" ]; then
     run_with_spinner "Existing install found, updating..." git -C "$INSTALL_DIR" pull --quiet
-    ok "Application updated"
 else
     run_with_spinner "Downloading application..." git clone --quiet "$REPO_URL" "$INSTALL_DIR"
-    ok "Application downloaded"
 fi
+ok "Application installed"
 
 # ── Build Direwolf from source ────────────────
 # Skips the rebuild on a repeat install if DIREWOLF_VERSION_MARKER already matches.
@@ -222,7 +219,6 @@ echo "$USER ALL=(root) NOPASSWD: $NMCLI_PATH" > "$SUDOERS_TMP"
 if sudo visudo -c -f "$SUDOERS_TMP" > /dev/null 2>&1; then
     sudo install -o root -g root -m 0440 "$SUDOERS_TMP" /etc/sudoers.d/digipeater-nmcli
     rm -f "$SUDOERS_TMP"
-    ok "nmcli permissions configured"
 else
     rm -f "$SUDOERS_TMP"
     fail "Generated sudoers rule failed validation, aborting for safety"
@@ -237,7 +233,6 @@ echo "$USER ALL=(root) NOPASSWD: $REBOOT_PATH" > "$SUDOERS_TMP2"
 if sudo visudo -c -f "$SUDOERS_TMP2" > /dev/null 2>&1; then
     sudo install -o root -g root -m 0440 "$SUDOERS_TMP2" /etc/sudoers.d/digipeater-reboot
     rm -f "$SUDOERS_TMP2"
-    ok "reboot permissions configured"
 else
     rm -f "$SUDOERS_TMP2"
     fail "Generated sudoers rule failed validation, aborting for safety"
@@ -255,7 +250,6 @@ echo "$USER ALL=(root) NOPASSWD: $GPSCONFIG_PATH" > "$SUDOERS_TMP3"
 if sudo visudo -c -f "$SUDOERS_TMP3" > /dev/null 2>&1; then
     sudo install -o root -g root -m 0440 "$SUDOERS_TMP3" /etc/sudoers.d/digipeater-gpsconfig
     rm -f "$SUDOERS_TMP3"
-    ok "GPS config permissions configured"
 else
     rm -f "$SUDOERS_TMP3"
     fail "Generated sudoers rule failed validation, aborting for safety"
@@ -274,7 +268,6 @@ echo "$USER ALL=(root) NOPASSWD: $SYSTEMCTL_PATH start direwolf, $SYSTEMCTL_PATH
 if sudo visudo -c -f "$SUDOERS_TMP4" > /dev/null 2>&1; then
     sudo install -o root -g root -m 0440 "$SUDOERS_TMP4" /etc/sudoers.d/digipeater-direwolf-control
     rm -f "$SUDOERS_TMP4"
-    ok "Direwolf start/stop permissions configured"
 else
     rm -f "$SUDOERS_TMP4"
     fail "Generated sudoers rule failed validation, aborting for safety"
@@ -296,7 +289,6 @@ echo "$USER ALL=(root) NOPASSWD: $RESTARTPOLICY_PATH" > "$SUDOERS_TMP5"
 if sudo visudo -c -f "$SUDOERS_TMP5" > /dev/null 2>&1; then
     sudo install -o root -g root -m 0440 "$SUDOERS_TMP5" /etc/sudoers.d/digipeater-restart-policy
     rm -f "$SUDOERS_TMP5"
-    ok "Direwolf restart-policy permissions configured"
 else
     rm -f "$SUDOERS_TMP5"
     fail "Generated sudoers rule failed validation, aborting for safety"
@@ -317,11 +309,11 @@ echo "$USER ALL=(root) NOPASSWD: $JOURNALCTL_PATH -u direwolf *" > "$SUDOERS_TMP
 if sudo visudo -c -f "$SUDOERS_TMP6" > /dev/null 2>&1; then
     sudo install -o root -g root -m 0440 "$SUDOERS_TMP6" /etc/sudoers.d/digipeater-journalctl
     rm -f "$SUDOERS_TMP6"
-    ok "Direwolf log-reading permissions configured"
 else
     rm -f "$SUDOERS_TMP6"
     fail "Generated sudoers rule failed validation, aborting for safety"
 fi
+ok "Permissions configured"
 
 # ── Python virtual environment ────────────────
 # --system-site-packages so the venv can see the apt-installed RPi.GPIO/spidev
@@ -331,11 +323,10 @@ run_with_spinner "Setting up Python environment..." bash -c "
     python3 -m venv '$VENV_DIR' --system-site-packages &&
     '$VENV_DIR/bin/pip' install --quiet --upgrade pip
 "
-ok "Virtual environment created"
 
 # ── Install Python dependencies ───────────────
 run_with_spinner "Installing Python packages..." "$VENV_DIR/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
-ok "Python packages installed"
+ok "Python environment ready"
 
 # ── Install go-pmtiles (offline map region downloads) ──────
 # A single static binary, not available via apt, fetched directly from
@@ -359,15 +350,13 @@ esac
 if [ -z "$PMTILES_ARCH" ]; then
     echo -e "${YELLOW}  ⚠ Unrecognised CPU architecture ($(uname -m)): skipping go-pmtiles, map caching won't work. Continuing.${NC}"
 else
-    if run_with_spinner_soft "Installing go-pmtiles..." bash -c "
+    run_with_spinner_soft "Installing go-pmtiles..." bash -c "
         PMTILES_URL=\$(curl -sL https://api.github.com/repos/protomaps/go-pmtiles/releases/latest | grep -o '\"browser_download_url\": *\"[^\"]*Linux_${PMTILES_ARCH}[^\"]*\"' | grep -o 'https://[^\"]*') &&
         [ -n \"\$PMTILES_URL\" ] &&
         mkdir -p '$APP_DIR/bin' &&
         curl -sL \"\$PMTILES_URL\" | tar -xz -C '$APP_DIR/bin' pmtiles &&
         chmod +x '$APP_DIR/bin/pmtiles'
-    "; then
-        ok "go-pmtiles installed"
-    fi
+    " || true
 fi
 
 # ── Install map basemap assets (fonts + sprites) ──────
@@ -377,12 +366,10 @@ fi
 # Soft/non-fatal for the same reason: without these the wizard's map step
 # just can't render (falls back to a plain message), it doesn't break the
 # digipeater's actual RF/APRS function.
-if run_with_spinner_soft "Installing map basemap assets (fonts, icons)..." bash -c "
+run_with_spinner_soft "Installing map basemap assets (fonts, icons)..." bash -c "
     mkdir -p '$APP_DIR/web/static/maplibre-assets' &&
     curl -sL https://codeload.github.com/protomaps/basemaps-assets/tar.gz/refs/heads/main | tar -xz -C '$APP_DIR/web/static/maplibre-assets' --strip-components=1 'basemaps-assets-main/fonts' 'basemaps-assets-main/sprites/v4'
-"; then
-    ok "Map basemap assets installed"
-fi
+" || true
 
 # ── Pre-cache the whole world map (zoom 0-8) ──────
 # Soft version of run_with_spinner: a coarse ~1GB whole-world PMTiles
@@ -392,12 +379,11 @@ fi
 # (map caching just won't offer a picker at all otherwise, same as any
 # other missing optional dependency).
 if [ -x "$APP_DIR/bin/pmtiles" ]; then
-    if run_with_spinner_soft "Pre-caching world map (zoom 0-8, ~1GB)..." bash -c "cd '$APP_DIR' && '$VENV_DIR/bin/python' scripts/precache_world.py"; then
-        ok "World map cached"
-    fi
+    run_with_spinner_soft "Pre-caching world map (zoom 0-8, ~1GB)..." bash -c "cd '$APP_DIR' && '$VENV_DIR/bin/python' scripts/precache_world.py" || true
 else
     info "Skipping world map pre-cache (go-pmtiles not installed); re-run scripts/precache_world.py later once it is."
 fi
+ok "Map data installed"
 
 # ── Install systemd service ───────────────────
 sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null <<EOF
@@ -431,7 +417,6 @@ run_with_spinner "Installing systemd service..." bash -c "
     sudo systemctl daemon-reload &&
     sudo systemctl enable ${SERVICE_NAME} --quiet
 "
-ok "Systemd service installed and enabled; it will start automatically on boot"
 
 # ── Install direwolf systemd service ──────────
 # Not enabled here; main.py starts/stops it based on config.yaml. Restart=/RestartSec= are
@@ -456,7 +441,6 @@ WantedBy=multi-user.target
 EOF
 
 run_with_spinner "Installing direwolf systemd service..." sudo systemctl daemon-reload
-ok "direwolf systemd service installed (not started; the app controls it based on config.yaml)"
 
 # ── Install scheduled map auto-update ─────────
 # Off by default (see scripts/auto_tile_update.py and config.yaml's
@@ -498,7 +482,7 @@ run_with_spinner "Installing map auto-update timer..." bash -c "
     sudo systemctl daemon-reload &&
     sudo systemctl enable --now ${SERVICE_NAME}-tile-update.timer --quiet
 "
-ok "Map auto-update timer installed (checks every 15 min; actual updates stay off until enabled in the wizard/config)"
+ok "Background services installed"
 
 # ── WiFi country ───────────────────────────────
 # Without this set, the WiFi radio is soft-blocked by rfkill and the hotspot

@@ -698,19 +698,26 @@
     }
 
     // ── Beacon stats card, backed by services/packet_log.py's live journal tail ──
+    // Whole minutes, not live seconds: this card only polls every APRS_POLL_MS (10s), so a
+    // per-second ticking display would imply more freshness than it actually has.
+    function beaconMinutesLabel(seconds) {
+      const s = Math.max(0, Math.round(seconds));
+      return s < 60 ? '<1min' : `${Math.floor(s / 60)}min`;
+    }
+
     function beaconStatRows(label, enabled, lastAgo, intervalS) {
       if (!enabled) {
         return `<div class="kv"><span class="k">${label}</span><span class="v">Disabled</span></div>`;
+      }
+      if (lastDirewolfState !== 'running') {
+        return `<div class="kv"><span class="k">${label}</span><span class="v">Not active</span></div>`;
       }
       if (lastAgo === null || lastAgo === undefined) {
         return `<div class="kv"><span class="k">${label}</span><span class="v">None yet</span></div>`;
       }
       const remaining = intervalS - lastAgo;
-      const next = remaining <= 0 ? 'Due' : timeUntilLabel(remaining);
-      return `
-        <div class="kv"><span class="k">${label} last</span><span class="v">${timeSinceLabel(new Date(Date.now() - lastAgo * 1000))}</span></div>
-        <div class="kv"><span class="k">${label} next</span><span class="v">${next}</span></div>
-      `;
+      const next = remaining <= 0 ? 'Due' : beaconMinutesLabel(remaining);
+      return `<div class="kv"><span class="k">${label}</span><span class="v">Last: ${beaconMinutesLabel(lastAgo)}&nbsp;&nbsp;&nbsp;Next: ${next}</span></div>`;
     }
 
     async function renderBeaconStatsBody(cfg) {

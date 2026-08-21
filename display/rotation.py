@@ -99,7 +99,7 @@ _DIREWOLF_STATE_LABELS = {
 }
 _EMPTY_ROTATION_POLL_S = 5
 # Partial refresh leaves faint ghosting over time, so every Nth tick forces a full refresh instead.
-_FULL_REFRESH_EVERY = 10
+_FULL_REFRESH_EVERY = 3
 
 
 def _format_duration(seconds: float) -> str:
