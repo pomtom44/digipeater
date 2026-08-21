@@ -40,7 +40,7 @@ def _build_pages(template):
     station_icon = _render_symbol_glyph("/", ">", _STATION_ICON_SIZE)
 
     return [
-        ("Loading", lambda d: template.draw_loading_page(d, "Digipeater")),
+        ("Loading", lambda d: template.draw_loading_page(d)),
         ("Status", lambda d: template.draw_status_page(d, "Status", [
             ("State", "Running"), ("IP", "192.168.1.50"), ("Uptime", "2h 14m"),
         ])),
