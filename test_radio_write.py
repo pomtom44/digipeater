@@ -107,9 +107,12 @@ def random_test_value() -> tuple[float, int]:
     return freq_mhz, power
 
 
-def apply_test_value(block: bytearray, freq_mhz: float, power: int) -> None:
+def build_channel_block(freq_mhz: float, power: int) -> bytearray:
+    """A fresh, fully-zeroed block with only freq+power set, matching CHIRP's zero-then-set approach."""
+    block = bytearray(BLOCK_SIZE)
     block[0:4] = freq_to_bbcd(round(freq_mhz * 1_000_000))
-    block[10] = (block[10] & ~0b00001100) | (power << 2)
+    block[10] = power << 2
+    return block
 
 
 def erase_other_channels(port: serial.Serial) -> None:
@@ -166,8 +169,7 @@ def main():
                 print("Done.\n")
 
             freq_mhz, power = random_test_value()
-            block = bytearray(read_block(port, channel_addr))
-            apply_test_value(block, freq_mhz, power)
+            block = build_channel_block(freq_mhz, power)
             write_block(port, channel_addr, bytes(block))
 
             readback = read_block(port, channel_addr)
