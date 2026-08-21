@@ -98,8 +98,6 @@ _DIREWOLF_STATE_LABELS = {
     "error": "Error",
 }
 _EMPTY_ROTATION_POLL_S = 5
-# Partial refresh leaves faint ghosting over time, so every Nth tick forces a full refresh instead.
-_FULL_REFRESH_EVERY = 3
 
 
 def _format_duration(seconds: float) -> str:
@@ -123,7 +121,6 @@ class RotationManager:
         self._network_status = network_status
         self._packets = packets
         self._index = 0
-        self._render_count = 0
         self._task: asyncio.Task | None = None
         # Monotonic clock, unaffected by GPS time sync jumps at runtime.
         self._started_at = asyncio.get_event_loop().time()
@@ -162,33 +159,30 @@ class RotationManager:
         # last_beacon/symbol/last_heard use dedicated template functions, not draw_status_page below.
         if page.id == "last_beacon":
             title, headers, rows = self._last_beacon_page(_read_config())
-            await self._render(self._template.draw_table_page, title, headers, rows, fast=True)
+            await self._render(self._template.draw_table_page, title, headers, rows)
             return
         if page.id == "symbol":
             title, symbol_image, comment = self._symbol_page(_read_config())
-            await self._render(self._template.draw_symbol_page, title, symbol_image, comment, fast=True)
+            await self._render(self._template.draw_symbol_page, title, symbol_image, comment)
             return
         if page.id == "last_heard":
             title, symbol_image, callsign, lat, lon, comment = self._last_heard_page()
             await self._render(
-                self._template.draw_station_page, title, symbol_image, callsign, lat, lon, comment, fast=True,
+                self._template.draw_station_page, title, symbol_image, callsign, lat, lon, comment,
             )
             return
         title, rows = await self._build_page_content(page.id)
-        await self._render(self._template.draw_status_page, title, rows, fast=True)
+        await self._render(self._template.draw_status_page, title, rows)
 
-    async def _render(self, draw_fn, *args, fast: bool) -> None:
-        """Off-thread draw and show so a hardware hang can't freeze this loop or the web server."""
+    async def _render(self, draw_fn, *args) -> None:
+        """Off-thread draw and full-refresh show so a hardware hang can't freeze this loop or the web server."""
         try:
             from PIL import Image, ImageDraw, ImageFont  # noqa: F401 (import check before threading)
         except ImportError:
             return
-        self._render_count += 1
-        use_fast = fast and self._render_count % _FULL_REFRESH_EVERY != 0
         try:
             image = await asyncio.to_thread(draw_fn, self._driver, *args)
-            show = self._driver.show_fast if use_fast else self._driver.show
-            await asyncio.to_thread(show, image)
+            await asyncio.to_thread(self._driver.show, image)
         except Exception as e:
             logger.error("Display render failed: %s", e)
 

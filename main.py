@@ -55,8 +55,8 @@ def _load_display_driver(name: str, model: str):
     return NullDriver()
 
 
-async def _render(driver, draw_fn, *args, fast: bool = False) -> None:
-    """Render via draw_fn in a worker thread; fast=True uses a partial refresh instead of full."""
+async def _render(driver, draw_fn, *args) -> None:
+    """Render via draw_fn in a worker thread and show it as a full refresh."""
     try:
         from PIL import Image, ImageDraw, ImageFont  # noqa: F401 (import check before threading)
     except ImportError:
@@ -64,8 +64,7 @@ async def _render(driver, draw_fn, *args, fast: bool = False) -> None:
         return
     try:
         image = await asyncio.to_thread(draw_fn, driver, *args)
-        show = driver.show_fast if fast else driver.show
-        await asyncio.to_thread(show, image)
+        await asyncio.to_thread(driver.show, image)
     except Exception as e:
         logger.error("Display render failed: %s", e)
 
@@ -114,7 +113,7 @@ async def _resolve_network() -> tuple[str, str]:
     return "hotspot", None
 
 
-async def _show_network_status(driver, template, title: str, kind: str, ip: str, fast: bool) -> None:
+async def _show_network_status(driver, template, title: str, kind: str, ip: str) -> None:
     if kind == "ethernet":
         rows = [("Ethernet IP:", ip)]
     elif kind == "wifi":
@@ -125,7 +124,7 @@ async def _show_network_status(driver, template, title: str, kind: str, ip: str,
             ("Password:", HOTSPOT_PASSWORD),
             ("Browse to:", network.HOTSPOT_IP),
         ]
-    await _render(driver, template.draw_status_page, title, rows, fast=fast)
+    await _render(driver, template.draw_status_page, title, rows)
 
 
 async def main() -> None:
@@ -169,7 +168,7 @@ async def main() -> None:
     packets = None
     if first_boot:
         logger.info("No config.yaml found, running first-boot sequence")
-        await _show_network_status(display_driver, template, "Initial config", kind, ip, fast=False)
+        await _show_network_status(display_driver, template, "Initial config", kind, ip)
     else:
         # Normal boot: no static screen render here, the rotation manager's own first tick takes over.
         packets = packet_log.PacketLog()
