@@ -28,6 +28,11 @@ web/static/maplibre-assets/
 # ── Direwolf generated config ─────────────────────────────────
 direwolf.conf
 
+# ── Radio programming test artifacts (personal hardware captures, not project data) ──
+radio_dump.bin
+chirp_reference_image.bin
+*.img
+
 # ── Direwolf source build (install.sh builds Direwolf from source, see .direwolf_version) ──
 direwolf-src/
 .direwolf_version
