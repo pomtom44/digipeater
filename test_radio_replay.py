@@ -69,6 +69,11 @@ def main():
 
     with serial.Serial(port_name, BAUD, timeout=TIMEOUT_S) as port:
         print(f"Connecting to {port_name} at {BAUD} baud...")
+        # Forced low first so the True below is a real transition, not a no-op if the port already opened
+        # high: this radio's clone mode may be triggered by the DTR/RTS edge, not just the held level.
+        port.dtr = False
+        port.rts = False
+        time.sleep(DTR_RTS_SETTLE_S)
         port.dtr = True
         port.rts = True
         time.sleep(DTR_RTS_SETTLE_S)
