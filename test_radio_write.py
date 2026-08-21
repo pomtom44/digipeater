@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interactive write-path test: erases every channel except channel 1 (data and set/skip flags), then generates a random frequency+power, writes it to channel 1, waits for you to verify on the radio's display, then Enter for a new value. Same clone-mode protocol as test_radio_program.py, reimplemented fresh from CHIRP's th9000.py (GPLv2+) as a reference, not a port."""
+"""Single-pass write test: one full programming run, as a real deploy would do it. Erases every channel except channel 1 (data and set/skip flags), writes a random frequency+power to channel 1, verifies the read-back, then exits; re-run the script for another value. Same clone-mode protocol as test_radio_program.py, reimplemented fresh from CHIRP's th9000.py (GPLv2+) as a reference, not a port."""
 
 import argparse
 import random
@@ -156,34 +156,36 @@ def main():
         print(f"Radio identified: {radio_id!r}")
         print(f"Using channel {TEST_CHANNEL} (0x{channel_addr:04x}) as the test channel.\n")
 
-        if not args.skip_erase:
-            erase_other_channels(port)
-            print(f"Setting the set/skip flags so only channel {TEST_CHANNEL} shows as programmed...")
-            flag_bytes = build_flag_bytes(TEST_CHANNEL - 1)
-            write_flags(port, CSETFLAG_BASE, flag_bytes)
-            write_flags(port, CSKIPFLAG_BASE, flag_bytes)
-            print("Done.\n")
-
         try:
-            while True:
-                freq_mhz, power = random_test_value()
-                block = bytearray(read_block(port, channel_addr))
-                apply_test_value(block, freq_mhz, power)
-                write_block(port, channel_addr, bytes(block))
+            if not args.skip_erase:
+                erase_other_channels(port)
+                print(f"Setting the set/skip flags so only channel {TEST_CHANNEL} shows as programmed...")
+                flag_bytes = build_flag_bytes(TEST_CHANNEL - 1)
+                write_flags(port, CSETFLAG_BASE, flag_bytes)
+                write_flags(port, CSKIPFLAG_BASE, flag_bytes)
+                print("Done.\n")
 
-                readback = read_block(port, channel_addr)
-                readback_freq = bbcd_to_freq_hz(readback[0:4]) / 1_000_000
-                readback_power = (readback[10] >> 2) & 0b11
+            freq_mhz, power = random_test_value()
+            block = bytearray(read_block(port, channel_addr))
+            apply_test_value(block, freq_mhz, power)
+            write_block(port, channel_addr, bytes(block))
 
-                print(f"Wrote {freq_mhz:.3f} MHz, power={POWER_NAMES[power]} to channel {TEST_CHANNEL}")
-                print(f"Read back {readback_freq:.5f} MHz, power={POWER_NAMES.get(readback_power, readback_power)}")
-                print(f"Check channel {TEST_CHANNEL} on the radio now.")
-
-                if input("Press Enter for a new value, or 'q' to quit: ").strip().lower() == "q":
-                    break
+            readback = read_block(port, channel_addr)
+            readback_freq = bbcd_to_freq_hz(readback[0:4]) / 1_000_000
+            readback_power = (readback[10] >> 2) & 0b11
         finally:
-            echo_write(port, b"END")
-            port.read(1)
+            # Always exit clone mode before the script ends: this radio appears to time out of clone
+            # mode on its own after a few seconds of inactivity, leaving it stuck on a frozen "CLONE"
+            # screen until power-cycled if it's left in that state rather than exited cleanly.
+            try:
+                echo_write(port, b"END")
+                port.read(1)
+            except serial.SerialException:
+                pass
+
+        print(f"Wrote {freq_mhz:.3f} MHz, power={POWER_NAMES[power]} to channel {TEST_CHANNEL}")
+        print(f"Read back {readback_freq:.5f} MHz, power={POWER_NAMES.get(readback_power, readback_power)}")
+        print(f"Check channel {TEST_CHANNEL} on the radio now. Re-run this script for a new value.")
 
     print("Done.")
 
