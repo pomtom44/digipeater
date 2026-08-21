@@ -4,15 +4,18 @@
 import struct
 import sys
 import time
+from pathlib import Path
 
 import serial
+
+SCRIPT_VERSION = "1"
 
 DTR_RTS_SETTLE_S = 0.3
 BAUD = 9600
 TIMEOUT_S = 1
 IDENT_RETRIES = 5
 BLOCK_SIZE = 0x10
-IMAGE_PATH = "chirp_reference_image.bin"
+IMAGE_PATH = Path(__file__).parent / "chirp_reference_image.bin"
 IMAGE_BASE = 0x0100
 
 
@@ -57,6 +60,7 @@ def write_block(port: serial.Serial, addr: int, data: bytes) -> None:
 
 
 def main():
+    print(f"test_radio_replay.py version {SCRIPT_VERSION}")
     if len(sys.argv) != 3 or sys.argv[1] != "--port":
         print("Usage: test_radio_replay.py --port /dev/ttyUSB0")
         sys.exit(1)

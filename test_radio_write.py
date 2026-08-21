@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single-pass write test: one full programming run, as a real deploy would do it. Erases every channel except channel 1 (data and set/skip flags), writes a random frequency+power to channel 1, verifies the read-back, then exits; re-run the script for another value. Same clone-mode protocol as test_radio_program.py, reimplemented fresh from CHIRP's th9000.py (GPLv2+) as a reference, not a port."""
+"""Single-pass write test: one full programming run, as a real deploy would do it. Erases every channel except channel 1 (data and set/skip flags), sets the radio to boot into Memory mode, writes a random frequency+power to channel 1, verifies the read-back, then exits; re-run the script for another value. Same clone-mode protocol as test_radio_program.py, reimplemented fresh from CHIRP's th9000.py (GPLv2+) as a reference, not a port."""
 
 import argparse
 import random
@@ -8,6 +8,8 @@ import sys
 import time
 
 import serial
+
+SCRIPT_VERSION = "1"
 
 DTR_RTS_SETTLE_S = 0.3
 BAUD = 9600
@@ -27,6 +29,13 @@ BLANK_BLOCK = b"\xFF" * BLOCK_SIZE
 CSETFLAG_BASE = 0x0100
 CSKIPFLAG_BASE = 0x0120
 FLAG_BYTES = 32  # covers up to 256 channels, 1 bit each
+
+# vfo_mr at 0x0221: 0=boots into VFO mode after a clone/power-cycle, 1=boots into Memory mode.
+# Without this the radio can't be remotely operated after programming, someone has to walk over
+# and press V/M by hand. Not exposed in CHIRP's own settings UI, but it's a real memory byte.
+SETTINGS_BLOCK_BASE = 0x0220
+VFO_MR_OFFSET = 0x0221 - SETTINGS_BLOCK_BASE
+MEMORY_MODE = 1
 
 FREQ_MIN_MHZ = 144.000
 FREQ_MAX_MHZ = 148.000
@@ -142,7 +151,15 @@ def write_flags(port: serial.Serial, base_addr: int, flag_bytes: bytes) -> None:
         write_block(port, base_addr + i, flag_bytes[i:i + BLOCK_SIZE])
 
 
+def set_boot_memory_mode(port: serial.Serial) -> None:
+    """Flips vfo_mr to Memory mode, preserving every other byte already in that settings block."""
+    block = bytearray(read_block(port, SETTINGS_BLOCK_BASE))
+    block[VFO_MR_OFFSET] = MEMORY_MODE
+    write_block(port, SETTINGS_BLOCK_BASE, bytes(block))
+
+
 def main():
+    print(f"test_radio_write.py version {SCRIPT_VERSION}")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True, help="Serial port, e.g. /dev/ttyUSB0 or COM5")
     parser.add_argument("--skip-erase", action="store_true", help="Skip re-erasing the other channels this run")
@@ -172,6 +189,10 @@ def main():
                 write_flags(port, CSETFLAG_BASE, flag_bytes)
                 write_flags(port, CSKIPFLAG_BASE, flag_bytes)
                 print("Done.\n")
+
+            print("Setting the radio to boot into Memory mode after this clone...")
+            set_boot_memory_mode(port)
+            print("Done.\n")
 
             freq_mhz, power = random_test_value()
             block = build_channel_block(freq_mhz, power)
