@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interactive write-path test: erases every channel except channel 1, then generates a random frequency+power, writes it to channel 1, waits for you to verify on the radio's display, then Enter for a new value. Same clone-mode protocol as test_radio_program.py, reimplemented fresh from CHIRP's th9000.py (GPLv2+) as a reference, not a port."""
+"""Interactive write-path test: erases every channel except channel 1 (data and set/skip flags), then generates a random frequency+power, writes it to channel 1, waits for you to verify on the radio's display, then Enter for a new value. Same clone-mode protocol as test_radio_program.py, reimplemented fresh from CHIRP's th9000.py (GPLv2+) as a reference, not a port."""
 
 import argparse
 import random
@@ -19,6 +19,14 @@ CHANNEL_SIZE = 0x20
 TOTAL_CHANNELS = 200
 TEST_CHANNEL = 1  # 1-indexed, first channel in the radio's programming list
 BLANK_BLOCK = b"\xFF" * BLOCK_SIZE
+
+# Separate 1-bit-per-channel flag arrays: whether a channel is programmed at all is tracked
+# here, independent of its own data bytes, so a channel with valid data but the wrong flag
+# still won't show on the radio. bit=1 means empty/skip, bit=0 means set/don't-skip, and
+# channel index 0 (channel 1) is the MSB of the first byte (CHIRP's `7 - (n % 8)` convention).
+CSETFLAG_BASE = 0x0100
+CSKIPFLAG_BASE = 0x0120
+FLAG_BYTES = 32  # covers up to 256 channels, 1 bit each
 
 FREQ_MIN_MHZ = 144.000
 FREQ_MAX_MHZ = 148.000
@@ -118,6 +126,19 @@ def erase_other_channels(port: serial.Serial) -> None:
     print("Done erasing.\n")
 
 
+def build_flag_bytes(set_channel_index: int) -> bytes:
+    """All channels flagged empty/skip except set_channel_index (0-based), flagged set/don't-skip."""
+    data = bytearray([0xFF] * FLAG_BYTES)
+    cbyte, cbit = set_channel_index // 8, 7 - (set_channel_index % 8)
+    data[cbyte] &= ~(1 << cbit)
+    return bytes(data)
+
+
+def write_flags(port: serial.Serial, base_addr: int, flag_bytes: bytes) -> None:
+    for i in range(0, len(flag_bytes), BLOCK_SIZE):
+        write_block(port, base_addr + i, flag_bytes[i:i + BLOCK_SIZE])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True, help="Serial port, e.g. /dev/ttyUSB0 or COM5")
@@ -137,6 +158,11 @@ def main():
 
         if not args.skip_erase:
             erase_other_channels(port)
+            print(f"Setting the set/skip flags so only channel {TEST_CHANNEL} shows as programmed...")
+            flag_bytes = build_flag_bytes(TEST_CHANNEL - 1)
+            write_flags(port, CSETFLAG_BASE, flag_bytes)
+            write_flags(port, CSKIPFLAG_BASE, flag_bytes)
+            print("Done.\n")
 
         try:
             while True:
