@@ -10,7 +10,7 @@ from pathlib import Path
 
 import serial
 
-SCRIPT_VERSION = "2"
+SCRIPT_VERSION = "4"
 
 DTR_RTS_SETTLE_S = 0.3
 BAUD = 9600
@@ -100,8 +100,8 @@ def write_block(port: serial.Serial, addr: int, data: bytes) -> None:
 
 
 def freq_to_bbcd(freq_hz: int) -> bytes:
-    """8-digit packed BCD in units of 10Hz, most-significant digit pair first (CHIRP's bbcd array convention)."""
-    digits = f"{freq_hz // 10:08d}"
+    """8-digit packed BCD in units of 100Hz, most-significant digit pair first, confirmed against two real CHIRP writes (130.000000 MHz and 140.000000 MHz) since an earlier x10-Hz assumption was off by exactly 10x."""
+    digits = f"{freq_hz // 100:08d}"
     return bytes((int(digits[i]) << 4) | int(digits[i + 1]) for i in range(0, 8, 2))
 
 
@@ -109,7 +109,7 @@ def bbcd_to_freq_hz(data: bytes) -> int:
     val = 0
     for b in data:
         val = val * 100 + (((b >> 4) & 0xF) * 10 + (b & 0xF))
-    return val * 10
+    return val * 100
 
 
 def random_test_value() -> tuple[float, int]:
@@ -120,9 +120,9 @@ def random_test_value() -> tuple[float, int]:
 
 
 def build_flag_bytes(set_channel_index: int) -> bytes:
-    """All channels flagged empty/skip except set_channel_index (0-based), flagged set/don't-skip."""
+    """All channels flagged empty/skip except set_channel_index (0-based); bit N = channel N, confirmed against real hardware (CHIRP's own `7 - (n % 8)` formula tested backwards)."""
     data = bytearray([0xFF] * FLAG_BYTES)
-    cbyte, cbit = set_channel_index // 8, 7 - (set_channel_index % 8)
+    cbyte, cbit = set_channel_index // 8, set_channel_index % 8
     data[cbyte] &= ~(1 << cbit)
     return bytes(data)
 
@@ -190,6 +190,7 @@ def main():
             readback = read_block(port, channel_addr)
             readback_freq = bbcd_to_freq_hz(readback[0:4]) / 1_000_000
             readback_power = (readback[10] >> 2) & 0b11
+            vfo_mr_readback = read_block(port, VFO_MR_ADDR - (VFO_MR_ADDR % BLOCK_SIZE))[VFO_MR_ADDR % BLOCK_SIZE]
         finally:
             try:
                 echo_write(port, b"END")
@@ -199,6 +200,8 @@ def main():
 
         print(f"Wrote {freq_mhz:.3f} MHz, power={POWER_NAMES[power]} to channel {TEST_CHANNEL}")
         print(f"Read back {readback_freq:.5f} MHz, power={POWER_NAMES.get(readback_power, readback_power)}")
+        print(f"vfo_mr read back as {vfo_mr_readback} (1=Memory mode, this is what's actually stored, "
+              f"whether or not the radio boots into it)")
         print(f"Check channel {TEST_CHANNEL} on the radio now. Re-run this script for a new value.")
 
     print("Done.")
