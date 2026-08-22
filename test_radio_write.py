@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
-"""Single-pass write test: one full programming run, as a real deploy would do it. Erases every channel except channel 1 (data and set/skip flags), sets the radio to boot into Memory mode, writes a random frequency+power to channel 1, verifies the read-back, then exits; re-run the script for another value. Same clone-mode protocol as test_radio_program.py, reimplemented fresh from CHIRP's th9000.py (GPLv2+) as a reference, not a port."""
+"""Single-pass write test: one full programming run, as a real deploy would do it. Starts from the known-working chirp_reference_image.bin, patches in a random frequency+power for channel 1, blanks every other channel (data and set/skip flags), and sets the radio to boot into Memory mode, then writes the whole thing out in one continuous ascending address sweep (0x0100 to 0x3ff0, no gaps) since this radio's clone mode appears to require that, not the out-of-order patch writes an earlier version of this script used. Verifies the read-back, then exits; re-run the script for another value. Same clone-mode protocol as test_radio_program.py, reimplemented fresh from CHIRP's th9000.py (GPLv2+) as a reference, not a port."""
 
 import argparse
 import random
 import struct
 import sys
 import time
+from pathlib import Path
 
 import serial
 
-SCRIPT_VERSION = "1"
+SCRIPT_VERSION = "2"
 
 DTR_RTS_SETTLE_S = 0.3
 BAUD = 9600
 TIMEOUT_S = 1
 IDENT_RETRIES = 5
 BLOCK_SIZE = 0x10
+
+IMAGE_PATH = Path(__file__).parent / "chirp_reference_image.bin"
+IMAGE_BASE = 0x0100
+
 CHANNEL_BASE = 0x2000
 CHANNEL_SIZE = 0x20
 TOTAL_CHANNELS = 200
 TEST_CHANNEL = 1  # 1-indexed, first channel in the radio's programming list
-BLANK_BLOCK = b"\xFF" * BLOCK_SIZE
 
 # Separate 1-bit-per-channel flag arrays: whether a channel is programmed at all is tracked
 # here, independent of its own data bytes, so a channel with valid data but the wrong flag
@@ -33,8 +37,7 @@ FLAG_BYTES = 32  # covers up to 256 channels, 1 bit each
 # vfo_mr at 0x0221: 0=boots into VFO mode after a clone/power-cycle, 1=boots into Memory mode.
 # Without this the radio can't be remotely operated after programming, someone has to walk over
 # and press V/M by hand. Not exposed in CHIRP's own settings UI, but it's a real memory byte.
-SETTINGS_BLOCK_BASE = 0x0220
-VFO_MR_OFFSET = 0x0221 - SETTINGS_BLOCK_BASE
+VFO_MR_ADDR = 0x0221
 MEMORY_MODE = 1
 
 FREQ_MIN_MHZ = 144.000
@@ -116,28 +119,6 @@ def random_test_value() -> tuple[float, int]:
     return freq_mhz, power
 
 
-def build_channel_block(freq_mhz: float, power: int) -> bytearray:
-    """A fresh, fully-zeroed block with only freq+power set, matching CHIRP's zero-then-set approach."""
-    block = bytearray(BLOCK_SIZE)
-    block[0:4] = freq_to_bbcd(round(freq_mhz * 1_000_000))
-    block[10] = power << 2
-    return block
-
-
-def erase_other_channels(port: serial.Serial) -> None:
-    """Blanks every channel except TEST_CHANNEL, so the test channel is always the only programmed one."""
-    print(f"Erasing channels 1-{TOTAL_CHANNELS} except channel {TEST_CHANNEL}...")
-    for ch in range(1, TOTAL_CHANNELS + 1):
-        if ch == TEST_CHANNEL:
-            continue
-        addr = CHANNEL_BASE + (ch - 1) * CHANNEL_SIZE
-        write_block(port, addr, BLANK_BLOCK)
-        write_block(port, addr + BLOCK_SIZE, BLANK_BLOCK)
-        if ch % 20 == 0 or ch == TOTAL_CHANNELS:
-            print(f"  erased {ch}/{TOTAL_CHANNELS}")
-    print("Done erasing.\n")
-
-
 def build_flag_bytes(set_channel_index: int) -> bytes:
     """All channels flagged empty/skip except set_channel_index (0-based), flagged set/don't-skip."""
     data = bytearray([0xFF] * FLAG_BYTES)
@@ -146,26 +127,48 @@ def build_flag_bytes(set_channel_index: int) -> bytes:
     return bytes(data)
 
 
-def write_flags(port: serial.Serial, base_addr: int, flag_bytes: bytes) -> None:
-    for i in range(0, len(flag_bytes), BLOCK_SIZE):
-        write_block(port, base_addr + i, flag_bytes[i:i + BLOCK_SIZE])
+def build_image(freq_mhz: float, power: int) -> bytearray:
+    """Patches the known-working reference image in memory: only channel 1 stays programmed."""
+    image = bytearray(IMAGE_PATH.read_bytes())
+
+    flag_bytes = build_flag_bytes(TEST_CHANNEL - 1)
+    image[CSETFLAG_BASE - IMAGE_BASE:CSETFLAG_BASE - IMAGE_BASE + FLAG_BYTES] = flag_bytes
+    image[CSKIPFLAG_BASE - IMAGE_BASE:CSKIPFLAG_BASE - IMAGE_BASE + FLAG_BYTES] = flag_bytes
+
+    image[VFO_MR_ADDR - IMAGE_BASE] = MEMORY_MODE
+
+    for ch in range(1, TOTAL_CHANNELS + 1):
+        if ch == TEST_CHANNEL:
+            continue
+        off = CHANNEL_BASE + (ch - 1) * CHANNEL_SIZE - IMAGE_BASE
+        image[off:off + CHANNEL_SIZE] = b"\xFF" * CHANNEL_SIZE
+
+    ch1_off = CHANNEL_BASE + (TEST_CHANNEL - 1) * CHANNEL_SIZE - IMAGE_BASE
+    image[ch1_off:ch1_off + 4] = freq_to_bbcd(round(freq_mhz * 1_000_000))
+    image[ch1_off + 10] = power << 2
+
+    return image
 
 
-def set_boot_memory_mode(port: serial.Serial) -> None:
-    """Flips vfo_mr to Memory mode, preserving every other byte already in that settings block."""
-    block = bytearray(read_block(port, SETTINGS_BLOCK_BASE))
-    block[VFO_MR_OFFSET] = MEMORY_MODE
-    write_block(port, SETTINGS_BLOCK_BASE, bytes(block))
+def write_image(port: serial.Serial, image: bytes) -> None:
+    total_blocks = len(image) // BLOCK_SIZE
+    for i in range(total_blocks):
+        addr = IMAGE_BASE + i * BLOCK_SIZE
+        write_block(port, addr, image[i * BLOCK_SIZE:(i + 1) * BLOCK_SIZE])
+        if i % 100 == 0 or i == total_blocks - 1:
+            print(f"  wrote {i + 1}/{total_blocks} blocks (0x{addr:04x})")
 
 
 def main():
     print(f"test_radio_write.py version {SCRIPT_VERSION}")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True, help="Serial port, e.g. /dev/ttyUSB0 or COM5")
-    parser.add_argument("--skip-erase", action="store_true", help="Skip re-erasing the other channels this run")
     args = parser.parse_args()
 
     channel_addr = CHANNEL_BASE + (TEST_CHANNEL - 1) * CHANNEL_SIZE
+    freq_mhz, power = random_test_value()
+    image = build_image(freq_mhz, power)
+
     with serial.Serial(args.port, BAUD, timeout=TIMEOUT_S) as port:
         print(f"Connecting to {args.port} at {BAUD} baud...")
         # Forced low first so the True below is a real transition, not a no-op if the port already opened
@@ -179,32 +182,15 @@ def main():
         port.reset_input_buffer()
         radio_id = ident(port)
         print(f"Radio identified: {radio_id!r}")
-        print(f"Using channel {TEST_CHANNEL} (0x{channel_addr:04x}) as the test channel.\n")
+        print(f"Writing {len(image)} bytes in one ascending sweep (0x{IMAGE_BASE:04x} to "
+              f"0x{IMAGE_BASE + len(image) - BLOCK_SIZE:04x}), watch for the CLONE display now...")
 
         try:
-            if not args.skip_erase:
-                erase_other_channels(port)
-                print(f"Setting the set/skip flags so only channel {TEST_CHANNEL} shows as programmed...")
-                flag_bytes = build_flag_bytes(TEST_CHANNEL - 1)
-                write_flags(port, CSETFLAG_BASE, flag_bytes)
-                write_flags(port, CSKIPFLAG_BASE, flag_bytes)
-                print("Done.\n")
-
-            print("Setting the radio to boot into Memory mode after this clone...")
-            set_boot_memory_mode(port)
-            print("Done.\n")
-
-            freq_mhz, power = random_test_value()
-            block = build_channel_block(freq_mhz, power)
-            write_block(port, channel_addr, bytes(block))
-
+            write_image(port, image)
             readback = read_block(port, channel_addr)
             readback_freq = bbcd_to_freq_hz(readback[0:4]) / 1_000_000
             readback_power = (readback[10] >> 2) & 0b11
         finally:
-            # Always exit clone mode before the script ends: this radio appears to time out of clone
-            # mode on its own after a few seconds of inactivity, leaving it stuck on a frozen "CLONE"
-            # screen until power-cycled if it's left in that state rather than exited cleanly.
             try:
                 echo_write(port, b"END")
                 port.read(1)
