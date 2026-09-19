@@ -121,10 +121,37 @@ def decode_name(data: bytes) -> str:
     return data[:NAME_LEN].decode("ascii", errors="replace").rstrip()
 
 
+# ERW-7 cables use one of these two USB-serial chips, same list services/hardware.py's audio-device
+# detection style relies on for its own VID/PID matching.
+_LIKELY_CABLE_IDS = {(0x10C4, 0xEA60), (0x0403, 0x6001)}
+
+
+def find_port(explicit: str | None) -> str:
+    """Auto-detects the serial port the same way services/hardware.py's list_serial_devices() does."""
+    if explicit:
+        return explicit
+    from serial.tools import list_ports
+    ports = sorted(list_ports.comports(), key=lambda p: (p.vid, p.pid) not in _LIKELY_CABLE_IDS)
+    if not ports:
+        raise RuntimeError("No serial ports found. Plug in the ERW-7 cable and re-run, or pass --port explicitly.")
+    if len(ports) == 1:
+        print(f"Auto-selected the only serial port found: {ports[0].device} ({ports[0].description})")
+        return ports[0].device
+    print("Multiple serial ports found:")
+    for i, p in enumerate(ports):
+        tag = " (likely ERW-7 cable)" if (p.vid, p.pid) in _LIKELY_CABLE_IDS else ""
+        print(f"  [{i}] {p.device} - {p.description}{tag}")
+    choice = input(f"Select a port [0-{len(ports) - 1}]: ").strip()
+    try:
+        return ports[int(choice)].device
+    except (ValueError, IndexError):
+        raise RuntimeError(f"Invalid selection: {choice!r}")
+
+
 def main():
     print(f"test_alinco_write.py version {SCRIPT_VERSION}")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", required=True, help="Serial port, e.g. /dev/ttyUSB0 or COM5")
+    parser.add_argument("--port", help="Serial port, e.g. /dev/ttyUSB0 or COM5 - auto-detected if omitted")
     parser.add_argument("--channel", type=int, default=0, help="0-indexed channel to patch (0 = display channel 1)")
     parser.add_argument("--freq-mhz", type=float, default=146.520, help="Test frequency to write, MHz")
     parser.add_argument("--name", default="TEST", help="Test channel name to write, up to 7 chars")
@@ -134,9 +161,10 @@ def main():
     if offset + CHANNEL_SIZE > MEM_SIZE:
         raise ValueError(f"channel {args.channel} is out of range for this radio")
     freq_hz = round(args.freq_mhz * 1_000_000)
+    port_name = find_port(args.port)
 
-    with serial.Serial(args.port, BAUD, timeout=TIMEOUT_S) as port:
-        print(f"Connecting to {args.port} at {BAUD} baud...")
+    with serial.Serial(port_name, BAUD, timeout=TIMEOUT_S) as port:
+        print(f"Connecting to {port_name} at {BAUD} baud...")
         model = ident(port)
         print(f"Radio identified: {model!r}")
 
