@@ -1,4 +1,4 @@
-"""Waveshare 1.54inch e-Paper Module (Rev2.1) driver, ported from Waveshare's official epd1in54_V2.py, source-verified but not yet hardware-tested."""
+"""Waveshare 1.54inch e-Paper Module (Rev2.1) driver, ported from Waveshare's official epd1in54_V2.py, confirmed on real hardware."""
 
 import logging
 
@@ -206,7 +206,7 @@ class EPD:
         self._wait_busy()
 
     def getbuffer(self, image):
-        # Rotated 90 CW so the port lands on the left edge once mounted; swap ROTATE_270 for ROTATE_90 if that comes out backwards on real hardware.
+        # Rotated 90 CW so the port lands on the left edge once mounted; confirmed correct on real hardware.
         img = image.copy().convert("1").transpose(Image.Transpose.ROTATE_270)
         linewidth = (self.width + 7) >> 3
         buf = [0xFF] * (linewidth * self.height)

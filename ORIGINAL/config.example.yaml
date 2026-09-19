@@ -131,16 +131,16 @@ radio:
   port: /dev/ttyUSB0      # CAT serial port
   baud: 9600              # CAT baud rate
 
-# ── Radio Memory Programmer (Alinco DR-138T via ERW-4) ────────
+# ── Radio Memory Programmer (Alinco DR-138T via ERW-7) ────────
 # Programs channel 1 (index 0) with the APRS frequency.
-# Requires: pyserial (pip install pyserial), ERW-4 cable (PL-2303 USB-serial).
+# Requires: pyserial (pip install pyserial), ERW-7 cable (CP2102/FTDI USB-serial).
 # Only frequency and channel name are implemented (confirmed from a real
 # serial capture — see hardware/radio_programmer.py). mode/power/ctcss_hz
 # are accepted here but not yet written to the radio; a warning is logged
 # if they're set to anything other than the defaults below.
 radio_programmer:
   enabled: false
-  port: /dev/ttyUSB0      # ERW-4 cable device
+  port: /dev/ttyUSB0      # ERW-7 cable device
   channel: 0              # always 0 (first channel slot)
   frequency_hz: 144575000 # 144.575 NZ | 144.800 EU | 144.390 NA | 145.175 AU
   mode: FM_WIDE           # FM_WIDE or FM_NARROW — not yet implemented

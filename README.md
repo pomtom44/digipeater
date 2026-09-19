@@ -36,15 +36,14 @@ OR
 
 1. Download the latest image from the [Releases page](https://github.com/pomtom44/digipeater/releases) and flash it with Raspberry Pi Imager
 2. Assemble your hardware (skip anything you're not using)
-3. Boot the Pi and follow the setup wizard from your phone or laptop, over its own WiFi hotspot
+3. Boot the Pi and follow the setup wizard from your phone or laptop, over its own WiFi hotspot (SSID `Digipeater`, password `Digi1234`, if it's not already on ethernet or a known network)
 
-For the full walkthrough, see [`SETUP.md`](SETUP.md). For how it all works under the hood, see [`OVERVIEW.md`](OVERVIEW.md). For supported hardware and GPIO wiring specifics, see [`SUPPORTED_HARDWARE.md`](SUPPORTED_HARDWARE.md) and [`PINOUT.md`](PINOUT.md).
+For the full walkthrough, see [`SETUP.md`](SETUP.md). For how it all works under the hood, see [`OVERVIEW.md`](OVERVIEW.md). For supported hardware and GPIO wiring specifics, see [`SUPPORTED_HARDWARE.md`](SUPPORTED_HARDWARE.md) and [`PINOUT.md`](PINOUT.md). If you want to build the exact setup this project is developed and tested against, part-for-part, see [`IDEAL_SETUP.md`](IDEAL_SETUP.md).
 
 ## Project Structure
 
 - **`main.py`**, **`services/`**, **`display/`**, **`web/`**: the application itself.
 - **`ORIGINAL/`**: an earlier prototype, kept for reference only, not actively developed.
-- **`TODO.md`**: known gaps and in-progress work.
 
 ## License
 

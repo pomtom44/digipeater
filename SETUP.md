@@ -54,4 +54,9 @@ You'll be asked for a WiFi country code (only if one isn't already set) and whic
 - Your callsign and SSID (the APRS-IS passcode fills in automatically from these, no need to look it up)
 - A decision on IGate mode (Off / RX only / RX & TX): RX only is the safe default if unsure; RX & TX also relays internet messages back onto RF
 
-Reboot and follow the setup wizard.
+Reboot and follow the setup wizard. If the Pi isn't on ethernet or a network it already knows, it starts its own WiFi hotspot to reach the wizard from:
+
+- **SSID:** `Digipeater`
+- **Password:** `Digi1234`
+
+Connect to that from a phone or laptop, then browse to `10.42.0.1` (shown on the e-ink display too, if one's connected).

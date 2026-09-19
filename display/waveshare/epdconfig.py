@@ -63,7 +63,9 @@ def module_exit():
     GPIO.output(RST_PIN, 0)
     GPIO.output(DC_PIN,  0)
     _SPI.close()
-    GPIO.cleanup()
+    # Scoped to just this module's own pins: a bare GPIO.cleanup() releases every
+    # pin the process holds, including services/relay.py's radio power relay pin.
+    GPIO.cleanup([RST_PIN, DC_PIN, CS_PIN, BUSY_PIN])
 
 
 def digital_write(pin: int, value: int):

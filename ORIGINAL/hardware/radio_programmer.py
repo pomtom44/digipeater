@@ -1,12 +1,13 @@
-"""Alinco DR-138T channel memory programmer via ERW-4 serial cable.
+"""Alinco DR-138T channel memory programmer via ERW-7 serial cable.
 
-Hardware: ERW-4 cable (PL-2303 USB-serial chipset), appears as /dev/ttyUSB0
-(Linux) or COMn (Windows, used only for capture/testing).
+Hardware: ERW-7 cable (CP2102 or FTDI USB-serial chipset, depending on
+version), appears as /dev/ttyUSB0 (Linux) or COMn (Windows, used only for
+capture/testing).
 Serial: 9600 baud, 8N1, no flow control.
 
 Protocol status: CONFIRMED — captured 2026-07-06 via com0com + a custom
 transparent serial-bridge logger (tools/serial_sniffer.py) sitting between
-the real ERW-4 port and the Alinco DR_X38.exe software, for both a memory
+the real ERW-7 port and the Alinco DR_X38.exe software, for both a memory
 read and a memory write (channel name changed "APRS" -> "APRS1", frequency
 144.575 -> 144.585 MHz). Checksums verified on all 1023+1008 blocks seen
 across both captures.

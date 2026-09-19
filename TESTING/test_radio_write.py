@@ -26,17 +26,12 @@ CHANNEL_SIZE = 0x20
 TOTAL_CHANNELS = 200
 TEST_CHANNEL = 1  # 1-indexed, first channel in the radio's programming list
 
-# Separate 1-bit-per-channel flag arrays: whether a channel is programmed at all is tracked
-# here, independent of its own data bytes, so a channel with valid data but the wrong flag
-# still won't show on the radio. bit=1 means empty/skip, bit=0 means set/don't-skip, and
-# channel index 0 (channel 1) is the MSB of the first byte (CHIRP's `7 - (n % 8)` convention).
+# Per-channel programmed/skip flags, separate from channel data; bit=1 empty/skip, direct bit mapping (bit N = channel N).
 CSETFLAG_BASE = 0x0100
 CSKIPFLAG_BASE = 0x0120
 FLAG_BYTES = 32  # covers up to 256 channels, 1 bit each
 
-# vfo_mr at 0x0221: 0=boots into VFO mode after a clone/power-cycle, 1=boots into Memory mode.
-# Without this the radio can't be remotely operated after programming, someone has to walk over
-# and press V/M by hand. Not exposed in CHIRP's own settings UI, but it's a real memory byte.
+# vfo_mr: boot mode after clone/power-cycle (0=VFO, 1=Memory); not exposed in CHIRP's UI but a real byte.
 VFO_MR_ADDR = 0x0221
 MEMORY_MODE = 1
 

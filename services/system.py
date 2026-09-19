@@ -46,8 +46,7 @@ async def _query_direwolf_state() -> tuple[str, bytes] | None:
 
 
 async def get_direwolf_status() -> dict:
-    """Returns the direwolf service state (running/starting/waiting_gps/standby/stopping/error); checks
-    stderr too since a missing unit and a stopped one both report "inactive"."""
+    """Returns the direwolf service state (running/starting/waiting_gps/standby/stopping/error); checks stderr too since a missing unit and a stopped one both report "inactive"."""
     global _last_error
     if _transition:
         return {"available": True, "state": _transition, "running": False, "reason": None, "simulated": False}
@@ -168,8 +167,7 @@ async def _run_systemctl(action: str) -> dict:
 
 
 async def set_direwolf_running(running: bool, config: dict | None = None) -> dict:
-    """Starts or stops direwolf, sequencing GPS fix wait, radio power, channel programming, and settle
-    time around the systemctl call."""
+    """Starts or stops direwolf, sequencing GPS fix wait, radio power, channel programming, and settle time around the systemctl call."""
     global _transition, _last_error
     config = config or {}
     action = "start" if running else "stop"

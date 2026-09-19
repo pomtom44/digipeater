@@ -457,7 +457,7 @@ Digipeater/
 │   ├── relay.py             ← GPIO power relay control
 │   ├── gps.py               ← serial NMEA GPS reader (+ gpsd TCP mode)
 │   ├── radio.py             ← CAT frequency control via rigctld/Hamlib
-│   └── radio_programmer.py  ← Alinco DR-138T channel programmer (ERW-4 cable)
+│   └── radio_programmer.py  ← Alinco DR-138T channel programmer (ERW-7 cable)
 │
 ├── display/             ← e-ink display
 │   ├── manager.py            ← page rotation, override states, rendering

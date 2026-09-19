@@ -340,6 +340,7 @@ def create_app(
 
     @app.post("/api/map/cache/start")
     async def map_cache_start(request: Request):
+        _require_login_for_action(request)
         body = await request.json()
         try:
             north = float(body.get("north"))
@@ -376,7 +377,8 @@ def create_app(
         return downloader.status()
 
     @app.post("/api/map/cache/cancel")
-    async def map_cache_cancel():
+    async def map_cache_cancel(request: Request):
+        _require_login_for_action(request)
         downloader = map_download_state["downloader"]
         if downloader:
             downloader.cancel()
@@ -599,7 +601,8 @@ def create_app(
     # Display calls run in a worker thread so a hardware hang doesn't freeze the whole server.
 
     @app.post("/api/display/clear")
-    async def display_clear():
+    async def display_clear(request: Request):
+        _require_login_for_action(request)
         try:
             await asyncio.to_thread(display_driver.clear)
         except Exception as e:
@@ -608,7 +611,8 @@ def create_app(
         return {"ok": True}
 
     @app.post("/api/display/test")
-    async def display_test():
+    async def display_test(request: Request):
+        _require_login_for_action(request)
         try:
             from PIL import Image, ImageDraw  # noqa: F401 (import check before threading)
         except ImportError:
@@ -622,7 +626,8 @@ def create_app(
         return {"ok": True}
 
     @app.post("/api/display/sleep")
-    async def display_sleep():
+    async def display_sleep(request: Request):
+        _require_login_for_action(request)
         try:
             await asyncio.to_thread(display_driver.sleep)
         except Exception as e:

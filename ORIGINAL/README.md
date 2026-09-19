@@ -65,7 +65,7 @@ Copy `config.example.yaml` to `config.yaml` and edit as needed. The web interfac
 | Model | Notes |
 |-------|-------|
 | Any Hamlib/rigctld-supported radio | CAT frequency control |
-| Alinco DR-138T (via ERW-4 cable) | One-click channel programming |
+| Alinco DR-138T (via ERW-7 cable) | One-click channel programming |
 
 ## Project Structure
 

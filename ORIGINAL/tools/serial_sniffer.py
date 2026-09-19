@@ -1,13 +1,13 @@
 """Transparent serial bridge + hex logger.
 
-Sits between the real ERW-4 cable (PL-2303 COM port) and one end of a
+Sits between the real ERW-7 cable (CP2102/FTDI COM port) and one end of a
 com0com virtual port pair, relaying bytes in both directions while logging
 everything with a timestamp and direction so the Alinco DR_X38.exe protocol
 can be reverse-engineered (see hardware/radio_programmer.py).
 
 Wiring for a capture session:
 
-    DR_X38.exe  --(virtual port A, e.g. COM10)-->  com0com pair  --(virtual port B, e.g. COM11)-->  this script  --(real port, e.g. COM3)-->  ERW-4 cable --> radio
+    DR_X38.exe  --(virtual port A, e.g. COM10)-->  com0com pair  --(virtual port B, e.g. COM11)-->  this script  --(real port, e.g. COM3)-->  ERW-7 cable --> radio
 
 Usage:
     python tools/serial_sniffer.py --real COM3 --virtual COM11 --log capture.log
@@ -40,7 +40,7 @@ def pump(src: serial.Serial, dst: serial.Serial, label: str, log_lines: list, lo
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--real", required=True, help="Real COM port wired to the ERW-4 cable / radio, e.g. COM3")
+    parser.add_argument("--real", required=True, help="Real COM port wired to the ERW-7 cable / radio, e.g. COM3")
     parser.add_argument("--virtual", required=True, help="Virtual com0com port bridged to the real port, e.g. COM11")
     parser.add_argument("--baud", type=int, default=9600)
     parser.add_argument("--log", default="capture.log", help="Path to write the full capture log")

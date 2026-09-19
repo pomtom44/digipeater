@@ -24,10 +24,7 @@ _RE_RF_XMIT = re.compile(r"^\[\d[HL][^\]]*\]\s*([^>\s]+)>")
 _RE_IG_XMIT = re.compile(r"^\[ig\]\s*([^>\s]+)>")
 
 _MAX_HEARD_STATIONS = 50
-# How long to wait before reconnecting journalctl/KISS if either drops
-# (journald restarting, or Direwolf itself not up yet/mid-restart); on a
-# dev box with no systemd/Direwolf at all, this just backs off to
-# effectively "don't busy-loop" once the immediate connect attempt fails.
+# Backoff before reconnecting journalctl/KISS after either drops.
 _JOURNALCTL_RECONNECT_DELAY_S = 5
 _KISS_RECONNECT_DELAY_S = 5
 
@@ -264,3 +261,12 @@ class PacketLog:
             "count": existing_count + 1,
             "_last_heard_at": time.time(),
         }
+        self._evict_stale_stations()
+
+    def _evict_stale_stations(self) -> None:
+        """Keeps at most _MAX_HEARD_STATIONS entries, dropping the least recently heard first."""
+        if len(self._heard) <= _MAX_HEARD_STATIONS:
+            return
+        oldest_first = sorted(self._heard, key=lambda c: self._heard[c]["_last_heard_at"])
+        for callsign in oldest_first[:len(self._heard) - _MAX_HEARD_STATIONS]:
+            del self._heard[callsign]

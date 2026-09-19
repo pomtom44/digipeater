@@ -1,6 +1,6 @@
 # How It Works
 
-A high-level look at what's actually running on the Pi and how the pieces talk to each other. For wiring, see [PINOUT.md](PINOUT.md); for setup, see [SETUP.md](SETUP.md).
+A high-level look at what's actually running on the Pi and how the pieces talk to each other. For wiring, see [PINOUT.md](PINOUT.md); for setup, see [SETUP.md](SETUP.md); for the exact known-working parts list, see [IDEAL_SETUP.md](IDEAL_SETUP.md).
 
 ---
 
@@ -22,7 +22,7 @@ A few standard Linux services this project configures but doesn't replace: `gpsd
 
 ## Boot sequence
 
-1. The Python app starts, initializes the e-ink display (if one's connected), and figures out networking: use ethernet or WiFi if already connected, otherwise fall back to broadcasting its own WiFi hotspot so you can reach it from a phone or laptop.
+1. The Python app starts, initializes the e-ink display (if one's connected), and figures out networking: use ethernet or WiFi if already connected, otherwise fall back to broadcasting its own WiFi hotspot (SSID `Digipeater`, password `Digi1234`) so you can reach it from a phone or laptop.
 2. **First boot** (no saved config yet): serves the setup wizard. Nothing else starts until setup is finished.
 3. **Every boot after that**: reads the saved config, applies GPS/relay/display settings, regenerates Direwolf's config file, and starts or stops the `direwolf` service to match.
 4. The web dashboard comes up either way, on port 80.

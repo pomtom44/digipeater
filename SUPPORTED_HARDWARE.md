@@ -20,7 +20,7 @@ I.E. Display resolutions and screen layouts
 
 | Make / Model | Status |
 |---|---|
-| Waveshare 1.54inch e-Paper Module (Rev2.1, 200x200, SSD1681) | ⚠️ Driver rewritten against Waveshare's own source, not yet run on real hardware |
+| Waveshare 1.54inch e-Paper Module (Rev2.1, 200x200, SSD1681) | ✅ Confirmed |
 | Waveshare Pico-ePaper-2.9-B (296×128, B/W/R) | ✅ Confirmed |
 
 ---

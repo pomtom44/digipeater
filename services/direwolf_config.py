@@ -139,7 +139,8 @@ def _pbeacon_line(beacon: dict, aprs: dict, gps: dict, *, send_to_igate: bool) -
     path = beacon.get("path")
     if path:
         tokens.append(f"VIA={path}")
-    comment = aprs.get("comment") or ""
+    # Direwolf's config parser has no quote-escaping, so a literal " would break this token.
+    comment = (aprs.get("comment") or "").replace('"', "'")
     tokens.append(f'COMMENT="{comment}"')
     return " ".join(t for t in tokens if t)
 

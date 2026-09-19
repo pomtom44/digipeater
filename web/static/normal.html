@@ -697,9 +697,7 @@
       retryBtn.addEventListener('click', onRetry);
     }
 
-    // ── Beacon stats card, backed by services/packet_log.py's live journal tail ──
-    // Whole minutes, not live seconds: this card only polls every APRS_POLL_MS (10s), so a
-    // per-second ticking display would imply more freshness than it actually has.
+    // ── Beacon stats card (services/packet_log.py's journal tail); whole minutes since this only polls every APRS_POLL_MS (10s) ──
     function beaconMinutesLabel(seconds) {
       const s = Math.max(0, Math.round(seconds));
       return s < 60 ? '<1min' : `${Math.floor(s / 60)}min`;

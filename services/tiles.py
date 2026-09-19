@@ -83,8 +83,7 @@ async def resolve_cached_source_url() -> str:
 
 
 async def find_source_url() -> tuple[str, str]:
-    """Finds the most recent available daily planet build. Returns (url, date_str); raises RuntimeError
-    if none of the last few days resolve."""
+    """Finds the most recent available daily planet build. Returns (url, date_str); raises RuntimeError if none of the last few days resolve."""
     async with httpx.AsyncClient(timeout=10) as client:
         today = datetime.now(timezone.utc).date()
         for days_back in range(_BUILD_LOOKBACK_DAYS):

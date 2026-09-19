@@ -41,9 +41,10 @@ echo "    - /etc/sudoers.d/digipeater-* (all sudo permissions this app granted)"
 echo "    - the digipeater-hotspot NetworkManager connection profile"
 echo "    - the SPI interface (disabled again)"
 echo "    - the WiFi country setting (radio re-blocked, same as before install)"
-echo "    - system packages: gpsd, gpsd-clients, libhamlib-utils,"
+echo "    - system packages: gpsd, gpsd-clients, chrony,"
 echo "      python3-rpi.gpio, python3-spidev, fonts-dejavu-core, python3-pip,"
 echo "      python3-venv, git"
+echo "    - chrony as the time-sync service (systemd-timesyncd re-enabled)"
 echo ""
 echo -e "${YELLOW}Deliberately NOT touched (real risk of bricking the Pi or losing SSH access):${NC}"
 echo "    - python3 itself: a dependency root for much of the base OS, purging"
@@ -120,11 +121,12 @@ info "Re-blocking WiFi radio..."
 sudo rfkill block wifi
 ok "WiFi radio re-blocked"
 
-# ── Restore network interfaces backup ────────
-if [ -f /etc/network/interfaces.bak ]; then
-    sudo mv /etc/network/interfaces.bak /etc/network/interfaces
-    ok "Restored /etc/network/interfaces"
-fi
+# ── Restore systemd-timesyncd as the time-sync service ─
+# Reverses install.sh's switch to chrony (needed for GPS time sync).
+info "Restoring systemd-timesyncd..."
+sudo systemctl disable --now chrony --quiet 2>/dev/null || true
+sudo systemctl enable --now systemd-timesyncd --quiet 2>/dev/null || true
+ok "systemd-timesyncd restored"
 
 # ── Remove system packages ───────────────────
 # python3, network-manager, and curl are deliberately excluded, curl is needed to re-run install.sh itself.
@@ -132,6 +134,7 @@ info "Removing system packages..."
 sudo apt-get purge -y -qq \
     gpsd \
     gpsd-clients \
+    chrony \
     python3-rpi.gpio \
     python3-spidev \
     fonts-dejavu-core \

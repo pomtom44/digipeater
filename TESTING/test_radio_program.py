@@ -5,10 +5,12 @@ import argparse
 import struct
 import sys
 import time
+from pathlib import Path
 
 import serial
 
-SCRIPT_VERSION = "1"
+SCRIPT_VERSION = "2"
+DEFAULT_OUT_PATH = Path(__file__).parent / "radio_dump.bin"
 
 # Some programming cables power their internal chip parasitically off DTR/RTS; CHIRP
 # asserts both by default (WANTS_DTR/WANTS_RTS in chirp_common.py), so we match that.
@@ -66,7 +68,7 @@ def main():
     print(f"test_radio_program.py version {SCRIPT_VERSION}")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True, help="Serial port, e.g. /dev/ttyUSB0 or COM5")
-    parser.add_argument("--out", default="radio_dump.bin", help="Where to save the raw memory dump")
+    parser.add_argument("--out", default=str(DEFAULT_OUT_PATH), help="Where to save the raw memory dump")
     args = parser.parse_args()
 
     with serial.Serial(args.port, BAUD, timeout=TIMEOUT_S) as port:
