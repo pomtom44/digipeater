@@ -24,6 +24,7 @@ _RE_RF_XMIT = re.compile(r"^\[\d[HL][^\]]*\]\s*([^>\s]+)>")
 _RE_IG_XMIT = re.compile(r"^\[ig\]\s*([^>\s]+)>")
 
 _MAX_HEARD_STATIONS = 50
+_SIGNAL_TEST_TTL_S = 900
 # Backoff before reconnecting journalctl/KISS after either drops.
 _JOURNALCTL_RECONNECT_DELAY_S = 5
 _KISS_RECONNECT_DELAY_S = 5
@@ -110,6 +111,7 @@ class PacketLog:
         self._last_rf_beacon_at: float | None = None
         self._last_igate_beacon_at: float | None = None
         self._task: asyncio.Task | None = None
+        self._signal_tests: dict[str, dict] = {}
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._run())
@@ -138,6 +140,40 @@ class PacketLog:
         station = dict(info)
         station["seconds_ago"] = round(time.time() - station.pop("_last_heard_at"))
         return station
+
+    def start_signal_test(self, test_id: str, my_call: str) -> None:
+        """Registers a pending RF-reach test; a reply is matched off the normal KISS-decoded packet stream."""
+        self._prune_stale_signal_tests()
+        self._signal_tests[test_id] = {
+            "my_call": my_call, "created_at": time.time(),
+            "received": False, "reply_text": None,
+        }
+
+    def signal_test_status(self, test_id: str) -> dict | None:
+        record = self._signal_tests.get(test_id)
+        if record is None:
+            return None
+        return {"received": record["received"], "reply_text": record["reply_text"]}
+
+    def _prune_stale_signal_tests(self) -> None:
+        now = time.time()
+        stale = [tid for tid, r in self._signal_tests.items() if now - r["created_at"] > _SIGNAL_TEST_TTL_S]
+        for tid in stale:
+            del self._signal_tests[tid]
+
+    def _check_signal_test_reply(self, parsed: dict) -> None:
+        if not self._signal_tests:
+            return
+        # A far igate relaying a reply to RF may wrap it in third-party format; unwrap if so.
+        message = parsed.get("subpacket", parsed) if parsed.get("format") == "thirdparty" else parsed
+        if message.get("format") != "message":
+            return
+        addresse = (message.get("addresse") or "").strip().upper()
+        text = message.get("message_text", "")
+        for test_id, record in self._signal_tests.items():
+            if not record["received"] and addresse == record["my_call"].upper() and test_id in text:
+                record["received"] = True
+                record["reply_text"] = text
 
     def beacon_stats(self) -> dict:
         now = time.time()
@@ -243,6 +279,9 @@ class PacketLog:
             parsed = aprslib.parse(packet_str)
         except Exception:
             return  # not everything heard is a decodable APRS packet
+
+        self._check_signal_test_reply(parsed)
+
         callsign = parsed.get("from", "")
         if not callsign:
             return

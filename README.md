@@ -17,6 +17,7 @@ You still are, under the hood, this project doesn't replace Direwolf's TNC/modem
 - Offline vector maps for the dashboard, no internet required after initial setup
 - Optional GPS for live position beaconing and system time sync
 - Optional e-ink display for at-a-glance status
+- Signal test: transmits a real over-the-air packet to a nearby igate station to confirm RF reach, for RF-only (no IGate) setups
 
 ## Hardware
 

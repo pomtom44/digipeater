@@ -25,7 +25,7 @@
 | Silicone sealer | |
 | Solder & soldering gear | |
 | Audio interface | Generic USB sound card / mic-headphone adapter dongle, no specific model |
-| Radio | Alinco DR-138T MK2 |
+| Radio | TBD |
 | PTT method | GPIO pin via optocoupler (4N25/4N28) |
 | GPS module | Any USB GPS module outputting NMEA 0183 |
 | E-ink display | Waveshare 1.54inch e-Paper Module (Rev2.1, 200x200, SSD1681) |
@@ -35,7 +35,7 @@
 | Radio audio out → Pi audio in cable | 3.5mm to 3.5mm cable (radio line out to sound card mic in) |
 | Pi audio out → Radio mic in cable | 3.5mm to bare wire (sound card headphone out to radio mic in) |
 | Radio mic connector plug | 8-pin round Foster-type male plug (mates with radio's mic jack, no need to cut the OEM handset mic) |
-| Cables / adapters | Alinco ERW-7 programming cable (radio channel programming) |
+| Cables / adapters | TBD (radio channel programming cable, once radio is picked) |
 | Misc | Power switch, wiring/terminals |
 
 See [`SUPPORTED_HARDWARE.md`](SUPPORTED_HARDWARE.md) for why each of these is the right pick over the alternatives.

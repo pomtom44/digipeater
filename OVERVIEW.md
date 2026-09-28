@@ -43,6 +43,26 @@ Stopping reverses this: stop Direwolf first, wait for it to actually finish shut
 
 ---
 
+## Signal test (RF reach check)
+
+For an RF-only setup (digipeating on, IGate off), the Config page's Signal Test tab checks whether this digipeater's transmissions actually reach far enough to be gated onto APRS-IS by some other station.
+
+It doesn't use APRS-IS or the internet on this station's side at all:
+
+1. The app builds an APRS message packet addressed to a callsign you enter (a nearby igate-enabled station), and writes it straight to Direwolf's KISS port so Direwolf transmits it over RF, same as any other packet.
+2. If that station hears it, its own igate gates it onto APRS-IS as normal.
+3. A listener watching APRS-IS for that callsign (not part of this project) replies over APRS-IS.
+4. If that station's igate is running in full RX & TX mode, it relays the reply back out over RF.
+5. This digipeater hears the reply directly on its own radio; `packet_log.py`'s existing packet-decoding loop (the same one that tracks heard stations) catches it and matches it back to the test.
+
+Since only steps 1 and 5 happen on this station, the test works even with no internet access at all here. It confirms RF reach to another station's igate, not this digipeater's own IGate/APRS-IS access. That's a separate concern, which is why this feature is disabled whenever this station's own IGate is turned on.
+
+`ZL4ST-16` runs a public listener for step 3, on by default in the Signal Test tab. To self-host your own instead (a different callsign, closer to your own coverage area), see [DigipeaterPing](https://github.com/pomtom44/DigipeaterPing).
+
+**No reply?** Check [digiping.zl4st.com](https://digiping.zl4st.com) to see if your ping was heard at all. If it shows up there, steps 1-3 worked, this digipeater is reaching that station and getting into APRS-IS fine, and the fault is on the return leg (step 4 or 5: their igate not relaying back, or you're out of RF range for the reply). If it never shows up, your signal isn't reaching that station in the first place.
+
+---
+
 ## Web dashboard and wizard
 
 Both are plain web pages served by the Python app, no separate frontend framework or build step. The setup wizard only exists before first boot; once `config.yaml` exists, it's gone for good and the dashboard takes over. The dashboard's Config page is where all the same settings become editable again afterward.

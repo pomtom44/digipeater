@@ -779,14 +779,19 @@
     }
 
     // ── Radio setup step ─────────────────────────────────────────────
-    // Radio model and TX power level are placeholder lists, no radio-control backend yet
-    const PLACEHOLDER_RADIOS = [
-      'Baofeng UV-5R',
-      'Yaesu FT-2980R',
-      'Kenwood TM-D710G',
-      'Icom IC-2730A',
+    const SUPPORTED_RADIOS = [
+      { model: 'Alinco DR-138 MKII', programmable: true },
     ];
-    const PLACEHOLDER_POWER_LEVELS = ['Low', 'Medium', 'High'];
+    const RADIO_POWER_LEVELS = ['Low', 'Medium', 'High'];
+    // Standard CTCSS tones, Hz. Off = no tone.
+    const CTCSS_TONES = [
+      67.0, 69.3, 71.9, 74.4, 77.0, 79.7, 82.5, 85.4, 88.5, 91.5,
+      94.8, 97.4, 100.0, 103.5, 107.2, 110.9, 114.8, 118.8, 123.0,
+      127.3, 131.8, 136.5, 141.3, 146.2, 151.4, 156.7, 159.8, 162.2,
+      165.5, 167.9, 171.3, 173.8, 177.3, 179.9, 183.5, 186.2, 189.9,
+      192.8, 196.6, 199.5, 203.5, 206.5, 210.7, 218.1, 225.7, 229.1,
+      233.6, 241.8, 250.3, 254.1,
+    ];
     // Fixed GPIO PTT pin, not wizard-editable, see PINOUT.md
     const RADIO_DEFAULT_PTT_GPIO_PIN = 22;
     // Physical header pin for RADIO_DEFAULT_PTT_GPIO_PIN, shown in the dropdown label only
@@ -805,6 +810,10 @@
               <input type="number" id="radio-frequency" step="0.001" placeholder="e.g. 144.800">
               <span>MHz</span>
             </div>
+          </div>
+          <div class="field">
+            <label for="radio-name">Channel name ${helpIcon("Shown on the radio's own display. Optional — defaults to the frequency if left blank.")}</label>
+            <input type="text" id="radio-name" maxlength="7" placeholder="e.g. APRS">
           </div>
           <div class="field">
             <label for="radio-ptt">PTT method</label>
@@ -833,24 +842,78 @@
             <label for="radio-power">TX power level</label>
             <select id="radio-power"></select>
           </div>
+          <div class="field hidden" id="radio-programmer-port-wrap">
+            <label for="radio-programmer-port">Programming cable port ${helpIcon("Serial port for this radio's clone/programming cable — separate from the PTT/audio connection above.")}</label>
+            <select id="radio-programmer-port"></select>
+          </div>
+          <details class="advanced hidden" id="radio-advanced">
+            <summary>Advanced radio settings</summary>
+            <div class="field-row">
+              <div class="field">
+                <label for="radio-ctcss-encode">CTCSS encode (tone out)</label>
+                <select id="radio-ctcss-encode"></select>
+              </div>
+              <div class="field">
+                <label for="radio-ctcss-decode">CTCSS decode (tone squelch)</label>
+                <select id="radio-ctcss-decode"></select>
+              </div>
+            </div>
+            <div class="field" style="max-width: 160px;">
+              <label for="radio-duplex-offset">Duplex offset ${helpIcon("Leave at 0 for simplex, which is how a digipeater normally runs. Positive = TX above RX, negative = TX below RX.")}</label>
+              <div class="field-suffix"><input type="number" id="radio-duplex-offset" step="1" value="0"><span>kHz</span></div>
+            </div>
+            <div class="field" style="max-width: 160px;">
+              <label for="radio-tot">Time-out timer ${helpIcon("Caps how long the radio can transmit continuously. Cheap insurance against a stuck PTT damaging the radio on unattended gear. 0 = off.")}</label>
+              <div class="field-suffix"><input type="number" id="radio-tot" min="0" step="1" value="0"><span>min</span></div>
+            </div>
+            <div class="field">
+              <label><input type="checkbox" id="radio-busy-lockout"> Busy channel lockout ${helpIcon("Blocks TX while the channel is busy. Direwolf already does its own software channel access (CSMA) — enabling this too can make the two fight each other. Leave off unless you specifically want the radio-level lockout as well.")}</label>
+            </div>
+          </details>
         </section>
       `;
       const modelSelect = document.getElementById('radio-model');
-      PLACEHOLDER_RADIOS.forEach(r => addOption(modelSelect, r, r));
+      SUPPORTED_RADIOS.forEach(r => addOption(modelSelect, r.model, r.model));
       const powerSelect = document.getElementById('radio-power');
-      PLACEHOLDER_POWER_LEVELS.forEach(p => addOption(powerSelect, p, p));
+      RADIO_POWER_LEVELS.forEach(p => addOption(powerSelect, p, p));
+      const encodeSelect = document.getElementById('radio-ctcss-encode');
+      const decodeSelect = document.getElementById('radio-ctcss-decode');
+      addOption(encodeSelect, '', 'Off');
+      addOption(decodeSelect, '', 'Off');
+      CTCSS_TONES.forEach(hz => {
+        addOption(encodeSelect, hz, `${hz.toFixed(1)} Hz`);
+        addOption(decodeSelect, hz, `${hz.toFixed(1)} Hz`);
+      });
 
       // Restore any values picked earlier this session, renderRadioStep rebuilds the DOM each time
       if (wizardData.radio) {
         modelSelect.value = wizardData.radio.model ?? modelSelect.value;
         powerSelect.value = wizardData.radio.power_level ?? powerSelect.value;
         document.getElementById('radio-frequency').value = wizardData.radio.frequency_mhz ?? '';
+        document.getElementById('radio-name').value = wizardData.radio.name ?? '';
+        const adv = wizardData.radio.advanced || {};
+        encodeSelect.value = adv.ctcss_encode_hz ?? '';
+        decodeSelect.value = adv.ctcss_decode_hz ?? '';
+        document.getElementById('radio-duplex-offset').value =
+          adv.duplex_offset_hz ? Math.round(adv.duplex_offset_hz / 1000) * (adv.duplex_direction === '-' ? -1 : 1) : 0;
+        document.getElementById('radio-tot').value = adv.time_out_timer_min ?? 0;
+        document.getElementById('radio-busy-lockout').checked = !!adv.busy_lockout;
       }
       // GPIO is the recommended default PTT method unless something else was already picked
       document.getElementById('radio-ptt').value = wizardData.radio?.ptt_method ?? 'gpio';
       document.getElementById('radio-ptt-serial-line').value = wizardData.radio?.ptt_serial_line ?? 'RTS';
       document.getElementById('radio-ptt').addEventListener('change', updatePttSerialLineVisibility);
       updatePttSerialLineVisibility();
+
+      function updateProgrammerSectionVisibility() {
+        const radio = SUPPORTED_RADIOS.find(r => r.model === modelSelect.value);
+        const show = !!(radio && radio.programmable);
+        document.getElementById('radio-programmer-port-wrap').classList.toggle('hidden', !show);
+        document.getElementById('radio-advanced').classList.toggle('hidden', !show);
+      }
+      modelSelect.addEventListener('change', updateProgrammerSectionVisibility);
+      updateProgrammerSectionVisibility();
+      loadProgrammerPortOptions();
 
       document.getElementById('btn-audio-warning-ack').addEventListener('click', () => {
         audioInputWarningAcked = true;
@@ -923,6 +986,21 @@
       }
     }
 
+    async function loadProgrammerPortOptions() {
+      const select = document.getElementById('radio-programmer-port');
+      try {
+        const res = await fetch('/api/hardware/serial-devices');
+        const data = await res.json();
+        (data.devices || []).forEach(d => {
+          const label = d.description ? `${d.device} (${d.description})` : d.device;
+          addOption(select, d.device, label);
+        });
+        if (wizardData.radio?.programmer_port) select.value = wizardData.radio.programmer_port;
+      } catch (e) {
+        // radio model picker still works without this; port just won't be pre-populated
+      }
+    }
+
     async function saveRadioStep() {
       // Confirm rather than silently proceed if no frequency was set, Direwolf needs one to transmit
       const frequency = document.getElementById('radio-frequency').value;
@@ -938,9 +1016,19 @@
       wizardData.radio = {
         model: document.getElementById('radio-model').value,
         frequency_mhz: document.getElementById('radio-frequency').value,
+        name: document.getElementById('radio-name').value,
         ptt_method: pttMethod,
         audio_device: document.getElementById('radio-audio').value,
         power_level: document.getElementById('radio-power').value,
+        programmer_port: document.getElementById('radio-programmer-port').value,
+        advanced: {
+          ctcss_encode_hz: parseFloat(document.getElementById('radio-ctcss-encode').value) || null,
+          ctcss_decode_hz: parseFloat(document.getElementById('radio-ctcss-decode').value) || null,
+          duplex_offset_hz: Math.abs(parseInt(document.getElementById('radio-duplex-offset').value, 10) || 0) * 1000,
+          duplex_direction: (parseInt(document.getElementById('radio-duplex-offset').value, 10) || 0) < 0 ? '-' : '+',
+          time_out_timer_min: parseInt(document.getElementById('radio-tot').value, 10) || 0,
+          busy_lockout: document.getElementById('radio-busy-lockout').checked,
+        },
       };
       // Fixed wiring, not a wizard choice. See RADIO_DEFAULT_PTT_GPIO_PIN.
       if (pttMethod === 'gpio') {

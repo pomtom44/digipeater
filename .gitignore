@@ -40,10 +40,6 @@ direwolf-src/
 # ── Legacy ────────────────────────────────────────────────────
 digipeater_legacy-main/
 
-# ── Third-party vendor software (not ours to redistribute) ────
-# Alinco's official DR_X38.exe + Prolific PL-2303 driver installers, kept for reference only.
-alinco/
-
 # ── IDE / OS ──────────────────────────────────────────────────
 .vscode/
 .idea/

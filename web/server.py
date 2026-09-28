@@ -16,7 +16,9 @@ from fastapi.staticfiles import StaticFiles
 from display.base import DisplayDriver
 from display.rotation import load_pages
 from display.waveshare import epdconfig
-from services import aprs, auth, direwolf_config, gps, gpsconfig, hardware, network, relay, restart_policy, system, tiles
+from services import (
+    aprs, auth, direwolf_config, gps, gpsconfig, hardware, network, relay, restart_policy, signal_test, system, tiles,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +212,47 @@ def create_app(
         return packets.beacon_stats() if packets else {
             "last_rf_beacon_seconds_ago": None, "last_igate_beacon_seconds_ago": None,
         }
+
+    @app.post("/api/aprs/signal_test")
+    async def aprs_signal_test_start(request: Request):
+        _require_login_for_action(request)
+        body = await request.json()
+        target = (body.get("callsign") or "").strip().upper()
+        if not target:
+            raise HTTPException(status_code=400, detail="Callsign is required")
+        if len(target) > 9:
+            raise HTTPException(status_code=400, detail="Callsign is too long")
+        aprs_cfg = _read_config().get("aprs", {}) or {}
+        # RF-reach test only: needs RF TX/RX, and only makes sense when there's no IGate uplink of our own.
+        if aprs_cfg.get("digipeat_mode") != "digipeater":
+            raise HTTPException(status_code=400, detail="Signal test needs digipeating set to RX & TX first")
+        if aprs_cfg.get("igate_mode", "off") != "off":
+            raise HTTPException(status_code=400, detail="Signal test is for RF-only setups; turn IGate off first")
+        if packets is None:
+            raise HTTPException(status_code=503, detail="Packet logging isn't running")
+        my_callsign = (aprs_cfg.get("callsign") or "").strip().upper()
+        if not my_callsign:
+            raise HTTPException(status_code=400, detail="This digipeater has no callsign configured yet")
+        ssid = aprs_cfg.get("ssid")
+        my_call = f"{my_callsign}-{ssid}" if ssid else my_callsign
+        path_str = (aprs_cfg.get("rf_beacon", {}) or {}).get("path") or "WIDE1-1"
+        path = [p.strip().upper() for p in path_str.split(",") if p.strip()]
+        test_id = secrets.token_hex(4)
+        packets.start_signal_test(test_id, my_call)
+        try:
+            await signal_test.send_ping(my_call, target, path, test_id)
+        except RuntimeError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        return {"ok": True, "test_id": test_id}
+
+    @app.get("/api/aprs/signal_test/{test_id}")
+    async def aprs_signal_test_status(test_id: str):
+        if packets is None:
+            raise HTTPException(status_code=503, detail="Packet logging isn't running")
+        result = packets.signal_test_status(test_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Unknown test id")
+        return {"ok": True, **result}
 
     @app.get("/api/gps/status")
     async def gps_status():

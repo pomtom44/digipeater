@@ -44,7 +44,7 @@ Not a fixed list: any USB audio device the Pi sees shows up automatically during
 
 ## Radio
 
-The "Radio model" and "TX power" dropdowns during setup are **placeholders only** for now: there's no radio-specific configuration or CAT control behind them yet. Selecting one doesn't currently change any behavior.
+The "Radio model" dropdown during setup is empty for now: no radio picker or programming protocol has been chosen yet. "TX power" is a placeholder list (Low/Medium/High) with no radio-specific configuration or CAT control behind it.
 
 ---
 

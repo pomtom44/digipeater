@@ -264,7 +264,8 @@
     input[type="password"],
     input[type="number"],
     input[type="time"],
-    select {
+    select,
+    textarea {
       width: 100%;
       padding: 11px 12px;
       border: 1px solid var(--border);
@@ -274,9 +275,10 @@
       font-size: 16px;
       min-width: 0;
     }
-    input:focus, select:focus { outline: none; border-color: var(--accent); }
-    input[readonly] { color: var(--muted); cursor: default; }
-    input[readonly]:focus { border-color: var(--border); }
+    textarea { font-family: inherit; resize: vertical; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+    input[readonly], textarea[readonly] { color: var(--muted); cursor: default; }
+    input[readonly]:focus, textarea[readonly]:focus { border-color: var(--border); }
 
     .field { margin-bottom: 14px; }
     .field-suffix { display: flex; align-items: center; gap: 8px; }
@@ -581,6 +583,13 @@
       </div>
     </div>
 
+    <div class="tab-panel hidden" id="panel-signaltest">
+      <div class="panel-card">
+        <h2 class="panel-title">Signal Test</h2>
+        <div id="signaltest-tab-content"></div>
+      </div>
+    </div>
+
   </main>
 
   <div class="help-overlay hidden" id="help-overlay">
@@ -644,6 +653,7 @@
       { id: 'user', label: 'User' },
       { id: 'startup', label: 'Startup' },
       { id: 'gpio', label: 'GPIO' },
+      { id: 'signaltest', label: 'Signal Test' },
     ];
     let activeTab = TABS[0].id;
     let mapTabInitialized = false;
@@ -792,14 +802,19 @@
     }
 
     // ── Radio tab ─────────────────────────────────────────────────────
-    // Radio model and TX power level are placeholder dummy lists, no radio-control backend yet
-    const PLACEHOLDER_RADIOS = [
-      'Baofeng UV-5R',
-      'Yaesu FT-2980R',
-      'Kenwood TM-D710G',
-      'Icom IC-2730A',
+    const SUPPORTED_RADIOS = [
+      { model: 'Alinco DR-138 MKII', programmable: true },
     ];
-    const PLACEHOLDER_POWER_LEVELS = ['Low', 'Medium', 'High'];
+    const RADIO_POWER_LEVELS = ['Low', 'Medium', 'High'];
+    // Standard CTCSS tones, Hz. Off = no tone.
+    const CTCSS_TONES = [
+      67.0, 69.3, 71.9, 74.4, 77.0, 79.7, 82.5, 85.4, 88.5, 91.5,
+      94.8, 97.4, 100.0, 103.5, 107.2, 110.9, 114.8, 118.8, 123.0,
+      127.3, 131.8, 136.5, 141.3, 146.2, 151.4, 156.7, 159.8, 162.2,
+      165.5, 167.9, 171.3, 173.8, 177.3, 179.9, 183.5, 186.2, 189.9,
+      192.8, 196.6, 199.5, 203.5, 206.5, 210.7, 218.1, 225.7, 229.1,
+      233.6, 241.8, 250.3, 254.1,
+    ];
     // Fallback PTT GPIO pin used until overridden on the GPIO tab
     const RADIO_DEFAULT_PTT_GPIO_PIN = 22;
     const RADIO_DEFAULT_PTT_GPIO_PHYSICAL_PIN = 15;
@@ -819,6 +834,10 @@
               <span>MHz</span>
             </div>
             <p class="warn-banner hidden" id="radio-freq-warning">Initial frequency is still blank. Direwolf needs a real frequency to transmit on.</p>
+          </div>
+          <div class="field">
+            <label for="radio-name">Channel name ${helpIcon("Shown on the radio's own display. Optional — defaults to the frequency if left blank.")}</label>
+            <input type="text" id="radio-name" maxlength="7" placeholder="e.g. APRS">
           </div>
           <div class="field">
             <label for="radio-ptt">PTT method</label>
@@ -848,15 +867,69 @@
             <label for="radio-power">TX power level</label>
             <select id="radio-power"></select>
           </div>
+          <div class="field hidden" id="radio-programmer-port-wrap">
+            <label for="radio-programmer-port">Programming cable port ${helpIcon("Serial port for this radio's clone/programming cable — separate from the PTT/audio connection above.")}</label>
+            <select id="radio-programmer-port"></select>
+          </div>
+          <details class="advanced hidden" id="radio-advanced">
+            <summary>Advanced radio settings</summary>
+            <div class="field-row">
+              <div class="field">
+                <label for="radio-ctcss-encode">CTCSS encode (tone out)</label>
+                <select id="radio-ctcss-encode"></select>
+              </div>
+              <div class="field">
+                <label for="radio-ctcss-decode">CTCSS decode (tone squelch)</label>
+                <select id="radio-ctcss-decode"></select>
+              </div>
+            </div>
+            <div class="field" style="max-width: 160px;">
+              <label for="radio-duplex-offset">Duplex offset ${helpIcon("Leave at 0 for simplex, which is how a digipeater normally runs. Positive = TX above RX, negative = TX below RX.")}</label>
+              <div class="field-suffix"><input type="number" id="radio-duplex-offset" step="1" value="0"><span>kHz</span></div>
+            </div>
+            <div class="field" style="max-width: 160px;">
+              <label for="radio-tot">Time-out timer ${helpIcon("Caps how long the radio can transmit continuously. Cheap insurance against a stuck PTT damaging the radio on unattended gear. 0 = off.")}</label>
+              <div class="field-suffix"><input type="number" id="radio-tot" min="0" step="1" value="0"><span>min</span></div>
+            </div>
+            <div class="field">
+              <label><input type="checkbox" id="radio-busy-lockout"> Busy channel lockout ${helpIcon("Blocks TX while the channel is busy. Direwolf already does its own software channel access (CSMA) — enabling this too can make the two fight each other. Leave off unless you specifically want the radio-level lockout as well.")}</label>
+            </div>
+          </details>
         </section>
       `;
       const modelSelect = document.getElementById('radio-model');
-      PLACEHOLDER_RADIOS.forEach(r => addOption(modelSelect, r, r));
+      SUPPORTED_RADIOS.forEach(r => addOption(modelSelect, r.model, r.model));
       const powerSelect = document.getElementById('radio-power');
-      PLACEHOLDER_POWER_LEVELS.forEach(p => addOption(powerSelect, p, p));
+      RADIO_POWER_LEVELS.forEach(p => addOption(powerSelect, p, p));
+      const encodeSelect = document.getElementById('radio-ctcss-encode');
+      const decodeSelect = document.getElementById('radio-ctcss-decode');
+      addOption(encodeSelect, '', 'Off');
+      addOption(decodeSelect, '', 'Off');
+      CTCSS_TONES.forEach(hz => {
+        addOption(encodeSelect, hz, `${hz.toFixed(1)} Hz`);
+        addOption(decodeSelect, hz, `${hz.toFixed(1)} Hz`);
+      });
 
       modelSelect.value = d.model ?? modelSelect.value;
       powerSelect.value = d.power_level ?? powerSelect.value;
+      document.getElementById('radio-name').value = d.name ?? '';
+      const adv = d.advanced || {};
+      encodeSelect.value = adv.ctcss_encode_hz ?? '';
+      decodeSelect.value = adv.ctcss_decode_hz ?? '';
+      document.getElementById('radio-duplex-offset').value =
+        adv.duplex_offset_hz ? Math.round(adv.duplex_offset_hz / 1000) * (adv.duplex_direction === '-' ? -1 : 1) : 0;
+      document.getElementById('radio-tot').value = adv.time_out_timer_min ?? 0;
+      document.getElementById('radio-busy-lockout').checked = !!adv.busy_lockout;
+
+      function updateProgrammerSectionVisibility() {
+        const radio = SUPPORTED_RADIOS.find(r => r.model === modelSelect.value);
+        const show = !!(radio && radio.programmable);
+        document.getElementById('radio-programmer-port-wrap').classList.toggle('hidden', !show);
+        document.getElementById('radio-advanced').classList.toggle('hidden', !show);
+      }
+      modelSelect.addEventListener('change', updateProgrammerSectionVisibility);
+      updateProgrammerSectionVisibility();
+      loadProgrammerPortOptions();
       document.getElementById('radio-frequency').value = d.frequency_mhz ?? '';
       document.getElementById('radio-ptt').value = d.ptt_method ?? 'gpio';
       document.getElementById('radio-ptt-serial-line').value = d.ptt_serial_line ?? 'RTS';
@@ -955,15 +1028,41 @@
       }
     }
 
+    async function loadProgrammerPortOptions() {
+      const select = document.getElementById('radio-programmer-port');
+      const d = state.radio || {};
+      try {
+        const res = await fetch('/api/hardware/serial-devices');
+        const data = await res.json();
+        (data.devices || []).forEach(dev => {
+          const label = dev.description ? `${dev.device} (${dev.description})` : dev.device;
+          addOption(select, dev.device, label);
+        });
+        if (d.programmer_port) select.value = d.programmer_port;
+      } catch (e) {
+        // radio model picker still works without this; port just won't be pre-populated
+      }
+    }
+
     // A blank frequency shows an inline warning but doesn't block Save
     function collectRadioTab() {
       const pttMethod = document.getElementById('radio-ptt').value;
       const radio = {
         model: document.getElementById('radio-model').value,
         frequency_mhz: document.getElementById('radio-frequency').value,
+        name: document.getElementById('radio-name').value,
         ptt_method: pttMethod,
         audio_device: document.getElementById('radio-audio').value,
         power_level: document.getElementById('radio-power').value,
+        programmer_port: document.getElementById('radio-programmer-port').value,
+        advanced: {
+          ctcss_encode_hz: parseFloat(document.getElementById('radio-ctcss-encode').value) || null,
+          ctcss_decode_hz: parseFloat(document.getElementById('radio-ctcss-decode').value) || null,
+          duplex_offset_hz: Math.abs(parseInt(document.getElementById('radio-duplex-offset').value, 10) || 0) * 1000,
+          duplex_direction: (parseInt(document.getElementById('radio-duplex-offset').value, 10) || 0) < 0 ? '-' : '+',
+          time_out_timer_min: parseInt(document.getElementById('radio-tot').value, 10) || 0,
+          busy_lockout: document.getElementById('radio-busy-lockout').checked,
+        },
       };
       if (pttMethod === 'gpio') {
         // Read live from the GPIO tab, the editable home for this value
@@ -2315,6 +2414,113 @@
       updateConflictWarning();
     }
 
+    // ── Signal Test tab: transmits a real RF packet via Direwolf to test reach to a nearby igate station ──
+    function renderSignalTestTab() {
+      const digipeatOn = state.aprs.digipeat_mode === 'digipeater';
+      const igateOff = (state.aprs.igate_mode || 'off') === 'off';
+      const eligible = digipeatOn && igateOff;
+
+      document.getElementById('signaltest-tab-content').innerHTML = `
+        <section>
+          <p class="hint">Transmits a real APRS message over RF, addressed to a nearby igate-enabled station, to confirm this digipeater's signal reaches far enough to be gated onto APRS-IS. This is an RF reach test, not a test of this digipeater's own internet/IGate access.</p>
+
+          <p class="warn-banner${eligible ? ' hidden' : ''}" id="signaltest-ineligible-warning">
+            Signal test needs digipeating set to RX &amp; TX, with IGate off. It only makes sense for an RF-only setup
+            &mdash; if this digipeater has its own IGate uplink, testing reach to another igate isn't a relevant test. Check the APRS tab.
+          </p>
+
+          <div class="field">
+            <label for="signaltest-callsign">Call to test ${helpIcon('The callsign (with SSID if needed) of a nearby igate-enabled station, e.g. ZL4ST-15. That station needs a listener watching APRS-IS for messages addressed to it and replying, and its igate needs RX & TX to relay the reply back to RF.')}</label>
+            <input type="text" id="signaltest-callsign" placeholder="e.g. ZL4ST-16" value="ZL4ST-16" style="text-transform: uppercase;" ${eligible ? '' : 'disabled'}>
+            <p class="hint">Defaults to <code>ZL4ST-16</code>, a public listener you can use to test. To self-host your own (e.g. closer to your coverage area), see <a href="https://github.com/pomtom44/DigipeaterPing" target="_blank" rel="noopener">DigipeaterPing</a>.</p>
+          </div>
+
+          <div class="field">
+            <button type="button" id="btn-signaltest-push" ${eligible ? '' : 'disabled'}>Push to callsign</button>
+          </div>
+
+          <div class="field">
+            <label>Result</label>
+            <div class="status-box" id="signaltest-status">Idle.</div>
+          </div>
+
+          <div class="field">
+            <label for="signaltest-reply">Reply details</label>
+            <textarea id="signaltest-reply" rows="6" readonly placeholder="Round-trip time, reply text and timestamp will appear here once a confirmation comes back."></textarea>
+          </div>
+
+          <p class="hint">
+            <strong>Limitations:</strong> the reply only comes back if the test station is in RF range, running a listener script on APRS-IS, and its igate is in full RX &amp; TX mode (able to relay a reply back out to RF) &mdash; RX-only won't work.
+            A missing reply doesn't necessarily mean the RF path is dead &mdash; it may just mean the test station is offline or its igate is RX-only.
+            Typical round trip (RF &rarr; their igate &rarr; APRS-IS &rarr; back) is around 10&ndash;20 seconds; this waits up to 2 minutes before giving up.
+          </p>
+          <p class="hint">
+            <strong>No reply?</strong> Check <a href="https://digiping.zl4st.com" target="_blank" rel="noopener">digiping.zl4st.com</a> to see if your ping was heard.
+            If it shows up there, this digipeater is reaching that station and getting into APRS-IS fine &mdash; the fault is on the return leg (that station's igate not relaying back, or you being out of RF range for the reply).
+            If it doesn't show up at all, your signal isn't reaching that station.
+          </p>
+        </section>
+      `;
+
+      if (!eligible) return;
+
+      const pushBtn = document.getElementById('btn-signaltest-push');
+      const statusBox = document.getElementById('signaltest-status');
+      const replyBox = document.getElementById('signaltest-reply');
+      const callInput = document.getElementById('signaltest-callsign');
+
+      pushBtn.addEventListener('click', async () => {
+        const callsign = callInput.value.trim().toUpperCase();
+        if (!callsign) {
+          statusBox.textContent = 'Enter a callsign to test first.';
+          return;
+        }
+        pushBtn.disabled = true;
+        statusBox.textContent = 'Transmitting test packet...';
+        replyBox.value = '';
+        const sentAt = Date.now();
+        try {
+          const res = await fetch('/api/aprs/signal_test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callsign }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) {
+            statusBox.textContent = data.detail || 'Could not send test message.';
+            return;
+          }
+          statusBox.textContent = `Waiting for reply from ${callsign}...`;
+          pollSignalTestReply(data.test_id, callsign, sentAt);
+        } catch (e) {
+          statusBox.textContent = 'Could not reach the server.';
+          pushBtn.disabled = false;
+        }
+      });
+
+      async function pollSignalTestReply(testId, callsign, sentAt) {
+        const deadline = Date.now() + 120000;
+        while (Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 3000));
+          try {
+            const res = await fetch(`/api/aprs/signal_test/${encodeURIComponent(testId)}`);
+            const data = await res.json();
+            if (data.received) {
+              const rtt = ((Date.now() - sentAt) / 1000).toFixed(1);
+              statusBox.textContent = `Confirmed: reply received from ${callsign}.`;
+              replyBox.value = `Round-trip: ${rtt}s\nReceived: ${new Date().toLocaleString()}\nReply text: ${data.reply_text || '(none)'}`;
+              pushBtn.disabled = false;
+              return;
+            }
+          } catch (e) {
+            // transient poll failure, keep trying until deadline
+          }
+        }
+        statusBox.textContent = `No reply from ${callsign} within 2 minutes.`;
+        pushBtn.disabled = false;
+      }
+    }
+
     // radio.ptt_gpio_pin is read by collectRadioTab() instead, not collected here
     function collectGpioTab() {
       const gpio = {
@@ -2513,6 +2719,7 @@
       renderUserTab();
       renderStartupTab();
       renderGpioTab();
+      renderSignalTestTab();
 
       document.getElementById('btn-save-all').addEventListener('click', saveAll);
       document.getElementById('btn-back-dashboard').addEventListener('click', () => { location.href = '/'; });
