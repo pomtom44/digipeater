@@ -206,8 +206,9 @@ class EPD:
         self._wait_busy()
 
     def getbuffer(self, image):
-        # Rotated 90 CW so the port lands on the left edge once mounted; confirmed correct on real hardware.
-        img = image.copy().convert("1").transpose(Image.Transpose.ROTATE_270)
+        # Was ROTATE_270; the standard build's actual panel mounting sits 90 CCW from what that assumed,
+        # so an extra 90 CW (net ROTATE_180) corrects it. Reported from the standard build, not yet re-verified here.
+        img = image.copy().convert("1").transpose(Image.Transpose.ROTATE_180)
         linewidth = (self.width + 7) >> 3
         buf = [0xFF] * (linewidth * self.height)
         pixels = img.load()
