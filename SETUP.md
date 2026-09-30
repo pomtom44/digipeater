@@ -27,7 +27,7 @@ The image already has everything installed; it just needs to boot.
 
 ### Method 2: Manual install
 
-1. Open Raspberry Pi Imager
+1. Open [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
 2. **Choose Device** → Raspberry Pi 3
 3. **Choose OS** → Raspberry Pi OS (other) → **Raspberry Pi OS (Legacy, 64-bit) Lite**
    - This project is built and tested against Bookworm specifically. The plain "Raspberry Pi OS Lite (64-bit)" option now installs Trixie (Debian 13) by default, which is untested here. Use the Legacy option to get Bookworm.
@@ -37,10 +37,24 @@ The image already has everything installed; it just needs to boot.
    - **Services tab**: enable SSH, using password authentication
 6. Save, confirm, and write
 
-Once flashing finishes, insert the SD card into the Pi and power it on. After ~60-90 seconds, SSH in and run the installer:
+Once flashing finishes, insert the SD card into the Pi and power it on. 
+After ~60-90 seconds, SSH in and run the following:
 
+Update:
 ```bash
-ssh pi@digipeater.local
+sudo apt update && sudo apt full-upgrade -y
+sudo apt autoremove -y
+```
+
+Initial Config (not always needed but good to double check everything):
+```bash
+sudo raspi-config
+```
+The main one to check is advanced - expand filesystem
+Most of the rest you can leave as is
+
+Install Digipeater:
+```bash
 curl -sSL https://raw.githubusercontent.com/pomtom44/digipeater/main/install.sh | bash
 ```
 
@@ -53,6 +67,7 @@ You'll be asked for a WiFi country code (only if one isn't already set) and whic
 **Before you start, have ready:**
 - Your callsign and SSID (the APRS-IS passcode fills in automatically from these, no need to look it up)
 - A decision on IGate mode (Off / RX only / RX & TX): RX only is the safe default if unsure; RX & TX also relays internet messages back onto RF
+- Radio settings required for your region or usecase.
 
 Reboot and follow the setup wizard. If the Pi isn't on ethernet or a network it already knows, it starts its own WiFi hotspot to reach the wizard from:
 
