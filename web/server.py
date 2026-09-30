@@ -17,7 +17,8 @@ from display.base import DisplayDriver
 from display.rotation import load_pages
 from display.waveshare import epdconfig
 from services import (
-    aprs, auth, direwolf_config, gps, gpsconfig, hardware, network, relay, restart_policy, signal_test, system, tiles,
+    aprs, auth, direwolf_config, gps, gpsconfig, hardware, network, radio_programmer, relay, restart_policy,
+    signal_test, system, tiles,
 )
 
 logger = logging.getLogger(__name__)
@@ -306,6 +307,28 @@ def create_app(
             raise HTTPException(status_code=500, detail=result["reason"])
         return {"ok": True}
 
+    @app.get("/api/radio/write/status")
+    async def radio_write_status():
+        # Read-only, ungated; polled by the progress bar while a write is in flight.
+        return system.get_radio_write_status()
+
+    @app.post("/api/radio/write")
+    async def radio_write(request: Request):
+        """Writes channel settings to the radio on demand: from the setup wizard (radio not yet powered) or the
+        config page's "Write to radio" button (may need to stop a running Direwolf first)."""
+        _require_login_for_action(request)
+        body = await request.json()
+        # Returned as ok:false rather than a 500, even on failure, so the frontend still learns was_running
+        # and can offer to restart Direwolf if this stopped it.
+        return await system.write_radio(body.get("radio") or {})
+
+    @app.post("/api/radio/power_off")
+    async def radio_power_off(request: Request):
+        """Powers the radio off after write_radio() left it on and the user chose not to restart Direwolf."""
+        _require_login_for_action(request)
+        await system.power_off_radio()
+        return {"ok": True}
+
     @app.post("/api/system/reboot")
     async def system_reboot(request: Request):
         # Post-setup equivalent of /api/setup/complete's reboot: the config page's "Reboot now" button.
@@ -583,21 +606,28 @@ def create_app(
 
         radio_changed = config.get("radio") != before["radio"]
         aprs_changed = config.get("aprs") != before["aprs"]
+        radio_write_pending = False
         if radio_changed or aprs_changed:
             try:
                 direwolf_config.write(config)
             except OSError as e:
                 logger.error("Failed to write direwolf.conf: %s", e)
-            status = await system.get_direwolf_status()
-            if status.get("running"):
-                # Direwolf only reads config at startup, so a running instance needs a stop/start to pick up changes.
-                await system.set_direwolf_running(False, config)
-                restart_result = await system.set_direwolf_running(True, config)
-                if not restart_result["ok"]:
-                    logger.error(
-                        "Failed to restart direwolf after config save: %s",
-                        restart_result["reason"],
-                    )
+            radio_needs_programming = radio_changed and radio_programmer.can_program(config.get("radio", {}).get("model"))
+            if radio_needs_programming:
+                # A radio change needs a physical write to the radio, which the config page prompts for
+                # separately (Write to radio button) rather than silently power-cycling the radio here.
+                radio_write_pending = True
+            else:
+                status = await system.get_direwolf_status()
+                if status.get("running"):
+                    # Direwolf only reads config at startup, so a running instance needs a stop/start to pick up changes.
+                    await system.set_direwolf_running(False, config)
+                    restart_result = await system.set_direwolf_running(True, config)
+                    if not restart_result["ok"]:
+                        logger.error(
+                            "Failed to restart direwolf after config save: %s",
+                            restart_result["reason"],
+                        )
             # Reported separately since only one of the two may have actually changed.
             if radio_changed:
                 applied.append("radio")
@@ -615,7 +645,10 @@ def create_app(
         if display_driver_changed:
             reboot_required.append("display")
 
-        return {"ok": True, "applied": applied, "reboot_required": reboot_required}
+        return {
+            "ok": True, "applied": applied, "reboot_required": reboot_required,
+            "radio_write_pending": radio_write_pending,
+        }
 
     @app.get("/api/display/status")
     async def display_status():

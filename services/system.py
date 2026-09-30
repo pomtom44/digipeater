@@ -216,6 +216,63 @@ async def set_direwolf_running(running: bool, config: dict | None = None) -> dic
         _transition = None
 
 
+# Polled by the frontend's progress bar while write_radio() is in flight; None when idle.
+_radio_write_phase: str | None = None
+
+
+def get_radio_write_status() -> dict:
+    """Read-only progress snapshot for the frontend to poll during write_radio(); includes the fixed delays
+    it knows about up front (boot/settle) so a determinate bar can be drawn for those phases."""
+    return {
+        "phase": _radio_write_phase,
+        "boot_delay_s": relay.BOOT_DELAY_S,
+        "settle_delay_s": radio_programmer.PROGRAM_SETTLE_DELAY_S,
+    }
+
+
+async def write_radio(radio_config: dict) -> dict:
+    """Writes channel settings to the radio outside the normal start/stop flow: powers the relay on if the radio is
+    off, or stops Direwolf first (leaving the radio powered) if it's already running, then programs and settles.
+    Returns was_running so the caller can offer to restart Direwolf or power the radio back off."""
+    global _radio_write_phase
+    if not radio_programmer.can_program(radio_config.get("model")):
+        return {"ok": False, "reason": "This radio model doesn't support programming.", "was_running": False}
+
+    status = await get_direwolf_status()
+    was_running = bool(status.get("running"))
+
+    try:
+        if was_running:
+            _radio_write_phase = "stopping_direwolf"
+            stop_result = await _run_systemctl("stop")
+            if not stop_result["ok"]:
+                return {"ok": False, "reason": stop_result["reason"], "was_running": True}
+        else:
+            _radio_write_phase = "powering_on"
+            await relay.power_on()
+
+        _radio_write_phase = "programming"
+        prog_result = await radio_programmer.program_channel(radio_config)
+
+        _radio_write_phase = "settling"
+        await asyncio.sleep(radio_programmer.PROGRAM_SETTLE_DELAY_S)
+
+        if not was_running:
+            _radio_write_phase = "powering_off"
+            await relay.power_off()
+
+        if not prog_result["ok"]:
+            return {"ok": False, "reason": prog_result["reason"], "was_running": was_running}
+        return {"ok": True, "reason": None, "was_running": was_running}
+    finally:
+        _radio_write_phase = None
+
+
+async def power_off_radio() -> None:
+    """Powers the radio off directly; used after write_radio() leaves it on and the user opts not to restart Direwolf."""
+    await relay.power_off()
+
+
 _DIREWOLF_LOG_LINES = 200
 
 

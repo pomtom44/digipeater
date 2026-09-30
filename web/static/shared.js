@@ -603,3 +603,66 @@ function setEinkPageEnabled(id, enabled) {
   einkPages.push(page);
   renderEinkPageLists();
 }
+
+// ── Radio write progress bar (config.html's Radio tab + save prompt, first_run.html's Radio step) ──
+const RADIO_WRITE_PHASE_LABELS = {
+  stopping_direwolf: 'Stopping Direwolf',
+  powering_on: 'Powering radio on',
+  programming: 'Writing to radio',
+  settling: 'Letting radio settle',
+  powering_off: 'Powering radio off',
+};
+
+// Runs the /api/radio/write POST while polling /api/radio/write/status for phase updates, calling
+// onProgress(status) roughly every 600ms until the write completes. Resolves with the write's response body.
+async function writeRadioWithProgress(radioConfig, onProgress) {
+  let polling = true;
+  const pollLoop = (async () => {
+    while (polling) {
+      try {
+        onProgress(await (await fetch('/api/radio/write/status')).json());
+      } catch (e) {
+        // transient poll failure, keep trying until the write itself resolves
+      }
+      await new Promise(r => setTimeout(r, 600));
+    }
+  })();
+  try {
+    const res = await fetch('/api/radio/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ radio: radioConfig }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || res.statusText);
+    return body;
+  } finally {
+    polling = false;
+    await pollLoop;
+  }
+}
+
+// Tracks when the current phase was first observed, so the two fixed-length phases (powering_on/settling)
+// can be drawn as a determinate fill; other phases get an indeterminate animated one.
+const _radioProgressState = { phase: null, phaseStartedAt: 0 };
+
+function renderRadioWriteProgress(el, status) {
+  const phase = status.phase;
+  if (phase !== _radioProgressState.phase) {
+    _radioProgressState.phase = phase;
+    _radioProgressState.phaseStartedAt = Date.now();
+  }
+  if (!phase) return;
+  const label = RADIO_WRITE_PHASE_LABELS[phase] || phase;
+  const knownDurationS = phase === 'powering_on' ? status.boot_delay_s
+    : phase === 'settling' ? status.settle_delay_s : null;
+  let fillHtml;
+  if (knownDurationS) {
+    const elapsedS = (Date.now() - _radioProgressState.phaseStartedAt) / 1000;
+    const pct = Math.min(95, (elapsedS / knownDurationS) * 100);
+    fillHtml = `<div class="progress-bar-fill" style="width: ${pct}%"></div>`;
+  } else {
+    fillHtml = '<div class="progress-bar-fill indeterminate"></div>';
+  }
+  el.innerHTML = `<p class="radio-progress-label">${label}…</p><div class="progress-bar">${fillHtml}</div>`;
+}

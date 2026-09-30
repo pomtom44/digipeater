@@ -357,6 +357,18 @@
 
     .hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 10px 0 0; }
 
+    .radio-progress-label { font-size: 13px; margin: 0 0 6px; }
+    .progress-bar { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+    .progress-bar-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s linear; }
+    .progress-bar-fill.indeterminate {
+      width: 40% !important;
+      animation: progress-bar-indeterminate 1.1s ease-in-out infinite;
+    }
+    @keyframes progress-bar-indeterminate {
+      0% { margin-left: -40%; }
+      100% { margin-left: 100%; }
+    }
+
     .help-icon {
       display: inline-flex;
       align-items: center;
@@ -871,6 +883,11 @@
             <label for="radio-programmer-port">Programming cable port ${helpIcon("Serial port for this radio's clone/programming cable — separate from the PTT/audio connection above.")}</label>
             <select id="radio-programmer-port"></select>
           </div>
+          <div class="field hidden" id="radio-write-wrap">
+            <button type="button" id="btn-write-radio">Write to radio</button>
+            <p class="hint">Powers the radio on, writes these settings to it, then powers it back off (or, if Direwolf is currently running, stops it first and leaves the radio on afterward).</p>
+            <div id="radio-write-standalone-result"></div>
+          </div>
           <details class="advanced hidden" id="radio-advanced">
             <summary>Advanced radio settings</summary>
             <div class="field-row">
@@ -925,11 +942,16 @@
         const radio = SUPPORTED_RADIOS.find(r => r.model === modelSelect.value);
         const show = !!(radio && radio.programmable);
         document.getElementById('radio-programmer-port-wrap').classList.toggle('hidden', !show);
+        document.getElementById('radio-write-wrap').classList.toggle('hidden', !show);
         document.getElementById('radio-advanced').classList.toggle('hidden', !show);
       }
       modelSelect.addEventListener('change', updateProgrammerSectionVisibility);
       updateProgrammerSectionVisibility();
       loadProgrammerPortOptions();
+      document.getElementById('btn-write-radio').addEventListener('click', () => {
+        collectRadioTab();
+        runRadioWrite(state.radio, document.getElementById('radio-write-standalone-result'));
+      });
       document.getElementById('radio-frequency').value = d.frequency_mhz ?? '';
       document.getElementById('radio-ptt').value = d.ptt_method ?? 'gpio';
       document.getElementById('radio-ptt-serial-line').value = d.ptt_serial_line ?? 'RTS';
@@ -2551,18 +2573,106 @@
     }
 
     function renderSaveResult(data) {
-      const applied = (data.applied || []).map(k => APPLIED_LABELS[k] || k);
+      // Radio is reported separately below via the write-to-radio prompt, not as "applied immediately".
+      const applied = (data.applied || []).filter(k => k !== 'radio').map(k => APPLIED_LABELS[k] || k);
       const reboot = (data.reboot_required || []).map(k => REBOOT_LABELS[k] || k);
       let html = '<strong>Saved.</strong>';
       if (applied.length) html += `Applied immediately: ${applied.join(', ')}. `;
       if (reboot.length) html += `Needs a reboot to take effect: ${reboot.join(', ')}. `;
-      if (!applied.length && !reboot.length) html += 'Nothing needed live-applying.';
+      if (!applied.length && !reboot.length && !data.radio_write_pending) html += 'Nothing needed live-applying.';
+      if (data.radio_write_pending) {
+        html += `
+          <div id="radio-write-prompt">
+            <p>Radio settings changed.</p>
+            <button type="button" id="btn-write-radio-now">Write to radio</button>
+          </div>
+        `;
+      }
       if (reboot.length) {
         html += '<div><button type="button" id="btn-reboot-now">Reboot now</button></div>';
       }
       showSaveBanner('success', html);
       if (reboot.length) {
         document.getElementById('btn-reboot-now').addEventListener('click', rebootNow);
+      }
+      if (data.radio_write_pending) {
+        document.getElementById('btn-write-radio-now').addEventListener('click', () => {
+          runRadioWrite(state.radio, document.getElementById('radio-write-prompt'));
+        });
+      }
+    }
+
+    // Writes radioConfig to the radio, rendering progress/result/follow-up choices into wrap.
+    // Shared by the post-save prompt and the standalone Write to radio button on the Radio tab.
+    async function runRadioWrite(radioConfig, wrap) {
+      wrap.innerHTML = '<div id="radio-write-progress"></div>';
+      const progressEl = document.getElementById('radio-write-progress');
+      let body;
+      try {
+        // Programming failure comes back as ok:false rather than a non-2xx (so was_running still
+        // comes through); writeRadioWithProgress only throws on something going wrong before that,
+        // e.g. the login gate.
+        body = await writeRadioWithProgress(radioConfig, status => renderRadioWriteProgress(progressEl, status));
+      } catch (e) {
+        wrap.innerHTML = `
+          <p class="msg error">Error writing to radio: ${e.message}</p>
+          <button type="button" id="btn-write-radio-retry">Retry</button>
+        `;
+        document.getElementById('btn-write-radio-retry').addEventListener('click', () => runRadioWrite(radioConfig, wrap));
+        return;
+      }
+
+      if (!body.ok) {
+        wrap.innerHTML = `
+          <p class="msg error">Radio programming failed: ${body.reason || 'unknown error'}</p>
+          <button type="button" id="btn-write-radio-retry">Retry</button>
+        `;
+        document.getElementById('btn-write-radio-retry').addEventListener('click', () => runRadioWrite(radioConfig, wrap));
+        if (body.was_running) {
+          // Direwolf was stopped to attempt the write and is now down regardless of the failure.
+          wrap.innerHTML += `
+            <p>Direwolf is stopped. Restart it?</p>
+            <button type="button" id="btn-radio-restart-direwolf">Restart Direwolf</button>
+          `;
+          document.getElementById('btn-radio-restart-direwolf').addEventListener('click', () => restartDirewolfAfterWrite(wrap));
+        }
+        return;
+      }
+
+      if (body.was_running) {
+        wrap.innerHTML = `
+          <p>Radio programmed. Direwolf was stopped to write it — restart it now?</p>
+          <button type="button" id="btn-radio-restart-direwolf">Restart Direwolf</button>
+          <button type="button" id="btn-radio-leave-off">Leave off (power down radio)</button>
+        `;
+        document.getElementById('btn-radio-restart-direwolf').addEventListener('click', () => restartDirewolfAfterWrite(wrap));
+        document.getElementById('btn-radio-leave-off').addEventListener('click', () => powerOffRadioAfterWrite(wrap));
+      } else {
+        wrap.innerHTML = '<p>Radio programmed and powered back off.</p>';
+      }
+    }
+
+    async function restartDirewolfAfterWrite(wrap) {
+      wrap.innerHTML = '<p>Starting Direwolf...</p>';
+      try {
+        const r = await fetch('/api/system/direwolf/start', { method: 'POST' });
+        if (!r.ok) {
+          const b = await r.json().catch(() => ({}));
+          throw new Error(b.detail || r.statusText);
+        }
+        wrap.innerHTML = '<p>Direwolf restarted.</p>';
+      } catch (e) {
+        wrap.innerHTML = `<p class="msg error">Error restarting Direwolf: ${e.message}</p>`;
+      }
+    }
+
+    async function powerOffRadioAfterWrite(wrap) {
+      wrap.innerHTML = '<p>Powering radio off...</p>';
+      try {
+        await fetch('/api/radio/power_off', { method: 'POST' });
+        wrap.innerHTML = '<p>Radio powered off.</p>';
+      } catch (e) {
+        wrap.innerHTML = `<p class="msg error">Error powering off: ${e.message}</p>`;
       }
     }
 
