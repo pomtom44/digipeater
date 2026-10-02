@@ -462,6 +462,27 @@ for k, v in MODELS.items():
     ok "Display set to: ${DISPLAY_MODEL:-none}"
 fi
 
+# ── Tune USB audio capture gain ───────────────
+# Cheap USB audio adapters (the CM108/CM119-family ones this project already targets for PTT) commonly
+# ship with capture gain far too hot for a radio's speaker/line output -- a sliver of the radio's own
+# volume knob already drives the input to full scale. 10% plus AGC off is a reasonable starting point;
+# the config page's Radio tab has a live level meter to fine-tune from there. Best-effort throughout:
+# a card without these exact controls (not every USB audio device has them) just skips, doesn't fail.
+USB_CARD=$(arecord -l 2>/dev/null | grep -m1 "USB" | sed -E 's/^card ([0-9]+).*/\1/')
+if [ -z "$USB_CARD" ]; then
+    info "No USB audio capture device detected yet, skipping gain tuning (re-run this script once one's connected)."
+else
+    MIXER_CONTROLS=$(amixer -D "hw:$USB_CARD" scontrols 2>/dev/null || true)
+    if echo "$MIXER_CONTROLS" | grep -q "'Mic'"; then
+        amixer -D "hw:$USB_CARD" sset 'Mic' 10% >/dev/null 2>&1 || true
+    fi
+    if echo "$MIXER_CONTROLS" | grep -q "'Auto Gain Control'"; then
+        amixer -D "hw:$USB_CARD" sset 'Auto Gain Control' off >/dev/null 2>&1 || true
+    fi
+    sudo alsactl store >/dev/null 2>&1 || true
+    ok "USB audio capture gain set to a sane starting point (persists across reboots); fine-tune on the Radio tab's level meter."
+fi
+
 # ── Done ──────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════╗"

@@ -14,10 +14,30 @@ import struct
 logger = logging.getLogger(__name__)
 
 _SAMPLE_RATE = 8000
-_CAPTURE_SECONDS = 0.3
+# Each call opens a fresh ALSA stream (simplest implementation, and the only way that doesn't hold the
+# device open between polls, blocking Direwolf from ever starting). USB audio codecs commonly need a
+# short settle time right after a stream opens (DC-coupling/mute ramp-off), which shows up as a brief,
+# much-louder-than-real transient -- confirmed against this project's own hardware: `arecord -V mono`
+# run continuously on the same signal never shows it, only our open-capture-close-repeat approach does.
+# Capture a bit longer than we need and throw away the warm-up portion before measuring anything.
+_WARMUP_SECONDS = 0.15
+_MEASURE_SECONDS = 0.35
+_CAPTURE_SECONDS = _WARMUP_SECONDS + _MEASURE_SECONDS
 _CAPTURE_BYTES = int(_SAMPLE_RATE * _CAPTURE_SECONDS) * 2  # 16-bit mono
+_WARMUP_BYTES = int(_SAMPLE_RATE * _WARMUP_SECONDS) * 2
 _CAPTURE_TIMEOUT_S = 3.0
 _FSAM_DIVISOR = 16384.0
+# Trims the most extreme ~1% of samples before taking peak/valley, so one stray sample (a USB
+# underrun blip, electrical noise, anything not actually the incoming audio) can't swing the whole
+# reading -- a true max()/min() is exactly one bad sample away from a false spike.
+_TRIM_FRACTION = 0.01
+
+
+def _trimmed_peak_valley(samples: tuple) -> tuple[int, int]:
+    ordered = sorted(samples)
+    n = len(ordered)
+    trim = max(1, int(n * _TRIM_FRACTION))
+    return ordered[n - 1 - trim], ordered[trim]
 
 
 async def read_level(device: str) -> dict:
@@ -43,6 +63,7 @@ async def read_level(device: str) -> dict:
         stderr_data = await proc.stderr.read()
         await proc.wait()
 
+    data = data[_WARMUP_BYTES:]
     if len(data) < 4:
         reason = stderr_data.decode(errors="replace").strip() if stderr_data else ""
         # Direwolf (or anything else) holding the device open is the most likely real-world cause.
@@ -52,6 +73,6 @@ async def read_level(device: str) -> dict:
 
     sample_count = len(data) // 2
     samples = struct.unpack(f"<{sample_count}h", data[:sample_count * 2])
-    peak, valley = max(samples), min(samples)
+    peak, valley = _trimmed_peak_valley(samples)
     level = round((peak - valley) / _FSAM_DIVISOR * 50)
     return {"ok": True, "level": level}
