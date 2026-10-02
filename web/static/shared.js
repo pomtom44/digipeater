@@ -609,7 +609,6 @@ const RADIO_WRITE_PHASE_LABELS = {
   stopping_direwolf: 'Stopping Direwolf',
   powering_on: 'Powering radio on',
   programming: 'Writing to radio',
-  settling: 'Letting radio settle',
   powering_off: 'Powering radio off',
 };
 
@@ -642,7 +641,7 @@ async function writeRadioWithProgress(radioConfig, onProgress) {
   }
 }
 
-// Tracks when the current phase was first observed, so the two fixed-length phases (powering_on/settling)
+// Tracks when the current phase was first observed, so the one fixed-length phase (powering_on)
 // can be drawn as a determinate fill; other phases get an indeterminate animated one.
 const _radioProgressState = { phase: null, phaseStartedAt: 0 };
 
@@ -654,8 +653,7 @@ function renderRadioWriteProgress(el, status) {
   }
   if (!phase) return;
   const label = RADIO_WRITE_PHASE_LABELS[phase] || phase;
-  const knownDurationS = phase === 'powering_on' ? status.boot_delay_s
-    : phase === 'settling' ? status.settle_delay_s : null;
+  const knownDurationS = phase === 'powering_on' ? status.boot_delay_s : null;
   let fillHtml;
   if (knownDurationS) {
     const elapsedS = (Date.now() - _radioProgressState.phaseStartedAt) / 1000;

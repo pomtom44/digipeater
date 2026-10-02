@@ -268,12 +268,11 @@ _radio_write_phase: str | None = None
 
 
 def get_radio_write_status() -> dict:
-    """Read-only progress snapshot for the frontend to poll during write_radio(); includes the fixed delays
-    it knows about up front (boot/settle) so a determinate bar can be drawn for those phases."""
+    """Read-only progress snapshot for the frontend to poll during write_radio(); includes the fixed
+    boot delay it knows about up front so a determinate bar can be drawn for that phase."""
     return {
         "phase": _radio_write_phase,
         "boot_delay_s": relay.BOOT_DELAY_S,
-        "settle_delay_s": radio_programmer.PROGRAM_SETTLE_DELAY_S,
     }
 
 
@@ -317,8 +316,8 @@ async def _write_radio_impl(radio_config: dict) -> dict:
 
         _radio_write_phase = "programming"
         prog_result = await radio_programmer.program_channel(radio_config)
-
-        _radio_write_phase = "settling"
+        # Still settles after writing, just folded into the "programming" phase rather than its own
+        # step -- the UI shows one continuous "Writing to radio" instead of a separate settling label.
         await asyncio.sleep(radio_programmer.PROGRAM_SETTLE_DELAY_S)
 
         if not was_running:

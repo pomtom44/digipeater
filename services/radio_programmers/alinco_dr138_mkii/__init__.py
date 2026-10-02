@@ -163,7 +163,11 @@ def _handshake(ser: serial.Serial) -> str:
     ser.write(bytes([0x02]))
     ser.flush()
     id_reply = _read_exact(ser, 9, "ID reply")
-    _read_exact(ser, 7, "version reply")
+    # 8 bytes, not 7: `05` + "V100" + 2 variable bytes + a trailing 06 ack (see the protocol doc).
+    # Leaving that ack unread shifts every subsequent read by one byte, corrupting the next echo check.
+    version_reply = _read_exact(ser, 8, "version reply")
+    if version_reply[-1] != _ACK:
+        raise IOError(f"version reply missing trailing ack: {version_reply!r}")
     _read_block(ser, _MANDATORY_PROBE_ADDR)  # mandatory first read every session, or writes won't auto-reset
     return id_reply[1:8].decode("ascii", errors="replace").rstrip("\x00")
 

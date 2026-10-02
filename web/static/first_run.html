@@ -610,6 +610,12 @@
     </div>
   </div>
 
+  <!-- Write-to-radio modal, offered on the Radio step's Next click; content swapped between
+       choice/progress/success/error states by openRadioWriteModal() and friends below. -->
+  <div class="help-overlay hidden" id="radio-write-overlay">
+    <div class="help-box" role="dialog" aria-modal="true" id="radio-write-box"></div>
+  </div>
+
   <script src="/static/maplibre/maplibre-gl.js"></script>
   <script src="/static/maplibre/pmtiles.js"></script>
   <script src="/static/shared.js"></script>
@@ -899,11 +905,6 @@
               <label for="radio-programmer-port">Programming cable port ${helpIcon("Serial port for this radio's clone/programming cable — separate from the PTT/audio connection above. Leave as None if you'll program the radio by hand instead; Direwolf will start fine either way.")}</label>
               <select id="radio-programmer-port"></select>
             </div>
-            <div class="field hidden" id="radio-write-wrap">
-              <button type="button" id="btn-write-radio">Write to radio</button>
-              <p class="hint">Powers the radio on, writes these settings to it, then powers it back off. Takes about 20 seconds.</p>
-              <p class="msg" id="write-radio-msg"></p>
-            </div>
             <details class="advanced hidden" id="radio-advanced">
               <summary>Advanced radio settings</summary>
               <div class="field-row">
@@ -973,13 +974,11 @@
         const radio = SUPPORTED_RADIOS.find(r => r.model === modelSelect.value);
         const showProgramming = !!(radio && radio.programmable);
         document.getElementById('radio-programmer-port-wrap').classList.toggle('hidden', !showProgramming);
-        document.getElementById('radio-write-wrap').classList.toggle('hidden', !showProgramming);
         document.getElementById('radio-advanced').classList.toggle('hidden', !showProgramming);
       }
       modelSelect.addEventListener('change', updateProgrammerSectionVisibility);
       updateProgrammerSectionVisibility();
       loadProgrammerPortOptions();
-      document.getElementById('btn-write-radio').addEventListener('click', writeRadioToDevice);
 
       document.getElementById('btn-audio-warning-ack').addEventListener('click', () => {
         audioInputWarningAcked = true;
@@ -1110,30 +1109,74 @@
       }
 
       wizardData.radio = buildRadioConfig();
+
+      const radio = SUPPORTED_RADIOS.find(r => r.model === wizardData.radio.model);
+      if (radio && radio.programmable) {
+        await openRadioWriteModal();
+      }
       return true;
     }
 
-    async function writeRadioToDevice() {
-      const btn = document.getElementById('btn-write-radio');
-      const msg = document.getElementById('write-radio-msg');
-      btn.disabled = true;
-      msg.className = 'msg';
-      msg.innerHTML = '<div id="radio-write-progress"></div>';
-      const progressEl = document.getElementById('radio-write-progress');
+    // ── Write-to-radio modal: offered on Next, Program now / Skip, progress shown in place ──
+    let _radioWriteModalResolve = null;
+
+    function openRadioWriteModal() {
+      return new Promise(resolve => {
+        _radioWriteModalResolve = (result) => {
+          document.getElementById('radio-write-overlay').classList.add('hidden');
+          resolve(result);
+        };
+        renderRadioWriteModalChoice();
+        document.getElementById('radio-write-overlay').classList.remove('hidden');
+      });
+    }
+
+    function renderRadioWriteModalChoice() {
+      document.getElementById('radio-write-box').innerHTML = `
+        <p>Write these settings to the radio now?</p>
+        <p class="hint">Powers the radio on, writes the channel, then powers it back off. Takes about 15 seconds.</p>
+        <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+          <button type="button" id="radio-write-modal-skip">Skip</button>
+          <button type="button" class="primary" id="radio-write-modal-go">Program now</button>
+        </div>
+      `;
+      document.getElementById('radio-write-modal-skip').addEventListener('click', () => _radioWriteModalResolve(true));
+      document.getElementById('radio-write-modal-go').addEventListener('click', runRadioWriteInModal);
+    }
+
+    async function runRadioWriteInModal() {
+      document.getElementById('radio-write-box').innerHTML = '<div id="radio-write-modal-progress"></div>';
+      const progressEl = document.getElementById('radio-write-modal-progress');
+      let body;
       try {
-        const body = await writeRadioWithProgress(
-          buildRadioConfig(),
-          status => renderRadioWriteProgress(progressEl, status)
-        );
-        if (!body.ok) throw new Error(body.reason || 'unknown error');
-        msg.textContent = 'Radio programmed.';
-        msg.className = 'msg success';
+        body = await writeRadioWithProgress(buildRadioConfig(), status => renderRadioWriteProgress(progressEl, status));
       } catch (e) {
-        msg.textContent = `Error: ${e.message}`;
-        msg.className = 'msg error';
-      } finally {
-        btn.disabled = false;
+        renderRadioWriteModalError(e.message);
+        return;
       }
+      if (!body.ok) {
+        renderRadioWriteModalError(body.reason || 'unknown error');
+        return;
+      }
+      document.getElementById('radio-write-box').innerHTML = `
+        <p class="msg success">Radio programmed.</p>
+        <div style="display: flex; justify-content: flex-end; margin-top: 16px;">
+          <button type="button" class="primary" id="radio-write-modal-continue">Continue</button>
+        </div>
+      `;
+      document.getElementById('radio-write-modal-continue').addEventListener('click', () => _radioWriteModalResolve(true));
+    }
+
+    function renderRadioWriteModalError(message) {
+      document.getElementById('radio-write-box').innerHTML = `
+        <p class="msg error">Error: ${message}</p>
+        <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+          <button type="button" id="radio-write-modal-skip-anyway">Skip anyway</button>
+          <button type="button" class="primary" id="radio-write-modal-retry">Retry</button>
+        </div>
+      `;
+      document.getElementById('radio-write-modal-skip-anyway').addEventListener('click', () => _radioWriteModalResolve(true));
+      document.getElementById('radio-write-modal-retry').addEventListener('click', runRadioWriteInModal);
     }
 
     // ── APRS settings step ───────────────────────────────────────────
