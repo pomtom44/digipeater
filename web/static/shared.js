@@ -666,3 +666,102 @@ function renderRadioWriteProgress(el, status) {
   }
   el.innerHTML = `<p class="radio-progress-label">${label}…</p><div class="progress-bar">${fillHtml}</div>`;
 }
+
+// ── Audio input level meter (radio setup, config.html's Radio tab + first_run.html's Radio step) ──
+// Direwolf's own documented convention: audio level ~50 is the target for received stations, derived
+// from peak-to-peak amplitude (src/demod.c: fsam = sample/16384, alevel.rec = (peak-valley)*50). The
+// backend (services/audio_level.py) scores a short arecord capture the same way, so this meter's
+// "~50 is good" guidance lines up with what Direwolf itself would report once it's actually running.
+const AUDIO_LEVEL_GOOD_MIN = 15;
+const AUDIO_LEVEL_GOOD_MAX = 50;
+const AUDIO_LEVEL_POLL_MS = 400;
+const AUDIO_LEVEL_MAX_DURATION_MS = 5 * 60 * 1000;
+
+// Only one meter is ever live on a page at a time; starting a new one (e.g. re-rendering the tab/step
+// that owns it) always stops whichever one was running first, so a stale poll loop never keeps
+// capturing audio against a container that's already been replaced.
+let _activeAudioLevelMeter = null;
+
+function createAudioLevelMeter(containerEl, getDeviceId) {
+  if (_activeAudioLevelMeter) _activeAudioLevelMeter.stop();
+
+  containerEl.innerHTML = `
+    <button type="button" class="audio-level-toggle">Start monitoring</button>
+    <div class="audio-level-meter hidden">
+      <div class="audio-level-track">
+        <div class="audio-level-zone-good"></div>
+        <div class="audio-level-fill"></div>
+      </div>
+      <div class="audio-level-readout">
+        <span class="audio-level-value">–</span>
+        <span class="audio-level-status"></span>
+      </div>
+      <p class="hint">With no signal present, turn the radio's volume up until the background static sits in the green zone. Too low (to the left) and weak signals won't decode reliably; too high (to the right) risks clipping. Stop Direwolf first if it's already running -- it holds the audio device, so this can't read it at the same time.</p>
+    </div>
+  `;
+
+  const toggleBtn = containerEl.querySelector('.audio-level-toggle');
+  const meterWrap = containerEl.querySelector('.audio-level-meter');
+  const fill = containerEl.querySelector('.audio-level-fill');
+  const valueEl = containerEl.querySelector('.audio-level-value');
+  const statusEl = containerEl.querySelector('.audio-level-status');
+
+  let pollTimer = null;
+  let stopAt = 0;
+
+  async function poll() {
+    if (Date.now() > stopAt) { stop(); return; }
+    const device = getDeviceId();
+    if (!device) {
+      valueEl.textContent = '–';
+      statusEl.textContent = 'Select an audio device first.';
+      pollTimer = setTimeout(poll, AUDIO_LEVEL_POLL_MS);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/radio/audio_level?device=${encodeURIComponent(device)}`);
+      const data = await res.json();
+      if (!data.ok) {
+        valueEl.textContent = '–';
+        statusEl.textContent = data.reason || 'Error reading level';
+        fill.style.width = '0%';
+      } else {
+        const level = data.level;
+        valueEl.textContent = level;
+        fill.style.width = `${Math.max(0, Math.min(100, level))}%`;
+        if (level < AUDIO_LEVEL_GOOD_MIN) {
+          statusEl.textContent = 'Too low';
+          fill.style.background = 'var(--status-warning)';
+        } else if (level > AUDIO_LEVEL_GOOD_MAX) {
+          statusEl.textContent = 'Too high';
+          fill.style.background = 'var(--status-critical)';
+        } else {
+          statusEl.textContent = 'Good';
+          fill.style.background = 'var(--status-good)';
+        }
+      }
+    } catch (e) {
+      valueEl.textContent = '–';
+      statusEl.textContent = 'Error reading level';
+    }
+    pollTimer = setTimeout(poll, AUDIO_LEVEL_POLL_MS);
+  }
+
+  function start() {
+    meterWrap.classList.remove('hidden');
+    toggleBtn.textContent = 'Stop monitoring';
+    stopAt = Date.now() + AUDIO_LEVEL_MAX_DURATION_MS;
+    poll();
+  }
+  function stop() {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+    meterWrap.classList.add('hidden');
+    toggleBtn.textContent = 'Start monitoring';
+  }
+
+  toggleBtn.addEventListener('click', () => { if (pollTimer) stop(); else start(); });
+
+  _activeAudioLevelMeter = { stop };
+  return _activeAudioLevelMeter;
+}

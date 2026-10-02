@@ -25,6 +25,11 @@
       --accent: #4fb3a9;
       --success: #5fbf8e;
       --error: #e08585;
+      /* Dataviz skill's fixed status palette -- never themed, same hex in light and dark (see
+         references/palette.md); used only by the audio level meter's good/too-low/too-high states. */
+      --status-good: #0ca30c;
+      --status-warning: #fab219;
+      --status-critical: #d03b3b;
     }
     /* System preference, only when there's no explicit override below. */
     @media (prefers-color-scheme: light) {
@@ -329,6 +334,39 @@
       0% { margin-left: -40%; }
       100% { margin-left: 100%; }
     }
+
+    .audio-level-meter { margin-top: 10px; }
+    .audio-level-track {
+      position: relative;
+      height: 14px;
+      border-radius: 7px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    /* Highlighted target band, AUDIO_LEVEL_GOOD_MIN-MAX out of a 0-100 scale (see shared.js). */
+    .audio-level-zone-good {
+      position: absolute;
+      left: 15%;
+      width: 35%;
+      top: 0;
+      bottom: 0;
+      background: color-mix(in srgb, var(--status-good) 18%, transparent);
+    }
+    .audio-level-fill {
+      position: relative;
+      height: 100%;
+      background: var(--status-good);
+      transition: width 0.2s linear, background-color 0.2s linear;
+    }
+    .audio-level-readout {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin-top: 6px;
+    }
+    .audio-level-value { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .audio-level-status { color: var(--muted); }
 
     .warn-banner {
       background: var(--panel-2);
@@ -851,6 +889,7 @@
                 No audio input device detected. Direwolf needs a microphone/audio input to receive on, it can't start without one.
                 <br><button type="button" id="btn-audio-warning-ack" style="margin-top: 8px;">Yes, I understand</button>
               </p>
+              <div id="radio-audio-level-wrap" style="margin-top: 10px;"></div>
             </div>
             <div class="field">
               <label for="radio-power">TX power level</label>
@@ -950,6 +989,10 @@
       loadAudioDevices();
       loadCm108PttOptions();
       loadSerialPttOptions();
+      createAudioLevelMeter(
+        document.getElementById('radio-audio-level-wrap'),
+        () => document.getElementById('radio-audio').value,
+      );
     }
 
     // Set once "Yes, I understand" is clicked, so the warning doesn't reappear on re-render

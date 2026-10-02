@@ -111,6 +111,7 @@ run_with_spinner "Installing system packages..." sudo apt-get install -y -qq \
     curl \
     build-essential \
     cmake \
+    alsa-utils \
     libasound2-dev \
     libudev-dev \
     libavahi-client-dev \

@@ -17,8 +17,8 @@ from display.base import DisplayDriver
 from display.rotation import load_pages
 from display.waveshare import epdconfig
 from services import (
-    aprs, auth, db, direwolf_config, gps, gpsconfig, hardware, log_settings, network, radio_programmer, relay,
-    restart_policy, signal_test, system, tiles,
+    aprs, audio_level, auth, db, direwolf_config, gps, gpsconfig, hardware, log_settings, network,
+    radio_programmer, relay, restart_policy, signal_test, system, tiles,
 )
 
 logger = logging.getLogger(__name__)
@@ -243,6 +243,13 @@ def create_app(
     @app.get("/api/hardware/audio-devices")
     async def audio_devices():
         return {"devices": await hardware.list_audio_devices()}
+
+    @app.get("/api/radio/audio_level")
+    async def radio_audio_level(device: str):
+        """The radio setup page's live level meter: one ~0.3s capture, scored on Direwolf's own
+        "audio level" convention, so the radio's volume can be tuned against background static
+        before a signal shows up."""
+        return await audio_level.read_level(device)
 
     @app.get("/api/hardware/serial-devices")
     async def serial_devices():
