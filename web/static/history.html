@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>APRS Digipeater: History</title>
+  <!-- Set the saved theme before the stylesheet parses to avoid a flash. -->
+  <script>
+    (function() {
+      var t = localStorage.getItem('ui-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: dark light;
+      --bg: #0f1416;
+      --panel: #161d20;
+      --panel-2: #1c2427;
+      --border: #263238;
+      --text: #e8edee;
+      --muted: #8a9ba0;
+      --accent: #4fb3a9;
+      --success: #5fbf8e;
+      --error: #e08585;
+    }
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --bg: #f4f6f6;
+        --panel: #ffffff;
+        --panel-2: #f0f3f3;
+        --border: #dde3e3;
+        --text: #1a2226;
+        --muted: #62726f;
+        --accent: #2e8b7f;
+        --success: #2e8b57;
+        --error: #b03a3a;
+      }
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f4f6f6;
+      --panel: #ffffff;
+      --panel-2: #f0f3f3;
+      --border: #dde3e3;
+      --text: #1a2226;
+      --muted: #62726f;
+      --accent: #2e8b7f;
+      --success: #2e8b57;
+      --error: #b03a3a;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0f1416;
+      --panel: #161d20;
+      --panel-2: #1c2427;
+      --border: #263238;
+      --text: #e8edee;
+      --muted: #8a9ba0;
+      --accent: #4fb3a9;
+      --success: #5fbf8e;
+      --error: #e08585;
+    }
+
+    * { box-sizing: border-box; }
+    .hidden { display: none !important; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    button {
+      min-height: 40px;
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button:disabled { opacity: 0.5; cursor: default; }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 20px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 { font-size: 18px; margin: 0; font-weight: 700; flex-grow: 1; }
+
+    main.container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+
+    .panel-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    .hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 0 0 12px; }
+    .msg { margin-top: 10px; font-size: 13px; min-height: 16px; }
+    .msg.error { color: var(--error); }
+
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 16px;
+      align-items: center;
+    }
+    .filter-row label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .filter-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .filter-actions button { min-height: 32px; padding: 4px 10px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+    tr.history-row { cursor: pointer; }
+    tr.history-row:hover td { background: var(--panel-2); }
+    td.col-time { white-space: nowrap; color: var(--muted); }
+    td.col-type { white-space: nowrap; }
+    .type-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    tr.history-detail td {
+      background: var(--panel-2);
+      padding: 10px 14px;
+    }
+    tr.history-detail pre {
+      margin: 0;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    #load-more-row { text-align: center; padding: 16px; }
+    #empty-note { color: var(--muted); font-size: 13px; padding: 20px; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>History</h1>
+    <button type="button" id="theme-toggle" aria-label="Toggle color theme"></button>
+    <button type="button" id="btn-stats">Stats</button>
+    <button type="button" id="btn-config">Config</button>
+    <button type="button" id="btn-back-dashboard">&larr; Back to dashboard</button>
+  </header>
+
+  <main class="container">
+    <div class="panel-card">
+      <p class="hint">Every logged event across the station, newest first. Turn log types on/off, and set how long they're kept, on the Config page's Database tab. Click a row to see its full stored fields.</p>
+      <div class="filter-row" id="filter-row"></div>
+      <div class="filter-actions">
+        <button type="button" id="btn-filter-all">Select all</button>
+        <button type="button" id="btn-filter-none">Select none</button>
+      </div>
+    </div>
+
+    <div class="panel-card" style="padding: 0;">
+      <table>
+        <thead>
+          <tr><th>Time</th><th>Type</th><th>Summary</th></tr>
+        </thead>
+        <tbody id="history-body"></tbody>
+      </table>
+      <div id="empty-note" class="hidden">Nothing logged yet for the selected types.</div>
+      <div id="load-more-row">
+        <button type="button" id="btn-load-more" class="hidden">Load more</button>
+        <p class="msg" id="history-msg"></p>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/shared.js"></script>
+  <script>
+    // ── UI theme toggle (same pattern as normal.html/config.html) ──────
+    const UI_THEME_KEY = 'ui-theme';
+    const THEME_CYCLE = [null, 'light', 'dark'];
+    let uiTheme = localStorage.getItem(UI_THEME_KEY);
+    if (!THEME_CYCLE.includes(uiTheme)) uiTheme = null;
+    applyUiTheme(uiTheme);
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      uiTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(uiTheme) + 1) % THEME_CYCLE.length];
+      if (uiTheme) localStorage.setItem(UI_THEME_KEY, uiTheme);
+      else localStorage.removeItem(UI_THEME_KEY);
+      applyUiTheme(uiTheme);
+    });
+    document.getElementById('btn-config').addEventListener('click', () => { location.href = '/config'; });
+    document.getElementById('btn-stats').addEventListener('click', () => { location.href = '/stats'; });
+    document.getElementById('btn-back-dashboard').addEventListener('click', () => { location.href = '/'; });
+
+    // ── Log types: mirrors services/log_settings.py's LOG_TYPES keys/labels ──
+    const LOG_TYPES = [
+      { key: 'heard_stations', label: 'Heard stations' },
+      { key: 'sent_packets', label: 'Sent packets' },
+      { key: 'direwolf_events', label: 'Direwolf events' },
+      { key: 'radio_write_events', label: 'Radio writes' },
+      { key: 'config_changes', label: 'Config changes' },
+      { key: 'gps_fix_events', label: 'GPS fix events' },
+      { key: 'signal_test_results', label: 'Signal tests' },
+      { key: 'system_events', label: 'System events' },
+    ];
+    const TYPE_BADGE_LABELS = Object.fromEntries(LOG_TYPES.map(t => [t.key, t.label]));
+
+    const PAGE_SIZE = 100;
+    let nextBefore = null;
+    let loading = false;
+
+    function selectedTypes() {
+      return LOG_TYPES.filter(t => document.getElementById(`filter-${t.key}`).checked).map(t => t.key);
+    }
+
+    function renderFilterRow() {
+      document.getElementById('filter-row').innerHTML = LOG_TYPES.map(t => `
+        <label><input type="checkbox" id="filter-${t.key}" checked> ${t.label}</label>
+      `).join('');
+      LOG_TYPES.forEach(t => {
+        document.getElementById(`filter-${t.key}`).addEventListener('change', () => loadPage(true));
+      });
+    }
+
+    function formatTime(at) {
+      return new Date(at * 1000).toLocaleString();
+    }
+
+    function appendRows(entries) {
+      const body = document.getElementById('history-body');
+      for (const entry of entries) {
+        const row = document.createElement('tr');
+        row.className = 'history-row';
+        row.innerHTML = `
+          <td class="col-time">${formatTime(entry.at)}</td>
+          <td class="col-type"><span class="type-badge">${TYPE_BADGE_LABELS[entry.log_type] || entry.log_type}</span></td>
+          <td>${entry.summary}</td>
+        `;
+        const detailRow = document.createElement('tr');
+        detailRow.className = 'history-detail hidden';
+        const detailCell = document.createElement('td');
+        detailCell.colSpan = 3;
+        const pre = document.createElement('pre');
+        pre.textContent = JSON.stringify(entry.detail, null, 2);
+        detailCell.appendChild(pre);
+        detailRow.appendChild(detailCell);
+        row.addEventListener('click', () => detailRow.classList.toggle('hidden'));
+        body.appendChild(row);
+        body.appendChild(detailRow);
+      }
+    }
+
+    async function loadPage(reset) {
+      if (loading) return;
+      loading = true;
+      const msg = document.getElementById('history-msg');
+      const loadMoreBtn = document.getElementById('btn-load-more');
+      const types = selectedTypes();
+      if (reset) {
+        document.getElementById('history-body').innerHTML = '';
+        nextBefore = null;
+      }
+      if (types.length === 0) {
+        document.getElementById('empty-note').classList.remove('hidden');
+        document.getElementById('empty-note').textContent = 'Pick at least one log type above to show its history.';
+        loadMoreBtn.classList.add('hidden');
+        loading = false;
+        return;
+      }
+      msg.textContent = 'Loading...';
+      msg.className = 'msg';
+      try {
+        const params = new URLSearchParams({ types: types.join(','), limit: String(PAGE_SIZE) });
+        if (nextBefore !== null) params.set('before', String(nextBefore));
+        const res = await fetch(`/api/history?${params}`);
+        if (res.status === 401) {
+          location.href = '/login';
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        appendRows(data.entries);
+        nextBefore = data.next_before;
+        const hasAnyRows = document.getElementById('history-body').children.length > 0;
+        document.getElementById('empty-note').classList.toggle('hidden', hasAnyRows);
+        document.getElementById('empty-note').textContent = 'Nothing logged yet for the selected types.';
+        loadMoreBtn.classList.toggle('hidden', nextBefore === null);
+        msg.textContent = '';
+      } catch (e) {
+        msg.textContent = `Error: ${e.message}`;
+        msg.className = 'msg error';
+      } finally {
+        loading = false;
+      }
+    }
+
+    document.getElementById('btn-filter-all').addEventListener('click', () => {
+      LOG_TYPES.forEach(t => { document.getElementById(`filter-${t.key}`).checked = true; });
+      loadPage(true);
+    });
+    document.getElementById('btn-filter-none').addEventListener('click', () => {
+      LOG_TYPES.forEach(t => { document.getElementById(`filter-${t.key}`).checked = false; });
+      loadPage(true);
+    });
+    document.getElementById('btn-load-more').addEventListener('click', () => loadPage(false));
+
+    (async () => {
+      try {
+        const authState = await (await fetch('/api/auth/status')).json();
+        if (authState.mode !== 'none' && !authState.logged_in) {
+          location.href = '/login';
+          return;
+        }
+      } catch (e) {
+        // Degrades to attempting the page anyway; /api/history itself still enforces the gate
+      }
+      renderFilterRow();
+      loadPage(true);
+    })();
+  </script>
+</body>
+</html>

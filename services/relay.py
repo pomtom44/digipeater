@@ -2,6 +2,9 @@
 
 import asyncio
 import logging
+import time
+
+from services import db, log_settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,15 @@ def is_powered() -> bool:
     return _powered
 
 
+async def _log_power_event(kind: str) -> None:
+    if not log_settings.is_enabled("system_events"):
+        return
+    try:
+        await db.execute("INSERT INTO system_events (at, type) VALUES (?, ?)", (time.time(), kind))
+    except Exception as e:
+        logger.error("Failed to log %s event to database: %s", kind, e)
+
+
 async def power_on() -> None:
     """Powers the radio on and waits BOOT_DELAY_S for it to boot; a no-op if already on."""
     global _powered
@@ -53,6 +65,7 @@ async def power_on() -> None:
     if _HW:
         GPIO.output(RELAY_PIN, GPIO.HIGH)
     _powered = True
+    await _log_power_event("relay_on")
     await asyncio.sleep(BOOT_DELAY_S)
 
 
@@ -65,3 +78,4 @@ async def power_off() -> None:
     if _HW:
         GPIO.output(RELAY_PIN, GPIO.LOW)
     _powered = False
+    await _log_power_event("relay_off")

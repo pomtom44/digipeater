@@ -2,15 +2,31 @@
 
 import asyncio
 import logging
+import time
 
-from services import gps, radio_programmer, relay, restart_policy
+from services import db, gps, log_settings, radio_programmer, relay, restart_policy
 
 logger = logging.getLogger(__name__)
+
+
+async def _log_event(sql: str, params: tuple, *, what: str, log_type: str) -> None:
+    """Best-effort DB log, skipped entirely if this log type is turned off. Never lets a logging
+    failure break the caller's actual outcome."""
+    if not log_settings.is_enabled(log_type):
+        return
+    try:
+        await db.execute(sql, params)
+    except Exception as e:
+        logger.error("Failed to log %s to database: %s", what, e)
 
 
 async def reboot() -> None:
     """Reboots the Pi via a dedicated sudoers rule."""
     logger.info("Rebooting...")
+    await _log_event(
+        "INSERT INTO system_events (at, type) VALUES (?, ?)", (time.time(), "reboot"),
+        what="reboot event", log_type="system_events",
+    )
     proc = await asyncio.create_subprocess_exec("sudo", "-n", "reboot")
     await proc.wait()
 
@@ -84,6 +100,16 @@ GPS_FIX_WAIT_TIMEOUT_S = 300
 
 async def _wait_for_gps_fix(gps_config: dict) -> tuple[bool, str | None]:
     """Gate before powering the radio on: checks a manual position instantly, or polls gpsd for a live fix."""
+    global _transition
+    ok, reason = await _wait_for_gps_fix_impl(gps_config)
+    await _log_event(
+        "INSERT INTO gps_fix_events (at, ok, reason) VALUES (?, ?, ?)",
+        (time.time(), int(ok), reason), what="GPS fix event", log_type="gps_fix_events",
+    )
+    return ok, reason
+
+
+async def _wait_for_gps_fix_impl(gps_config: dict) -> tuple[bool, str | None]:
     global _transition
     if gps_config.get("position_source") == "manual":
         lat, lon = gps_config.get("latitude"), gps_config.get("longitude")
@@ -167,13 +193,35 @@ async def _run_systemctl(action: str) -> dict:
 
 
 async def set_direwolf_running(running: bool, config: dict | None = None) -> dict:
-    """Starts or stops direwolf, sequencing GPS fix wait, radio power, channel programming, and settle time around the systemctl call."""
+    """Starts or stops direwolf; logs the outcome (success or failure, whichever return path fired) once."""
+    result = await _set_direwolf_running_impl(running, config)
+    await _log_event(
+        "INSERT INTO direwolf_events (at, action, ok, reason, simulated) VALUES (?, ?, ?, ?, ?)",
+        (time.time(), "start" if running else "stop", int(result["ok"]), result.get("reason"),
+         int(bool(result.get("simulated")))),
+        what="direwolf event", log_type="direwolf_events",
+    )
+    return result
+
+
+async def _set_direwolf_running_impl(running: bool, config: dict | None = None) -> dict:
+    """Sequences GPS fix wait, radio power, channel programming, and settle time around the systemctl call."""
     global _transition, _last_error
     config = config or {}
     action = "start" if running else "stop"
     _transition = "starting" if running else "stopping"
     try:
         if running:
+            radio_config = config.get("radio", {})
+            if not radio_config.get("model"):
+                _last_error = "Cannot start Direwolf: radio not configured (Settings > Radio)"
+                logger.error(_last_error)
+                return {"ok": False, "reason": _last_error}
+            if not radio_config.get("audio_device"):
+                _last_error = "Cannot start Direwolf: audio device not configured (Settings > Radio)"
+                logger.error(_last_error)
+                return {"ok": False, "reason": _last_error}
+
             gps_ok, gps_reason = await _wait_for_gps_fix(config.get("gps", {}))
             _transition = "starting"  # back from _wait_for_gps_fix's "waiting_gps"
             if not gps_ok:
@@ -183,7 +231,6 @@ async def set_direwolf_running(running: bool, config: dict | None = None) -> dic
 
             await relay.power_on()
 
-            radio_config = config.get("radio", {})
             prog_result = await radio_programmer.program_channel(radio_config)
             if not prog_result["ok"]:
                 await relay.power_off()
@@ -231,12 +278,29 @@ def get_radio_write_status() -> dict:
 
 
 async def write_radio(radio_config: dict) -> dict:
-    """Writes channel settings to the radio outside the normal start/stop flow: powers the relay on if the radio is
-    off, or stops Direwolf first (leaving the radio powered) if it's already running, then programs and settles.
-    Returns was_running so the caller can offer to restart Direwolf or power the radio back off."""
+    """Writes channel settings to the radio; logs the outcome (including validation failures that
+    never touched hardware) once, whichever return path fired."""
+    result = await _write_radio_impl(radio_config)
+    await _log_event(
+        "INSERT INTO radio_write_events (at, model, ok, reason, was_running) VALUES (?, ?, ?, ?, ?)",
+        (time.time(), radio_config.get("model"), int(result["ok"]), result.get("reason"),
+         int(bool(result.get("was_running")))),
+        what="radio write event", log_type="radio_write_events",
+    )
+    return result
+
+
+async def _write_radio_impl(radio_config: dict) -> dict:
+    """Powers the relay on if the radio is off, or stops Direwolf first (leaving the radio powered) if
+    it's already running, then programs and settles. Returns was_running so the caller can offer to
+    restart Direwolf or power the radio back off."""
     global _radio_write_phase
-    if not radio_programmer.can_program(radio_config.get("model")):
+    if not radio_config.get("model"):
+        return {"ok": False, "reason": "Pick a radio model first.", "was_running": False}
+    if not radio_programmer.can_program(radio_config["model"]):
         return {"ok": False, "reason": "This radio model doesn't support programming.", "was_running": False}
+    if not radio_config.get("programmer_port"):
+        return {"ok": False, "reason": "Select a programming cable port first.", "was_running": False}
 
     status = await get_direwolf_status()
     was_running = bool(status.get("running"))

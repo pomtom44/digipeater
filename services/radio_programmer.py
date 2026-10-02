@@ -22,7 +22,8 @@ async def program_channel(radio_config: dict) -> dict:
 
     port = radio_config.get("programmer_port")
     if not port:
-        return {"ok": False, "skipped": False, "reason": "radio.programmer_port not set"}
+        # No cable port chosen; assume the radio was already programmed by hand rather than blocking Direwolf.
+        return {"ok": True, "skipped": True, "reason": None}
 
     try:
         image = driver.build_image(radio_config)

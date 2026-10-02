@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>APRS Digipeater: Stats</title>
+  <!-- Set the saved theme before the stylesheet parses to avoid a flash. -->
+  <script>
+    (function() {
+      var t = localStorage.getItem('ui-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: dark light;
+      --bg: #0f1416;
+      --panel: #161d20;
+      --panel-2: #1c2427;
+      --border: #263238;
+      --text: #e8edee;
+      --muted: #8a9ba0;
+      --accent: #4fb3a9;
+      --success: #5fbf8e;
+      --error: #e08585;
+    }
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --bg: #f4f6f6;
+        --panel: #ffffff;
+        --panel-2: #f0f3f3;
+        --border: #dde3e3;
+        --text: #1a2226;
+        --muted: #62726f;
+        --accent: #2e8b7f;
+        --success: #2e8b57;
+        --error: #b03a3a;
+      }
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f4f6f6;
+      --panel: #ffffff;
+      --panel-2: #f0f3f3;
+      --border: #dde3e3;
+      --text: #1a2226;
+      --muted: #62726f;
+      --accent: #2e8b7f;
+      --success: #2e8b57;
+      --error: #b03a3a;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0f1416;
+      --panel: #161d20;
+      --panel-2: #1c2427;
+      --border: #263238;
+      --text: #e8edee;
+      --muted: #8a9ba0;
+      --accent: #4fb3a9;
+      --success: #5fbf8e;
+      --error: #e08585;
+    }
+
+    /* Dataviz palette (see the dataviz skill's references/palette.md) -- distinct from the app's own
+       --accent teal, reserved for chart series identity only, never reused for UI chrome. */
+    .viz-root {
+      --viz-surface: #fcfcfb;
+      --viz-ink: #0b0b0b;
+      --viz-ink-secondary: #52514e;
+      --viz-ink-muted: #898781;
+      --viz-grid: #e1e0d9;
+      --viz-baseline: #c3c2b7;
+      --series-heard: #2a78d6;
+      --series-sent: #eb6834;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) .viz-root {
+        --viz-surface: #1a1a19;
+        --viz-ink: #ffffff;
+        --viz-ink-secondary: #c3c2b7;
+        --viz-ink-muted: #898781;
+        --viz-grid: #2c2c2a;
+        --viz-baseline: #383835;
+        --series-heard: #3987e5;
+        --series-sent: #d95926;
+      }
+    }
+    :root[data-theme="dark"] .viz-root {
+      --viz-surface: #1a1a19;
+      --viz-ink: #ffffff;
+      --viz-ink-secondary: #c3c2b7;
+      --viz-ink-muted: #898781;
+      --viz-grid: #2c2c2a;
+      --viz-baseline: #383835;
+      --series-heard: #3987e5;
+      --series-sent: #d95926;
+    }
+
+    * { box-sizing: border-box; }
+    .hidden { display: none !important; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    button {
+      min-height: 40px;
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 20px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 { font-size: 18px; margin: 0; font-weight: 700; flex-grow: 1; }
+
+    main.container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+
+    .panel-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+    .panel-title {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+      font-weight: 700;
+      margin: 0 0 16px;
+    }
+    .hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 0 0 12px; }
+
+    /* ── Stat tiles ───────────────────────────────────────────────── */
+    .tile-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+      gap: 14px;
+    }
+    .tile-label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .tile-value { font-size: 26px; font-weight: 600; font-variant-numeric: proportional-nums; }
+    .tile-note { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+    /* ── Ranked list (top callsigns, sent-by-type) ───────────────────── */
+    table.plain { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.plain th, table.plain td {
+      text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border);
+    }
+    table.plain th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+    table.plain td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* ── Chart ────────────────────────────────────────────────────── */
+    .chart-scroll { overflow-x: auto; }
+    .chart-legend { display: flex; gap: 16px; margin-bottom: 10px; font-size: 13px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; color: var(--viz-ink-secondary); }
+    .legend-swatch { width: 10px; height: 10px; border-radius: 2px; }
+    .viz-root { position: relative; }
+    .chart-tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: var(--viz-surface);
+      border: 1px solid var(--viz-grid);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+      white-space: nowrap;
+      z-index: 5;
+    }
+    .chart-tooltip .row { display: flex; align-items: center; gap: 6px; }
+    .chart-tooltip .key { width: 10px; height: 2px; display: inline-block; }
+    .chart-tooltip .val { font-weight: 600; color: var(--viz-ink); margin-left: auto; padding-left: 10px; }
+    .chart-tooltip .label { color: var(--viz-ink-secondary); }
+    .bar-group rect.bar { cursor: pointer; }
+    .bar-group:hover rect.bar, .bar-group.focused rect.bar { filter: brightness(1.12); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Stats</h1>
+    <button type="button" id="theme-toggle" aria-label="Toggle color theme"></button>
+    <button type="button" id="btn-history">History</button>
+    <button type="button" id="btn-config">Config</button>
+    <button type="button" id="btn-back-dashboard">&larr; Back to dashboard</button>
+  </header>
+
+  <main class="container">
+    <div class="panel-card">
+      <h2 class="panel-title">Heard stations</h2>
+      <div class="tile-grid" id="heard-tiles"></div>
+    </div>
+
+    <div class="panel-card">
+      <h2 class="panel-title">Sent (digipeats, beacons, IGate gates, messages)</h2>
+      <div class="tile-grid" id="sent-tiles"></div>
+    </div>
+
+    <div class="panel-card">
+      <h2 class="panel-title">30-day activity</h2>
+      <p class="hint">Heard vs sent, by day (UTC). Hover or focus a bar for exact counts.</p>
+      <div class="viz-root" id="chart-root">
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-swatch" style="background: var(--series-heard);"></span>Heard</span>
+          <span class="legend-item"><span class="legend-swatch" style="background: var(--series-sent);"></span>Sent</span>
+        </div>
+        <div class="chart-scroll">
+          <svg id="activity-chart" width="900" height="280" role="img" aria-label="Heard and sent counts per day, last 30 days"></svg>
+        </div>
+      </div>
+      <button type="button" id="btn-toggle-table" style="margin-top: 12px;">View as table</button>
+      <table class="plain hidden" id="activity-table" style="margin-top: 12px;">
+        <thead><tr><th>Day</th><th class="num">Heard</th><th class="num">Sent</th></tr></thead>
+        <tbody id="activity-table-body"></tbody>
+      </table>
+    </div>
+
+    <div class="panel-card">
+      <h2 class="panel-title">Top heard callsigns</h2>
+      <table class="plain" id="top-callsigns-table">
+        <thead><tr><th>Callsign</th><th class="num">Times heard</th></tr></thead>
+        <tbody id="top-callsigns-body"></tbody>
+      </table>
+      <p class="hint hidden" id="top-callsigns-empty">Nothing heard yet.</p>
+    </div>
+
+    <div class="panel-card">
+      <h2 class="panel-title">Sent, by type (all-time)</h2>
+      <table class="plain" id="sent-by-type-table">
+        <thead><tr><th>Type</th><th class="num">Count</th></tr></thead>
+        <tbody id="sent-by-type-body"></tbody>
+      </table>
+    </div>
+
+    <div class="panel-card">
+      <h2 class="panel-title">Direwolf stability</h2>
+      <div class="tile-grid" id="direwolf-tiles"></div>
+      <p class="hint" id="direwolf-last-failure" style="margin-top: 12px;"></p>
+    </div>
+
+    <div class="panel-card">
+      <h2 class="panel-title">Signal test (last 30 days)</h2>
+      <div class="tile-grid" id="signal-test-tiles"></div>
+    </div>
+  </main>
+
+  <script src="/static/shared.js"></script>
+  <script>
+    // ── UI theme toggle (same pattern as history.html/config.html) ─────
+    const UI_THEME_KEY = 'ui-theme';
+    const THEME_CYCLE = [null, 'light', 'dark'];
+    let uiTheme = localStorage.getItem(UI_THEME_KEY);
+    if (!THEME_CYCLE.includes(uiTheme)) uiTheme = null;
+    applyUiTheme(uiTheme);
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      uiTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(uiTheme) + 1) % THEME_CYCLE.length];
+      if (uiTheme) localStorage.setItem(UI_THEME_KEY, uiTheme);
+      else localStorage.removeItem(UI_THEME_KEY);
+      applyUiTheme(uiTheme);
+      // Bar fills read CSS vars at draw time, so a theme flip needs a redraw to pick up the new hexes.
+      if (window.__lastStats) renderChart(window.__lastStats.daily_activity);
+    });
+    document.getElementById('btn-config').addEventListener('click', () => { location.href = '/config'; });
+    document.getElementById('btn-history').addEventListener('click', () => { location.href = '/history'; });
+    document.getElementById('btn-back-dashboard').addEventListener('click', () => { location.href = '/'; });
+
+    function tile(label, value, note) {
+      return `
+        <div>
+          <div class="tile-label">${label}</div>
+          <div class="tile-value">${value}</div>
+          ${note ? `<div class="tile-note">${note}</div>` : ''}
+        </div>
+      `;
+    }
+
+    const SENT_TYPE_LABELS = {
+      digipeat: 'Digipeat', rf_beacon: 'RF beacon', igate_beacon: 'IGate beacon',
+      igate_gate: 'IGate gate', message: 'Message',
+    };
+
+    function renderSummary(stats) {
+      document.getElementById('heard-tiles').innerHTML =
+        tile('Last 24h', stats.heard.total_24h) +
+        tile('Last 7 days', stats.heard.total_7d) +
+        tile('Last 30 days', stats.heard.total_30d) +
+        tile('All time', stats.heard.total_all_time);
+
+      document.getElementById('sent-tiles').innerHTML =
+        tile('Last 24h', stats.sent.total_24h) +
+        tile('Last 7 days', stats.sent.total_7d) +
+        tile('Last 30 days', stats.sent.total_30d) +
+        tile('All time', stats.sent.total_all_time);
+
+      const topBody = document.getElementById('top-callsigns-body');
+      topBody.innerHTML = stats.heard.top_callsigns.map(r => `
+        <tr><td>${r.callsign}</td><td class="num">${r.count}</td></tr>
+      `).join('');
+      document.getElementById('top-callsigns-table').classList.toggle('hidden', stats.heard.top_callsigns.length === 0);
+      document.getElementById('top-callsigns-empty').classList.toggle('hidden', stats.heard.top_callsigns.length > 0);
+
+      const sentByTypeBody = document.getElementById('sent-by-type-body');
+      sentByTypeBody.innerHTML = Object.entries(stats.sent.by_type).map(([type, count]) => `
+        <tr><td>${SENT_TYPE_LABELS[type] || type}</td><td class="num">${count}</td></tr>
+      `).join('');
+
+      const dw = stats.direwolf;
+      document.getElementById('direwolf-tiles').innerHTML =
+        tile('Restarts (24h)', dw.starts_24h) +
+        tile('Restarts (7d)', dw.starts_7d) +
+        tile('Restarts (30d)', dw.starts_30d) +
+        tile('Failed starts (30d)', dw.start_failures_30d);
+      const lastFailureEl = document.getElementById('direwolf-last-failure');
+      if (dw.last_failure_at) {
+        const when = new Date(dw.last_failure_at * 1000).toLocaleString();
+        lastFailureEl.textContent = `Last failure: ${when} — ${dw.last_failure_reason || 'unknown reason'}`;
+      } else {
+        lastFailureEl.textContent = 'No failures recorded.';
+      }
+
+      const st = stats.signal_test;
+      document.getElementById('signal-test-tiles').innerHTML =
+        tile('Tests run', st.total_30d) +
+        tile('Replied', st.replied_30d) +
+        tile('Success rate', st.success_rate_30d === null ? '—' : `${st.success_rate_30d}%`);
+    }
+
+    // ── Chart: grouped bars, Heard vs Sent, one group per day (dataviz skill: marks-and-anatomy.md) ──
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+
+    function niceMax(v) {
+      if (v <= 5) return 5;
+      const magnitude = Math.pow(10, Math.floor(Math.log10(v)));
+      const normalized = v / magnitude;
+      const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+      return step * magnitude;
+    }
+
+    function seriesColor(name) {
+      return getComputedStyle(document.getElementById('chart-root')).getPropertyValue(`--series-${name}`).trim();
+    }
+
+    function renderChart(dailyActivity) {
+      const svg = document.getElementById('activity-chart');
+      svg.innerHTML = '';
+      const width = 900, height = 280;
+      const marginLeft = 36, marginRight = 10, marginTop = 10, marginBottom = 28;
+      const plotW = width - marginLeft - marginRight;
+      const plotH = height - marginTop - marginBottom;
+      const n = dailyActivity.length;
+      const groupW = plotW / n;
+      const barW = Math.max(2, Math.min(24, (groupW - 6) / 2));
+      const barGap = 2;
+
+      const maxVal = niceMax(Math.max(1, ...dailyActivity.flatMap(d => [d.heard, d.sent])));
+      const yScale = v => plotH * (v / maxVal);
+
+      const heardColor = seriesColor('heard');
+      const sentColor = seriesColor('sent');
+      const gridColor = getComputedStyle(document.getElementById('chart-root')).getPropertyValue('--viz-grid').trim();
+      const baselineColor = getComputedStyle(document.getElementById('chart-root')).getPropertyValue('--viz-baseline').trim();
+      const mutedColor = getComputedStyle(document.getElementById('chart-root')).getPropertyValue('--viz-ink-muted').trim();
+
+      function el(tag, attrs) {
+        const node = document.createElementNS(SVG_NS, tag);
+        for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+        return node;
+      }
+
+      // Gridlines + y-axis ticks (0, 1/2, max of a "nice" rounded scale)
+      [0, 0.5, 1].forEach(frac => {
+        const y = marginTop + plotH - plotH * frac;
+        svg.appendChild(el('line', {
+          x1: marginLeft, x2: width - marginRight, y1: y, y2: y,
+          stroke: frac === 0 ? baselineColor : gridColor, 'stroke-width': 1,
+        }));
+        const label = el('text', {
+          x: marginLeft - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 11, fill: mutedColor,
+        });
+        label.textContent = Math.round(maxVal * frac).toLocaleString();
+        svg.appendChild(label);
+      });
+
+      const tooltip = document.createElement('div');
+      tooltip.className = 'chart-tooltip hidden';
+      document.getElementById('chart-root').appendChild(tooltip);
+
+      dailyActivity.forEach((d, i) => {
+        const groupX = marginLeft + i * groupW;
+        const group = el('g', { class: 'bar-group', tabindex: '0', role: 'img' });
+        group.setAttribute('aria-label', `${d.day}: heard ${d.heard}, sent ${d.sent}`);
+
+        const heardH = yScale(d.heard);
+        const sentH = yScale(d.sent);
+        const baseY = marginTop + plotH;
+        const bar1X = groupX + (groupW - (barW * 2 + barGap)) / 2;
+        const bar2X = bar1X + barW + barGap;
+
+        const heardRect = el('rect', {
+          class: 'bar', x: bar1X, y: baseY - heardH, width: barW, height: Math.max(heardH, 0.5),
+          fill: heardColor, rx: 2, ry: 2,
+        });
+        const sentRect = el('rect', {
+          class: 'bar', x: bar2X, y: baseY - sentH, width: barW, height: Math.max(sentH, 0.5),
+          fill: sentColor, rx: 2, ry: 2,
+        });
+        group.appendChild(heardRect);
+        group.appendChild(sentRect);
+
+        // Hit target wider than the painted bars (interaction.md: hit target > mark).
+        const hit = el('rect', {
+          x: groupX, y: marginTop, width: groupW, height: plotH, fill: 'transparent',
+        });
+        group.appendChild(hit);
+
+        // Every ~5th day gets an axis label; labeling all 30 would collide.
+        if (i % 5 === 0 || i === n - 1) {
+          const dayLabel = el('text', {
+            x: groupX + groupW / 2, y: height - marginBottom + 16, 'text-anchor': 'middle',
+            'font-size': 10, fill: mutedColor,
+          });
+          dayLabel.textContent = d.day.slice(5); // MM-DD, year is implied (last 30 days)
+          svg.appendChild(dayLabel);
+        }
+
+        function showTooltip(evt) {
+          group.classList.add('focused');
+          tooltip.innerHTML = `
+            <div style="color: var(--viz-ink); font-weight: 600; margin-bottom: 4px;">${d.day}</div>
+            <div class="row"><span class="key" style="background: ${heardColor};"></span><span class="label">Heard</span><span class="val">${d.heard}</span></div>
+            <div class="row"><span class="key" style="background: ${sentColor};"></span><span class="label">Sent</span><span class="val">${d.sent}</span></div>
+          `;
+          tooltip.classList.remove('hidden');
+          positionTooltip(evt);
+        }
+        function positionTooltip(evt) {
+          const rootRect = document.getElementById('chart-root').getBoundingClientRect();
+          const x = (evt.clientX !== undefined ? evt.clientX : rootRect.left + groupX) - rootRect.left;
+          tooltip.style.left = `${Math.min(x + 12, rootRect.width - 160)}px`;
+          tooltip.style.top = `${marginTop}px`;
+        }
+        function hideTooltip() {
+          group.classList.remove('focused');
+          tooltip.classList.add('hidden');
+        }
+        group.addEventListener('pointermove', showTooltip);
+        group.addEventListener('pointerleave', hideTooltip);
+        group.addEventListener('focus', showTooltip);
+        group.addEventListener('blur', hideTooltip);
+
+        svg.appendChild(group);
+      });
+    }
+
+    function renderActivityTable(dailyActivity) {
+      document.getElementById('activity-table-body').innerHTML = dailyActivity.map(d => `
+        <tr><td>${d.day}</td><td class="num">${d.heard}</td><td class="num">${d.sent}</td></tr>
+      `).join('');
+    }
+
+    document.getElementById('btn-toggle-table').addEventListener('click', () => {
+      const table = document.getElementById('activity-table');
+      const root = document.getElementById('chart-root');
+      const tableCurrentlyHidden = table.classList.contains('hidden');
+      table.classList.toggle('hidden', !tableCurrentlyHidden);
+      root.classList.toggle('hidden', tableCurrentlyHidden);
+      document.getElementById('btn-toggle-table').textContent = tableCurrentlyHidden ? 'View as chart' : 'View as table';
+    });
+
+    async function load() {
+      try {
+        const res = await fetch('/api/stats');
+        if (res.status === 401) {
+          location.href = '/login';
+          return;
+        }
+        const stats = await res.json();
+        if (!res.ok) throw new Error(stats.detail || res.statusText);
+        window.__lastStats = stats;
+        renderSummary(stats);
+        renderChart(stats.daily_activity);
+        renderActivityTable(stats.daily_activity);
+      } catch (e) {
+        document.querySelector('main').innerHTML = `<p class="hint">Error loading stats: ${e.message}</p>`;
+      }
+    }
+
+    (async () => {
+      try {
+        const authState = await (await fetch('/api/auth/status')).json();
+        if (authState.mode !== 'none' && !authState.logged_in) {
+          location.href = '/login';
+          return;
+        }
+      } catch (e) {
+        // Degrades to attempting the page anyway; /api/stats itself still enforces the gate
+      }
+      load();
+    })();
+  </script>
+</body>
+</html>

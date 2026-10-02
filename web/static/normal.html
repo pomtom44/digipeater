@@ -385,6 +385,8 @@
       <div class="auth-row">
         <button type="button" id="theme-toggle" class="btn" title="UI theme (independent of the map's own theme toggle, top-left on the map itself)"></button>
         <button type="button" id="btn-config" class="btn hidden">Config</button>
+        <button type="button" id="btn-history" class="btn hidden">History</button>
+        <button type="button" id="btn-stats" class="btn hidden">Stats</button>
         <button type="button" id="btn-login" class="btn hidden">Log in</button>
         <button type="button" id="btn-logout" class="btn hidden">Log out</button>
       </div>
@@ -569,11 +571,15 @@
       const showLogin = authState.mode !== 'none' && !authState.logged_in;
       const showLogout = authState.mode !== 'none' && authState.logged_in;
       document.getElementById('btn-config').classList.toggle('hidden', !canConfig);
+      document.getElementById('btn-history').classList.toggle('hidden', !canConfig);
+      document.getElementById('btn-stats').classList.toggle('hidden', !canConfig);
       document.getElementById('btn-login').classList.toggle('hidden', !showLogin);
       document.getElementById('btn-logout').classList.toggle('hidden', !showLogout);
     }
 
     document.getElementById('btn-config').addEventListener('click', () => { location.href = '/config'; });
+    document.getElementById('btn-history').addEventListener('click', () => { location.href = '/history'; });
+    document.getElementById('btn-stats').addEventListener('click', () => { location.href = '/stats'; });
     document.getElementById('btn-login').addEventListener('click', () => { location.href = '/login'; });
     document.getElementById('btn-logout').addEventListener('click', async () => {
       try {
@@ -733,11 +739,16 @@
       const igateEnabled = (aprs.igate_mode || 'off') !== 'off' && !!igBeacon.enabled;
       const rfIntervalS = (rfBeacon.interval || 30) * 60;
       const igIntervalS = (igBeacon.interval || 30) * 60;
-      let stats = { last_rf_beacon_seconds_ago: null, last_igate_beacon_seconds_ago: null };
+      let stats = { enabled: true, last_rf_beacon_seconds_ago: null, last_igate_beacon_seconds_ago: null };
       try {
         stats = await (await fetch('/api/aprs/beacon-stats')).json();
       } catch (e) {
         // leave the card showing its previous contents on a transient fetch failure
+        return;
+      }
+      if (stats.enabled === false) {
+        document.getElementById('beacon-stats-body').innerHTML =
+          `<div class="note">Sent-packet logging is off (Settings &gt; Database), so beacon timing can't be tracked.</div>`;
         return;
       }
       document.getElementById('beacon-stats-body').innerHTML =
@@ -748,13 +759,17 @@
     // ── Heard stations card: same live source as the beacon stats above. ──
     async function renderHeardStations() {
       const list = document.getElementById('heard-list');
-      let stations;
+      let data;
       try {
-        const data = await (await fetch('/api/aprs/heard')).json();
-        stations = data.stations;
+        data = await (await fetch('/api/aprs/heard')).json();
       } catch (e) {
         return; // leave the list showing its previous contents
       }
+      if (data.enabled === false) {
+        list.innerHTML = `<div class="note">Heard-station logging is off (Settings &gt; Database).</div>`;
+        return;
+      }
+      const stations = data.stations;
       if (!stations || stations.length === 0) {
         list.innerHTML = `<div class="note">No stations heard yet.</div>`;
         return;

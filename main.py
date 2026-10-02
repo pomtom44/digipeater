@@ -8,7 +8,7 @@ import yaml
 
 from display.driver_none import NullDriver
 from display.rotation import RotationManager, load_pages
-from services import direwolf_config, gpsconfig, network, packet_log, relay, restart_policy, system
+from services import db, direwolf_config, gpsconfig, log_settings, network, packet_log, relay, restart_policy, system
 from web.server import create_app
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -139,6 +139,8 @@ async def main() -> None:
             logger.error("Failed to read %s: %s", CONFIG_PATH, e)
             config = {}
 
+    db.init()
+
     gpio_config = config.get("gpio", {}) or {}
     relay.init(gpio_config.get("relay_pin", relay.DEFAULT_RELAY_PIN))
     from display.waveshare import epdconfig
@@ -170,6 +172,9 @@ async def main() -> None:
         logger.info("No config.yaml found, running first-boot sequence")
         await _show_network_status(display_driver, template, "Initial config", kind, ip)
     else:
+        log_settings.apply(config.get("logging", {}))
+        db.start_retention_loop()
+
         # Normal boot: no static screen render here, the rotation manager's own first tick takes over.
         packets = packet_log.PacketLog()
         packets.start()

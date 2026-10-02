@@ -28,6 +28,11 @@ web/static/maplibre-assets/
 # ── Direwolf generated config ─────────────────────────────────
 direwolf.conf
 
+# ── SQLite database (services/db.py); -wal/-shm are WAL-mode sidecar files ──
+digipeater.db
+digipeater.db-wal
+digipeater.db-shm
+
 # ── Radio programming test artifacts (personal hardware captures, not project data) ──
 radio_dump.bin
 chirp_reference_image.bin

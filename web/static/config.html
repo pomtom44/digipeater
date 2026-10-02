@@ -602,6 +602,13 @@
       </div>
     </div>
 
+    <div class="tab-panel hidden" id="panel-logging">
+      <div class="panel-card">
+        <h2 class="panel-title">Database</h2>
+        <div id="logging-tab-content"></div>
+      </div>
+    </div>
+
   </main>
 
   <div class="help-overlay hidden" id="help-overlay">
@@ -650,7 +657,7 @@
     });
 
     // ── In-memory config state, hydrated from the config APIs on load ───
-    const state = { radio: {}, aprs: {}, gps: {}, map: {}, startup: {}, display: {}, user: {}, gpio: {} };
+    const state = { radio: {}, aprs: {}, gps: {}, map: {}, startup: {}, display: {}, user: {}, gpio: {}, logging: {} };
 
     let authState = { mode: 'none', logged_in: false };
 
@@ -666,6 +673,7 @@
       { id: 'startup', label: 'Startup' },
       { id: 'gpio', label: 'GPIO' },
       { id: 'signaltest', label: 'Signal Test' },
+      { id: 'logging', label: 'Database' },
     ];
     let activeTab = TABS[0].id;
     let mapTabInitialized = false;
@@ -839,82 +847,86 @@
             <label for="radio-model">Radio model</label>
             <select id="radio-model"></select>
           </div>
-          <div class="field">
-            <label for="radio-frequency">Initial frequency</label>
-            <div class="field-suffix">
-              <input type="number" id="radio-frequency" step="0.001" placeholder="e.g. 144.800">
-              <span>MHz</span>
-            </div>
-            <p class="warn-banner hidden" id="radio-freq-warning">Initial frequency is still blank. Direwolf needs a real frequency to transmit on.</p>
-          </div>
-          <div class="field">
-            <label for="radio-name">Channel name ${helpIcon("Shown on the radio's own display. Optional — defaults to the frequency if left blank.")}</label>
-            <input type="text" id="radio-name" maxlength="7" placeholder="e.g. APRS">
-          </div>
-          <div class="field">
-            <label for="radio-ptt">PTT method</label>
-            <select id="radio-ptt">
-              <option value="vox">VOX</option>
-              <option value="gpio">GPIO pin</option>
-              <option value="cm108">CM108 (USB sound card PTT, auto-detect)</option>
-            </select>
-            <p class="hint hidden" id="radio-ptt-gpio-note"></p>
-          </div>
-          <div class="field hidden" id="radio-ptt-serial-line-wrap">
-            <label for="radio-ptt-serial-line">Serial PTT line ${helpIcon("Which serial control line the radio's PTT circuit is wired to. RTS is the more common of the two; try DTR if PTT doesn't key with RTS.")}</label>
-            <select id="radio-ptt-serial-line">
-              <option value="RTS">RTS</option>
-              <option value="DTR">DTR</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="radio-audio">Audio device</label>
-            <select id="radio-audio"></select>
-            <p class="warn-banner hidden" id="radio-audio-warning">
-              No audio input device detected. Direwolf needs a microphone/audio input to receive on, it can't start without one.
-              <br><button type="button" id="btn-audio-warning-ack" style="margin-top: 8px;">Yes, I understand</button>
-            </p>
-          </div>
-          <div class="field">
-            <label for="radio-power">TX power level</label>
-            <select id="radio-power"></select>
-          </div>
-          <div class="field hidden" id="radio-programmer-port-wrap">
-            <label for="radio-programmer-port">Programming cable port ${helpIcon("Serial port for this radio's clone/programming cable — separate from the PTT/audio connection above.")}</label>
-            <select id="radio-programmer-port"></select>
-          </div>
-          <div class="field hidden" id="radio-write-wrap">
-            <button type="button" id="btn-write-radio">Write to radio</button>
-            <p class="hint">Powers the radio on, writes these settings to it, then powers it back off (or, if Direwolf is currently running, stops it first and leaves the radio on afterward).</p>
-            <div id="radio-write-standalone-result"></div>
-          </div>
-          <details class="advanced hidden" id="radio-advanced">
-            <summary>Advanced radio settings</summary>
-            <div class="field-row">
-              <div class="field">
-                <label for="radio-ctcss-encode">CTCSS encode (tone out)</label>
-                <select id="radio-ctcss-encode"></select>
+          <p class="hint" id="radio-none-hint">No radio selected. The rest of this tab is hidden until one is picked — Direwolf won't start without one.</p>
+          <div id="radio-fields-wrap">
+            <div class="field">
+              <label for="radio-frequency">Initial frequency</label>
+              <div class="field-suffix">
+                <input type="number" id="radio-frequency" step="0.001" placeholder="e.g. 144.800">
+                <span>MHz</span>
               </div>
-              <div class="field">
-                <label for="radio-ctcss-decode">CTCSS decode (tone squelch)</label>
-                <select id="radio-ctcss-decode"></select>
-              </div>
-            </div>
-            <div class="field" style="max-width: 160px;">
-              <label for="radio-duplex-offset">Duplex offset ${helpIcon("Leave at 0 for simplex, which is how a digipeater normally runs. Positive = TX above RX, negative = TX below RX.")}</label>
-              <div class="field-suffix"><input type="number" id="radio-duplex-offset" step="1" value="0"><span>kHz</span></div>
-            </div>
-            <div class="field" style="max-width: 160px;">
-              <label for="radio-tot">Time-out timer ${helpIcon("Caps how long the radio can transmit continuously. Cheap insurance against a stuck PTT damaging the radio on unattended gear. 0 = off.")}</label>
-              <div class="field-suffix"><input type="number" id="radio-tot" min="0" step="1" value="0"><span>min</span></div>
+              <p class="warn-banner hidden" id="radio-freq-warning">Initial frequency is still blank. Direwolf needs a real frequency to transmit on.</p>
             </div>
             <div class="field">
-              <label><input type="checkbox" id="radio-busy-lockout"> Busy channel lockout ${helpIcon("Blocks TX while the channel is busy. Direwolf already does its own software channel access (CSMA) — enabling this too can make the two fight each other. Leave off unless you specifically want the radio-level lockout as well.")}</label>
+              <label for="radio-name">Channel name ${helpIcon("Shown on the radio's own display. Optional — defaults to the frequency if left blank.")}</label>
+              <input type="text" id="radio-name" maxlength="7" placeholder="e.g. APRS">
             </div>
-          </details>
+            <div class="field">
+              <label for="radio-ptt">PTT method</label>
+              <select id="radio-ptt">
+                <option value="vox">VOX</option>
+                <option value="gpio">GPIO pin</option>
+                <option value="cm108">CM108 (USB sound card PTT, auto-detect)</option>
+              </select>
+              <p class="hint hidden" id="radio-ptt-gpio-note"></p>
+            </div>
+            <div class="field hidden" id="radio-ptt-serial-line-wrap">
+              <label for="radio-ptt-serial-line">Serial PTT line ${helpIcon("Which serial control line the radio's PTT circuit is wired to. RTS is the more common of the two; try DTR if PTT doesn't key with RTS.")}</label>
+              <select id="radio-ptt-serial-line">
+                <option value="RTS">RTS</option>
+                <option value="DTR">DTR</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="radio-audio">Audio device</label>
+              <select id="radio-audio"></select>
+              <p class="warn-banner hidden" id="radio-audio-warning">
+                No audio input device detected. Direwolf needs a microphone/audio input to receive on, it can't start without one.
+                <br><button type="button" id="btn-audio-warning-ack" style="margin-top: 8px;">Yes, I understand</button>
+              </p>
+            </div>
+            <div class="field">
+              <label for="radio-power">TX power level</label>
+              <select id="radio-power"></select>
+            </div>
+            <div class="field hidden" id="radio-programmer-port-wrap">
+              <label for="radio-programmer-port">Programming cable port ${helpIcon("Serial port for this radio's clone/programming cable — separate from the PTT/audio connection above. Leave as None if you'll program the radio by hand instead; Direwolf will start fine either way.")}</label>
+              <select id="radio-programmer-port"></select>
+            </div>
+            <div class="field hidden" id="radio-write-wrap">
+              <button type="button" id="btn-write-radio">Write to radio</button>
+              <p class="hint">Powers the radio on, writes these settings to it, then powers it back off (or, if Direwolf is currently running, stops it first and leaves the radio on afterward).</p>
+              <div id="radio-write-standalone-result"></div>
+            </div>
+            <details class="advanced hidden" id="radio-advanced">
+              <summary>Advanced radio settings</summary>
+              <div class="field-row">
+                <div class="field">
+                  <label for="radio-ctcss-encode">CTCSS encode (tone out)</label>
+                  <select id="radio-ctcss-encode"></select>
+                </div>
+                <div class="field">
+                  <label for="radio-ctcss-decode">CTCSS decode (tone squelch)</label>
+                  <select id="radio-ctcss-decode"></select>
+                </div>
+              </div>
+              <div class="field" style="max-width: 160px;">
+                <label for="radio-duplex-offset">Duplex offset ${helpIcon("Leave at 0 for simplex, which is how a digipeater normally runs. Positive = TX above RX, negative = TX below RX.")}</label>
+                <div class="field-suffix"><input type="number" id="radio-duplex-offset" step="1" value="0"><span>kHz</span></div>
+              </div>
+              <div class="field" style="max-width: 160px;">
+                <label for="radio-tot">Time-out timer ${helpIcon("Caps how long the radio can transmit continuously. Cheap insurance against a stuck PTT damaging the radio on unattended gear. 0 = off.")}</label>
+                <div class="field-suffix"><input type="number" id="radio-tot" min="0" step="1" value="0"><span>min</span></div>
+              </div>
+              <div class="field">
+                <label><input type="checkbox" id="radio-busy-lockout"> Busy channel lockout ${helpIcon("Blocks TX while the channel is busy. Direwolf already does its own software channel access (CSMA) — enabling this too can make the two fight each other. Leave off unless you specifically want the radio-level lockout as well.")}</label>
+              </div>
+            </details>
+          </div>
         </section>
       `;
       const modelSelect = document.getElementById('radio-model');
+      addOption(modelSelect, '', 'None (not installed)');
       SUPPORTED_RADIOS.forEach(r => addOption(modelSelect, r.model, r.model));
       const powerSelect = document.getElementById('radio-power');
       RADIO_POWER_LEVELS.forEach(p => addOption(powerSelect, p, p));
@@ -939,11 +951,15 @@
       document.getElementById('radio-busy-lockout').checked = !!adv.busy_lockout;
 
       function updateProgrammerSectionVisibility() {
+        const hasModel = !!modelSelect.value;
+        document.getElementById('radio-fields-wrap').classList.toggle('hidden', !hasModel);
+        document.getElementById('radio-none-hint').classList.toggle('hidden', hasModel);
+
         const radio = SUPPORTED_RADIOS.find(r => r.model === modelSelect.value);
-        const show = !!(radio && radio.programmable);
-        document.getElementById('radio-programmer-port-wrap').classList.toggle('hidden', !show);
-        document.getElementById('radio-write-wrap').classList.toggle('hidden', !show);
-        document.getElementById('radio-advanced').classList.toggle('hidden', !show);
+        const showProgramming = !!(radio && radio.programmable);
+        document.getElementById('radio-programmer-port-wrap').classList.toggle('hidden', !showProgramming);
+        document.getElementById('radio-write-wrap').classList.toggle('hidden', !showProgramming);
+        document.getElementById('radio-advanced').classList.toggle('hidden', !showProgramming);
       }
       modelSelect.addEventListener('change', updateProgrammerSectionVisibility);
       updateProgrammerSectionVisibility();
@@ -997,22 +1013,17 @@
     async function loadAudioDevices() {
       const select = document.getElementById('radio-audio');
       const d = state.radio || {};
+      addOption(select, '', 'None (configure later)');
       try {
         const res = await fetch('/api/hardware/audio-devices');
         const data = await res.json();
         const devices = data.devices || [];
-        if (devices.length === 0) {
-          addOption(select, '', 'No audio devices found');
-          updateAudioInputWarning(devices);
-          return;
-        }
         devices.forEach(dev => {
           addOption(select, dev.id, dev.description ? `${dev.name}: ${dev.description}` : dev.name);
         });
         if (d.audio_device) select.value = d.audio_device;
         updateAudioInputWarning(devices);
       } catch (e) {
-        addOption(select, '', 'Could not load audio devices');
         updateAudioInputWarning([]);
       }
     }
@@ -1053,6 +1064,7 @@
     async function loadProgrammerPortOptions() {
       const select = document.getElementById('radio-programmer-port');
       const d = state.radio || {};
+      addOption(select, '', 'None (program it manually)');
       try {
         const res = await fetch('/api/hardware/serial-devices');
         const data = await res.json();
@@ -1062,7 +1074,7 @@
         });
         if (d.programmer_port) select.value = d.programmer_port;
       } catch (e) {
-        // radio model picker still works without this; port just won't be pre-populated
+        // "None" option and radio model picker still work without this; port just won't be pre-populated
       }
     }
 
@@ -2440,15 +2452,19 @@
     function renderSignalTestTab() {
       const digipeatOn = state.aprs.digipeat_mode === 'digipeater';
       const igateOff = (state.aprs.igate_mode || 'off') === 'off';
-      const eligible = digipeatOn && igateOff;
+      const loggingOn = (state.logging || {}).signal_test_results !== false;
+      const eligible = digipeatOn && igateOff && loggingOn;
 
       document.getElementById('signaltest-tab-content').innerHTML = `
         <section>
           <p class="hint">Transmits a real APRS message over RF, addressed to a nearby igate-enabled station, to confirm this digipeater's signal reaches far enough to be gated onto APRS-IS. This is an RF reach test, not a test of this digipeater's own internet/IGate access.</p>
 
-          <p class="warn-banner${eligible ? ' hidden' : ''}" id="signaltest-ineligible-warning">
+          <p class="warn-banner${(digipeatOn && igateOff) ? ' hidden' : ''}" id="signaltest-ineligible-warning">
             Signal test needs digipeating set to RX &amp; TX, with IGate off. It only makes sense for an RF-only setup
             &mdash; if this digipeater has its own IGate uplink, testing reach to another igate isn't a relevant test. Check the APRS tab.
+          </p>
+          <p class="warn-banner${loggingOn ? ' hidden' : ''}" id="signaltest-logging-disabled-warning">
+            Signal test history is turned off on the Database tab. A pending test's state lives there now, so this tab is disabled until it's turned back on.
           </p>
 
           <div class="field">
@@ -2556,8 +2572,127 @@
       return gpio;
     }
 
+    // ── Database tab: which log types are captured, mirrors services/log_settings.py's LOG_TYPES ──
+    const LOG_TYPES = [
+      { key: 'heard_stations', label: 'Heard stations',
+        depends: 'Also turns off the dashboard\'s heard-stations list and map markers, and the e-ink "last heard" page.' },
+      { key: 'sent_packets', label: 'Sent packets (digipeats, beacons, IGate gates, messages)', depends: null },
+      { key: 'direwolf_events', label: 'Direwolf start/stop history', depends: null },
+      { key: 'radio_write_events', label: 'Radio programming history', depends: null },
+      { key: 'config_changes', label: 'Config change history', depends: null },
+      { key: 'gps_fix_events', label: 'GPS fix history', depends: null },
+      { key: 'signal_test_results', label: 'Signal test history', depends: null },
+      { key: 'system_events', label: 'System events (reboots, radio relay power)', depends: null },
+    ];
+
+    function renderLoggingTab() {
+      const d = state.logging || {};
+      document.getElementById('logging-tab-content').innerHTML = `
+        <section>
+          <p class="hint">Turn off any log type not wanted &mdash; useful for a plain digipeater with no history kept. Unchecking a type stops its database history, and (where noted below) the live feature that depends on it.</p>
+          <div class="field" style="display: flex; gap: 8px;">
+            <button type="button" onclick="location.href='/history'">View history</button>
+            <button type="button" onclick="location.href='/stats'">View stats</button>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="logging-retention-days">Keep history for ${helpIcon("Deletes rows older than this from every enabled log table. Checked periodically in the background, not instantly on every write. 0 = never delete by age.")}</label>
+              <div class="field-suffix"><input type="number" id="logging-retention-days" min="0" step="1" value="${d.retention_days ?? 90}"><span>days</span></div>
+            </div>
+            <div class="field">
+              <label for="logging-retention-size-mb">Max database size ${helpIcon("Very rough guide: 30 days of traffic in a genuinely busy area is roughly 5-10 MB in the two fastest-growing tables (heard stations + sent packets) -- quiet areas are a fraction of that. A size limit is rarely the one that actually kicks in; the days limit to the left usually does the job on its own. Once the database file goes over this, the oldest heard-station and sent-packet rows are deleted first until it's back under. Enter a bigger number for GB, e.g. 1024 for roughly 1 GB. 0 = no size limit.")}</label>
+              <div class="field-suffix"><input type="number" id="logging-retention-size-mb" min="0" step="1" value="${d.retention_size_mb ?? 0}"><span>MB</span></div>
+            </div>
+          </div>
+          <p class="hint">Age and size limits run independently &mdash; whichever is hit first prunes the oldest rows. Both are separate from the on/off switches below: even a disabled log type's existing rows are still subject to these limits.</p>
+
+          <div class="field">
+            <button type="button" id="logging-clear-all-btn">Clear all logged data</button>
+            <p class="msg" id="logging-clear-all-result"></p>
+          </div>
+
+          ${LOG_TYPES.map(t => `
+            <div class="field">
+              <label><input type="checkbox" id="logging-${t.key}" ${d[t.key] !== false ? 'checked' : ''}> ${t.label}</label>
+              <button type="button" id="logging-${t.key}-clear-btn" style="margin-left: 10px;">Clear</button>
+              <span class="hint" id="logging-${t.key}-clear-result"></span>
+              ${t.depends ? `<p class="warn-banner hidden" id="logging-${t.key}-warning">${t.depends}</p>` : ''}
+            </div>
+          `).join('')}
+        </section>
+      `;
+      LOG_TYPES.filter(t => t.depends).forEach(t => {
+        const checkbox = document.getElementById(`logging-${t.key}`);
+        const warning = document.getElementById(`logging-${t.key}-warning`);
+        const update = () => warning.classList.toggle('hidden', checkbox.checked);
+        checkbox.addEventListener('change', update);
+        update();
+      });
+
+      document.getElementById('logging-clear-all-btn').addEventListener('click', clearAllLogTypes);
+      LOG_TYPES.forEach(t => {
+        document.getElementById(`logging-${t.key}-clear-btn`).addEventListener('click', () => clearOneLogType(t));
+      });
+    }
+
+    async function clearOneLogType(t) {
+      const proceed = await confirmModal(
+        `Permanently delete all stored "${t.label}" history? This can't be undone.`,
+        'Yes, clear it', 'Cancel'
+      );
+      if (!proceed) return;
+      const resultEl = document.getElementById(`logging-${t.key}-clear-result`);
+      resultEl.textContent = 'Clearing...';
+      try {
+        const res = await fetch(`/api/logging/clear/${encodeURIComponent(t.key)}`, { method: 'POST' });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || res.statusText);
+        resultEl.textContent = `Cleared ${body.deleted} row(s).`;
+      } catch (e) {
+        resultEl.textContent = `Error: ${e.message}`;
+      }
+    }
+
+    async function clearAllLogTypes() {
+      const proceed = await confirmModal(
+        "Permanently delete ALL logged history, every type above? This can't be undone.",
+        'Yes, clear everything', 'Cancel'
+      );
+      if (!proceed) return;
+      const resultEl = document.getElementById('logging-clear-all-result');
+      resultEl.className = 'msg';
+      resultEl.textContent = 'Clearing...';
+      try {
+        const res = await fetch('/api/logging/clear_all', { method: 'POST' });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || res.statusText);
+        const total = Object.values(body.deleted || {}).reduce((a, b) => a + b, 0);
+        resultEl.textContent = `Cleared ${total} row(s) across all log types.`;
+        resultEl.className = 'msg success';
+      } catch (e) {
+        resultEl.textContent = `Error: ${e.message}`;
+        resultEl.className = 'msg error';
+      }
+    }
+
+    function collectLoggingTab() {
+      const logging = {
+        retention_days: Math.max(0, parseInt(document.getElementById('logging-retention-days').value, 10) || 0),
+        retention_size_mb: Math.max(0, parseInt(document.getElementById('logging-retention-size-mb').value, 10) || 0),
+      };
+      LOG_TYPES.forEach(t => {
+        logging[t.key] = document.getElementById(`logging-${t.key}`).checked;
+      });
+      state.logging = logging;
+      return logging;
+    }
+
     // ── Save-all: the global save action; Map and Network save separately ──
-    const APPLIED_LABELS = { gps: 'GPS', radio: 'Radio', aprs: 'APRS', startup: 'Startup (restart policy)', display_pages: 'E-Ink page rotation' };
+    const APPLIED_LABELS = {
+      gps: 'GPS', radio: 'Radio', aprs: 'APRS', startup: 'Startup (restart policy)',
+      display_pages: 'E-Ink page rotation', logging: 'Database logging',
+    };
     const REBOOT_LABELS = { gpio: 'GPIO pins (relay and e-ink)', display: 'E-Ink display driver/model' };
 
     function hideSaveBanner() {
@@ -2731,6 +2866,7 @@
         return;
       }
       collectGpioTab();
+      collectLoggingTab();
 
       const payload = {
         radio: state.radio,
@@ -2740,6 +2876,7 @@
         gpio: state.gpio,
         display: state.display,
         user: state.user,
+        logging: state.logging,
       };
 
       const btn = document.getElementById('btn-save-all');
@@ -2799,6 +2936,7 @@
       state.map = cfg.map || {};
       state.startup = cfg.startup || {};
       state.gpio = cfg.gpio || {};
+      state.logging = cfg.logging || {};
       // "user" is this page's name for config.yaml's security section, which only carries {mode}
       state.user = { mode: (cfg.security && cfg.security.mode) || 'none' };
       state.display = { pages: (cfg.display && cfg.display.pages) || [] };
@@ -2830,6 +2968,7 @@
       renderStartupTab();
       renderGpioTab();
       renderSignalTestTab();
+      renderLoggingTab();
 
       document.getElementById('btn-save-all').addEventListener('click', saveAll);
       document.getElementById('btn-back-dashboard').addEventListener('click', () => { location.href = '/'; });

@@ -17,8 +17,8 @@ from display.base import DisplayDriver
 from display.rotation import load_pages
 from display.waveshare import epdconfig
 from services import (
-    aprs, auth, direwolf_config, gps, gpsconfig, hardware, network, radio_programmer, relay, restart_policy,
-    signal_test, system, tiles,
+    aprs, auth, db, direwolf_config, gps, gpsconfig, hardware, log_settings, network, radio_programmer, relay,
+    restart_policy, signal_test, system, tiles,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,42 @@ def _build_test_image(display_driver: DisplayDriver):
         draw.text((margin, y), line, fill=0)
         y += line_height
     return image
+
+
+_SENT_PACKET_TYPE_LABELS = {
+    "digipeat": "Digipeat", "rf_beacon": "RF beacon", "igate_beacon": "IGate beacon",
+    "igate_gate": "IGate gate", "message": "Message",
+}
+
+
+def _history_summary(log_type: str, e: dict) -> str:
+    """One-line human-readable summary for the History page's table; the full row is still sent
+    separately as "detail" for anyone who wants to see every field."""
+    if log_type == "heard_stations":
+        pos = f" ({e['latitude']:.4f}, {e['longitude']:.4f})" if e.get("latitude") is not None else ""
+        comment = f" — {e['comment']}" if e.get("comment") else ""
+        return f"Heard {e['callsign']}{pos}{comment}"
+    if log_type == "sent_packets":
+        label = _SENT_PACKET_TYPE_LABELS.get(e["type"], e["type"])
+        return f"{label}: {e['callsign']}"
+    if log_type == "direwolf_events":
+        status = "ok" if e["ok"] else f"failed — {e.get('reason') or 'unknown reason'}"
+        sim = " (simulated)" if e.get("simulated") else ""
+        return f"Direwolf {e['action']}: {status}{sim}"
+    if log_type == "radio_write_events":
+        status = "ok" if e["ok"] else f"failed — {e.get('reason') or 'unknown reason'}"
+        return f"Radio write ({e.get('model') or 'no model'}): {status}"
+    if log_type == "config_changes":
+        return f"Config changed: {e['section']}"
+    if log_type == "gps_fix_events":
+        status = "ok" if e["ok"] else f"failed — {e.get('reason') or 'unknown reason'}"
+        return f"GPS fix: {status}"
+    if log_type == "signal_test_results":
+        status = "replied" if e.get("received") else "no reply (yet)"
+        return f"Signal test → {e['target_callsign']}: {status}"
+    if log_type == "system_events":
+        return f"System: {e['type']}"
+    return log_type
 
 
 def create_app(
@@ -125,6 +161,26 @@ def create_app(
         if mode != "none" and not _is_logged_in(request):
             return FileResponse(STATIC_DIR / "login.html")
         return FileResponse(STATIC_DIR / "config.html")
+
+    @app.get("/history")
+    async def history_page(request: Request):
+        if first_boot:
+            return RedirectResponse(url="/")
+        # Same gate as /config: it's operational/diagnostic detail, not just the live dashboard.
+        mode = _read_security().get("mode", "none")
+        if mode != "none" and not _is_logged_in(request):
+            return FileResponse(STATIC_DIR / "login.html")
+        return FileResponse(STATIC_DIR / "history.html")
+
+    @app.get("/stats")
+    async def stats_page(request: Request):
+        if first_boot:
+            return RedirectResponse(url="/")
+        # Same gate as /config and /history.
+        mode = _read_security().get("mode", "none")
+        if mode != "none" and not _is_logged_in(request):
+            return FileResponse(STATIC_DIR / "login.html")
+        return FileResponse(STATIC_DIR / "stats.html")
 
     @app.get("/api/auth/status")
     async def auth_status(request: Request):
@@ -205,18 +261,29 @@ def create_app(
 
     @app.get("/api/aprs/heard")
     async def aprs_heard():
-        # None distinguishes "not tracking" from "nothing heard yet".
-        return {"stations": packets.heard_stations() if packets else None}
+        enabled = log_settings.is_enabled("heard_stations")
+        # stations: None distinguishes "not tracking" (disabled, or packet logging isn't running at
+        # all) from "nothing heard yet" (enabled, stations: []).
+        stations = await packets.heard_stations() if (packets and enabled) else None
+        return {"enabled": enabled, "stations": stations}
 
     @app.get("/api/aprs/beacon-stats")
     async def aprs_beacon_stats():
-        return packets.beacon_stats() if packets else {
-            "last_rf_beacon_seconds_ago": None, "last_igate_beacon_seconds_ago": None,
-        }
+        enabled = log_settings.is_enabled("sent_packets")
+        if not packets or not enabled:
+            return {
+                "enabled": enabled,
+                "last_rf_beacon_seconds_ago": None, "last_igate_beacon_seconds_ago": None,
+            }
+        return {"enabled": True, **await packets.beacon_stats()}
 
     @app.post("/api/aprs/signal_test")
     async def aprs_signal_test_start(request: Request):
         _require_login_for_action(request)
+        if not log_settings.is_enabled("signal_test_results"):
+            raise HTTPException(
+                status_code=400, detail="Signal test history is turned off (Settings > Database); enable it first",
+            )
         body = await request.json()
         target = (body.get("callsign") or "").strip().upper()
         if not target:
@@ -239,7 +306,11 @@ def create_app(
         path_str = (aprs_cfg.get("rf_beacon", {}) or {}).get("path") or "WIDE1-1"
         path = [p.strip().upper() for p in path_str.split(",") if p.strip()]
         test_id = secrets.token_hex(4)
-        packets.start_signal_test(test_id, my_call)
+        try:
+            await packets.start_signal_test(test_id, my_call, target)
+        except Exception as e:
+            logger.error("Failed to start signal test: %s", e)
+            raise HTTPException(status_code=500, detail="Could not record the signal test; nothing was sent")
         try:
             await signal_test.send_ping(my_call, target, path, test_id)
         except RuntimeError as e:
@@ -250,7 +321,7 @@ def create_app(
     async def aprs_signal_test_status(test_id: str):
         if packets is None:
             raise HTTPException(status_code=503, detail="Packet logging isn't running")
-        result = packets.signal_test_status(test_id)
+        result = await packets.signal_test_status(test_id)
         if result is None:
             raise HTTPException(status_code=404, detail="Unknown test id")
         return {"ok": True, **result}
@@ -328,6 +399,54 @@ def create_app(
         _require_login_for_action(request)
         await system.power_off_radio()
         return {"ok": True}
+
+    @app.post("/api/logging/clear/{log_type}")
+    async def logging_clear(log_type: str, request: Request):
+        """The Database tab's per-row Clear button: permanently deletes that log type's history."""
+        _require_login_for_action(request)
+        try:
+            deleted = await db.clear_log_type(log_type)
+        except ValueError:
+            raise HTTPException(status_code=404, detail=f"Unknown log type: {log_type}")
+        return {"ok": True, "deleted": deleted}
+
+    @app.post("/api/logging/clear_all")
+    async def logging_clear_all(request: Request):
+        """The Database tab's Clear all button: permanently deletes every log type's history."""
+        _require_login_for_action(request)
+        deleted = await db.clear_all_logs()
+        return {"ok": True, "deleted": deleted}
+
+    @app.get("/api/history")
+    async def api_history(request: Request, types: str = "", limit: int = 100, before: float | None = None):
+        """The History page's table: merged, newest-first rows across the requested log types."""
+        # Same gate as the /history page itself.
+        if _read_security().get("mode", "none") != "none" and not _is_logged_in(request):
+            raise HTTPException(status_code=401, detail="Login required")
+        requested = [t.strip() for t in types.split(",") if t.strip()] or list(log_settings.LOG_TYPES.keys())
+        unknown = [t for t in requested if t not in log_settings.LOG_TYPES]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Unknown log type(s): {', '.join(unknown)}")
+        limit = max(1, min(limit, 500))
+        rows = await db.fetch_history(requested, limit, before)
+        entries = [
+            {
+                "log_type": r["log_type"],
+                "at": r["at"],
+                "summary": _history_summary(r["log_type"], r),
+                "detail": {k: v for k, v in r.items() if k != "log_type"},
+            }
+            for r in rows
+        ]
+        next_before = entries[-1]["at"] if len(entries) == limit else None
+        return {"entries": entries, "next_before": next_before}
+
+    @app.get("/api/stats")
+    async def api_stats(request: Request):
+        """The Stats page: summary counts plus a 30-day daily activity series."""
+        if _read_security().get("mode", "none") != "none" and not _is_logged_in(request):
+            raise HTTPException(status_code=401, detail="Login required")
+        return await db.get_stats()
 
     @app.post("/api/system/reboot")
     async def system_reboot(request: Request):
@@ -534,6 +653,17 @@ def create_app(
             "eink_busy": gpio_cfg.get("eink_busy", epdconfig.DEFAULT_BUSY_PIN),
         }
 
+    async def _log_config_change(section: str, before_val, after_val) -> None:
+        if before_val == after_val or not log_settings.is_enabled("config_changes"):
+            return
+        try:
+            await db.execute(
+                "INSERT INTO config_changes (at, section, before_json, after_json) VALUES (?, ?, ?, ?)",
+                (time.time(), section, json.dumps(before_val), json.dumps(after_val)),
+            )
+        except Exception as e:
+            logger.error("Failed to log config change (%s) to database: %s", section, e)
+
     @app.post("/api/config/save")
     async def config_save(request: Request):
         """The config page's "Save all changes" button: applies changes live where possible and reports what still needs a reboot."""
@@ -542,7 +672,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="Setup has not been completed yet")
         body = await request.json()
         config = _read_config()
-        before = {k: config.get(k) for k in ("radio", "aprs", "gps", "startup", "gpio")}
+        before = {k: config.get(k) for k in ("radio", "aprs", "gps", "startup", "gpio", "logging")}
         before_display_config = None
         if "display" in body and DISPLAY_CONFIG_PATH.exists():
             try:
@@ -550,7 +680,7 @@ def create_app(
             except Exception:
                 before_display_config = None
 
-        for key in ("radio", "aprs", "gps", "startup", "gpio"):
+        for key in ("radio", "aprs", "gps", "startup", "gpio", "logging"):
             if key in body:
                 config[key] = body[key]
 
@@ -593,6 +723,20 @@ def create_app(
             + yaml.safe_dump(config, sort_keys=False)
         )
 
+        for key in ("radio", "aprs", "gps", "startup", "gpio", "logging"):
+            await _log_config_change(key, before[key], config.get(key))
+        if "display" in body:
+            await _log_config_change("display_pages", before_pages, config.get("display", {}).get("pages", []))
+            if display_driver_changed:
+                await _log_config_change(
+                    "display_driver", before_display_config or {"driver": "none", "model": ""}, new_display_config,
+                )
+        if "user" in body:
+            # Mode only, never the password/hash/salt.
+            await _log_config_change(
+                "security", {"mode": existing_security.get("mode", "none")}, {"mode": security_mode},
+            )
+
         applied: list[str] = []
         reboot_required: list[str] = []
 
@@ -603,6 +747,10 @@ def create_app(
         if config.get("startup") != before["startup"]:
             await restart_policy.apply(config.get("startup", {}))
             applied.append("startup")
+
+        if config.get("logging") != before["logging"]:
+            log_settings.apply(config.get("logging", {}))
+            applied.append("logging")
 
         radio_changed = config.get("radio") != before["radio"]
         aprs_changed = config.get("aprs") != before["aprs"]

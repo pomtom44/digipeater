@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from services import gps, system
+from services import gps, log_settings, system
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ class RotationManager:
             await self._render(self._template.draw_symbol_page, title, symbol_image, comment)
             return
         if page.id == "last_heard":
-            title, symbol_image, callsign, lat, lon, comment = self._last_heard_page()
+            title, symbol_image, callsign, lat, lon, comment = await self._last_heard_page()
             await self._render(
                 self._template.draw_station_page, title, symbol_image, callsign, lat, lon, comment,
             )
@@ -298,8 +298,10 @@ class RotationManager:
         comment = aprs.get("comment") or ""
         return "Symbol", icon, comment
 
-    def _last_heard_page(self):
-        station = self._packets.last_heard() if self._packets else None
+    async def _last_heard_page(self):
+        if not log_settings.is_enabled("heard_stations"):
+            return "Last Heard", None, "Logging off", "-", "-", "Settings > Database"
+        station = await self._packets.last_heard() if self._packets else None
         if not station:
             # Nothing heard yet this run; no icon, avoid implying this station's own symbol is a heard station.
             return "Last Heard", None, "None", "None", "None", "None"

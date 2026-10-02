@@ -816,80 +816,84 @@
             <label for="radio-model">Radio model</label>
             <select id="radio-model"></select>
           </div>
-          <div class="field">
-            <label for="radio-frequency">Initial frequency</label>
-            <div class="field-suffix">
-              <input type="number" id="radio-frequency" step="0.001" placeholder="e.g. 144.800">
-              <span>MHz</span>
-            </div>
-          </div>
-          <div class="field">
-            <label for="radio-name">Channel name ${helpIcon("Shown on the radio's own display. Optional — defaults to the frequency if left blank.")}</label>
-            <input type="text" id="radio-name" maxlength="7" placeholder="e.g. APRS">
-          </div>
-          <div class="field">
-            <label for="radio-ptt">PTT method</label>
-            <select id="radio-ptt">
-              <option value="vox">VOX</option>
-              <option value="gpio">GPIO pin (BCM ${RADIO_DEFAULT_PTT_GPIO_PIN}, physical pin ${RADIO_DEFAULT_PTT_GPIO_PHYSICAL_PIN})</option>
-              <option value="cm108">CM108 (USB sound card PTT, auto-detect)</option>
-            </select>
-          </div>
-          <div class="field hidden" id="radio-ptt-serial-line-wrap">
-            <label for="radio-ptt-serial-line">Serial PTT line ${helpIcon("Which serial control line the radio's PTT circuit is wired to. RTS is the more common of the two; try DTR if PTT doesn't key with RTS.")}</label>
-            <select id="radio-ptt-serial-line">
-              <option value="RTS">RTS</option>
-              <option value="DTR">DTR</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="radio-audio">Audio device</label>
-            <select id="radio-audio"></select>
-            <p class="warn-banner hidden" id="radio-audio-warning">
-              No audio input device detected. Direwolf needs a microphone/audio input to receive on, it can't start without one.
-              <br><button type="button" id="btn-audio-warning-ack" style="margin-top: 8px;">Yes, I understand</button>
-            </p>
-          </div>
-          <div class="field">
-            <label for="radio-power">TX power level</label>
-            <select id="radio-power"></select>
-          </div>
-          <div class="field hidden" id="radio-programmer-port-wrap">
-            <label for="radio-programmer-port">Programming cable port ${helpIcon("Serial port for this radio's clone/programming cable — separate from the PTT/audio connection above.")}</label>
-            <select id="radio-programmer-port"></select>
-          </div>
-          <div class="field hidden" id="radio-write-wrap">
-            <button type="button" id="btn-write-radio">Write to radio</button>
-            <p class="hint">Powers the radio on, writes these settings to it, then powers it back off. Takes about 20 seconds.</p>
-            <p class="msg" id="write-radio-msg"></p>
-          </div>
-          <details class="advanced hidden" id="radio-advanced">
-            <summary>Advanced radio settings</summary>
-            <div class="field-row">
-              <div class="field">
-                <label for="radio-ctcss-encode">CTCSS encode (tone out)</label>
-                <select id="radio-ctcss-encode"></select>
+          <p class="hint" id="radio-none-hint">No radio selected yet. The rest of setup can still be finished — Direwolf just won't start until a radio is configured here.</p>
+          <div id="radio-fields-wrap">
+            <div class="field">
+              <label for="radio-frequency">Initial frequency</label>
+              <div class="field-suffix">
+                <input type="number" id="radio-frequency" step="0.001" placeholder="e.g. 144.800">
+                <span>MHz</span>
               </div>
-              <div class="field">
-                <label for="radio-ctcss-decode">CTCSS decode (tone squelch)</label>
-                <select id="radio-ctcss-decode"></select>
-              </div>
-            </div>
-            <div class="field" style="max-width: 160px;">
-              <label for="radio-duplex-offset">Duplex offset ${helpIcon("Leave at 0 for simplex, which is how a digipeater normally runs. Positive = TX above RX, negative = TX below RX.")}</label>
-              <div class="field-suffix"><input type="number" id="radio-duplex-offset" step="1" value="0"><span>kHz</span></div>
-            </div>
-            <div class="field" style="max-width: 160px;">
-              <label for="radio-tot">Time-out timer ${helpIcon("Caps how long the radio can transmit continuously. Cheap insurance against a stuck PTT damaging the radio on unattended gear. 0 = off.")}</label>
-              <div class="field-suffix"><input type="number" id="radio-tot" min="0" step="1" value="0"><span>min</span></div>
             </div>
             <div class="field">
-              <label><input type="checkbox" id="radio-busy-lockout"> Busy channel lockout ${helpIcon("Blocks TX while the channel is busy. Direwolf already does its own software channel access (CSMA) — enabling this too can make the two fight each other. Leave off unless you specifically want the radio-level lockout as well.")}</label>
+              <label for="radio-name">Channel name ${helpIcon("Shown on the radio's own display. Optional — defaults to the frequency if left blank.")}</label>
+              <input type="text" id="radio-name" maxlength="7" placeholder="e.g. APRS">
             </div>
-          </details>
+            <div class="field">
+              <label for="radio-ptt">PTT method</label>
+              <select id="radio-ptt">
+                <option value="vox">VOX</option>
+                <option value="gpio">GPIO pin (BCM ${RADIO_DEFAULT_PTT_GPIO_PIN}, physical pin ${RADIO_DEFAULT_PTT_GPIO_PHYSICAL_PIN})</option>
+                <option value="cm108">CM108 (USB sound card PTT, auto-detect)</option>
+              </select>
+            </div>
+            <div class="field hidden" id="radio-ptt-serial-line-wrap">
+              <label for="radio-ptt-serial-line">Serial PTT line ${helpIcon("Which serial control line the radio's PTT circuit is wired to. RTS is the more common of the two; try DTR if PTT doesn't key with RTS.")}</label>
+              <select id="radio-ptt-serial-line">
+                <option value="RTS">RTS</option>
+                <option value="DTR">DTR</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="radio-audio">Audio device</label>
+              <select id="radio-audio"></select>
+              <p class="warn-banner hidden" id="radio-audio-warning">
+                No audio input device detected. Direwolf needs a microphone/audio input to receive on, it can't start without one.
+                <br><button type="button" id="btn-audio-warning-ack" style="margin-top: 8px;">Yes, I understand</button>
+              </p>
+            </div>
+            <div class="field">
+              <label for="radio-power">TX power level</label>
+              <select id="radio-power"></select>
+            </div>
+            <div class="field hidden" id="radio-programmer-port-wrap">
+              <label for="radio-programmer-port">Programming cable port ${helpIcon("Serial port for this radio's clone/programming cable — separate from the PTT/audio connection above. Leave as None if you'll program the radio by hand instead; Direwolf will start fine either way.")}</label>
+              <select id="radio-programmer-port"></select>
+            </div>
+            <div class="field hidden" id="radio-write-wrap">
+              <button type="button" id="btn-write-radio">Write to radio</button>
+              <p class="hint">Powers the radio on, writes these settings to it, then powers it back off. Takes about 20 seconds.</p>
+              <p class="msg" id="write-radio-msg"></p>
+            </div>
+            <details class="advanced hidden" id="radio-advanced">
+              <summary>Advanced radio settings</summary>
+              <div class="field-row">
+                <div class="field">
+                  <label for="radio-ctcss-encode">CTCSS encode (tone out)</label>
+                  <select id="radio-ctcss-encode"></select>
+                </div>
+                <div class="field">
+                  <label for="radio-ctcss-decode">CTCSS decode (tone squelch)</label>
+                  <select id="radio-ctcss-decode"></select>
+                </div>
+              </div>
+              <div class="field" style="max-width: 160px;">
+                <label for="radio-duplex-offset">Duplex offset ${helpIcon("Leave at 0 for simplex, which is how a digipeater normally runs. Positive = TX above RX, negative = TX below RX.")}</label>
+                <div class="field-suffix"><input type="number" id="radio-duplex-offset" step="1" value="0"><span>kHz</span></div>
+              </div>
+              <div class="field" style="max-width: 160px;">
+                <label for="radio-tot">Time-out timer ${helpIcon("Caps how long the radio can transmit continuously. Cheap insurance against a stuck PTT damaging the radio on unattended gear. 0 = off.")}</label>
+                <div class="field-suffix"><input type="number" id="radio-tot" min="0" step="1" value="0"><span>min</span></div>
+              </div>
+              <div class="field">
+                <label><input type="checkbox" id="radio-busy-lockout"> Busy channel lockout ${helpIcon("Blocks TX while the channel is busy. Direwolf already does its own software channel access (CSMA) — enabling this too can make the two fight each other. Leave off unless you specifically want the radio-level lockout as well.")}</label>
+              </div>
+            </details>
+          </div>
         </section>
       `;
       const modelSelect = document.getElementById('radio-model');
+      addOption(modelSelect, '', 'None (not installed yet)');
       SUPPORTED_RADIOS.forEach(r => addOption(modelSelect, r.model, r.model));
       const powerSelect = document.getElementById('radio-power');
       RADIO_POWER_LEVELS.forEach(p => addOption(powerSelect, p, p));
@@ -923,11 +927,15 @@
       updatePttSerialLineVisibility();
 
       function updateProgrammerSectionVisibility() {
+        const hasModel = !!modelSelect.value;
+        document.getElementById('radio-fields-wrap').classList.toggle('hidden', !hasModel);
+        document.getElementById('radio-none-hint').classList.toggle('hidden', hasModel);
+
         const radio = SUPPORTED_RADIOS.find(r => r.model === modelSelect.value);
-        const show = !!(radio && radio.programmable);
-        document.getElementById('radio-programmer-port-wrap').classList.toggle('hidden', !show);
-        document.getElementById('radio-write-wrap').classList.toggle('hidden', !show);
-        document.getElementById('radio-advanced').classList.toggle('hidden', !show);
+        const showProgramming = !!(radio && radio.programmable);
+        document.getElementById('radio-programmer-port-wrap').classList.toggle('hidden', !showProgramming);
+        document.getElementById('radio-write-wrap').classList.toggle('hidden', !showProgramming);
+        document.getElementById('radio-advanced').classList.toggle('hidden', !showProgramming);
       }
       modelSelect.addEventListener('change', updateProgrammerSectionVisibility);
       updateProgrammerSectionVisibility();
@@ -954,22 +962,17 @@
 
     async function loadAudioDevices() {
       const select = document.getElementById('radio-audio');
+      addOption(select, '', 'None (configure later)');
       try {
         const res = await fetch('/api/hardware/audio-devices');
         const data = await res.json();
         const devices = data.devices || [];
-        if (devices.length === 0) {
-          addOption(select, '', 'No audio devices found');
-          updateAudioInputWarning(devices);
-          return;
-        }
         devices.forEach(d => {
           addOption(select, d.id, d.description ? `${d.name}: ${d.description}` : d.name);
         });
         if (wizardData.radio?.audio_device) select.value = wizardData.radio.audio_device;
         updateAudioInputWarning(devices);
       } catch (e) {
-        addOption(select, '', 'Could not load audio devices');
         updateAudioInputWarning([]);
       }
     }
@@ -1007,6 +1010,7 @@
 
     async function loadProgrammerPortOptions() {
       const select = document.getElementById('radio-programmer-port');
+      addOption(select, '', 'None (program it manually)');
       try {
         const res = await fetch('/api/hardware/serial-devices');
         const data = await res.json();
@@ -1016,7 +1020,7 @@
         });
         if (wizardData.radio?.programmer_port) select.value = wizardData.radio.programmer_port;
       } catch (e) {
-        // radio model picker still works without this; port just won't be pre-populated
+        // "None" option and radio model picker still work without this; port just won't be pre-populated
       }
     }
 
@@ -1050,9 +1054,11 @@
     }
 
     async function saveRadioStep() {
-      // Confirm rather than silently proceed if no frequency was set, Direwolf needs one to transmit
+      const hasModel = !!document.getElementById('radio-model').value;
+      // Confirm rather than silently proceed if no frequency was set, Direwolf needs one to transmit.
+      // Not applicable with no radio picked at all, that case is already its own deliberate choice.
       const frequency = document.getElementById('radio-frequency').value;
-      if (!frequency) {
+      if (hasModel && !frequency) {
         const proceed = await confirmModal(
           "Initial frequency is still blank, are you sure? Direwolf needs a real frequency to transmit on.",
           "Yes, I'm sure", 'No, go back and change'

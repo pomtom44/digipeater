@@ -1,4 +1,6 @@
-"""Tracks heard stations and beacon transmissions in real time from Direwolf's KISS port and journald log."""
+"""Decodes heard stations and transmitted frames from Direwolf's KISS port and journald log, logging
+them to the database (services/db.py) -- the only copy of this state, live reads included, not a
+separate in-memory cache kept alongside it."""
 
 import asyncio
 import logging
@@ -7,6 +9,8 @@ import time
 from pathlib import Path
 
 import yaml
+
+from services import db, log_settings
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +24,10 @@ except ImportError:
 CONFIG_PATH = Path("config.yaml")
 _DIREWOLF_UNIT = "direwolf"
 
-_RE_RF_XMIT = re.compile(r"^\[\d[HL][^\]]*\]\s*([^>\s]+)>")
-_RE_IG_XMIT = re.compile(r"^\[ig\]\s*([^>\s]+)>")
+# Captures the full "SRC>PATH:payload" remainder, not just the source, so every transmitted frame can
+# be logged and classified -- not just ones Direwolf happens to send under our own callsign.
+_RE_RF_XMIT = re.compile(r"^\[\d[HL][^\]]*\]\s*([^>\s]+>.*)$")
+_RE_IG_XMIT = re.compile(r"^\[ig\]\s*([^>\s]+>.*)$")
 
 _MAX_HEARD_STATIONS = 50
 _SIGNAL_TEST_TTL_S = 900
@@ -107,11 +113,7 @@ def _decode_ax25_ui_frame(frame: bytes) -> str | None:
 
 class PacketLog:
     def __init__(self):
-        self._heard: dict[str, dict] = {}
-        self._last_rf_beacon_at: float | None = None
-        self._last_igate_beacon_at: float | None = None
         self._task: asyncio.Task | None = None
-        self._signal_tests: dict[str, dict] = {}
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._run())
@@ -120,68 +122,101 @@ class PacketLog:
         if self._task:
             self._task.cancel()
 
-    def heard_stations(self) -> list[dict]:
-        """Every distinct heard callsign, most recent first."""
+    async def heard_stations(self) -> list[dict]:
+        """Every distinct heard callsign, most recent first, straight from heard_packets."""
+        rows = await db.fetchall(
+            """
+            SELECT h.callsign, h.heard_at, h.symbol_table, h.symbol, h.latitude, h.longitude,
+                   h.comment, agg.count
+            FROM heard_packets h
+            INNER JOIN (
+                SELECT callsign, MAX(id) AS latest_id, COUNT(*) AS count
+                FROM heard_packets
+                GROUP BY callsign
+            ) agg ON h.id = agg.latest_id
+            ORDER BY h.heard_at DESC
+            LIMIT ?
+            """,
+            (_MAX_HEARD_STATIONS,),
+        )
         now = time.time()
-        stations = [
-            {**info, "seconds_ago": round(now - info["_last_heard_at"])}
-            for info in self._heard.values()
+        return [
+            {
+                "callsign": r["callsign"],
+                "symbol": {"table": r["symbol_table"], "symbol": r["symbol"]},
+                "latitude": r["latitude"],
+                "longitude": r["longitude"],
+                "comment": r["comment"],
+                "count": r["count"],
+                "seconds_ago": round(now - r["heard_at"]),
+            }
+            for r in rows
         ]
-        stations.sort(key=lambda s: s["seconds_ago"])
-        for s in stations:
-            del s["_last_heard_at"]
-        return stations[:_MAX_HEARD_STATIONS]
 
-    def last_heard(self) -> dict | None:
+    async def last_heard(self) -> dict | None:
         """The single most recently heard station, or None if nothing's been heard yet."""
-        if not self._heard:
+        row = await db.fetchone("SELECT * FROM heard_packets ORDER BY heard_at DESC, id DESC LIMIT 1")
+        if row is None:
             return None
-        info = max(self._heard.values(), key=lambda s: s["_last_heard_at"])
-        station = dict(info)
-        station["seconds_ago"] = round(time.time() - station.pop("_last_heard_at"))
-        return station
-
-    def start_signal_test(self, test_id: str, my_call: str) -> None:
-        """Registers a pending RF-reach test; a reply is matched off the normal KISS-decoded packet stream."""
-        self._prune_stale_signal_tests()
-        self._signal_tests[test_id] = {
-            "my_call": my_call, "created_at": time.time(),
-            "received": False, "reply_text": None,
+        return {
+            "callsign": row["callsign"],
+            "symbol": {"table": row["symbol_table"], "symbol": row["symbol"]},
+            "latitude": row["latitude"],
+            "longitude": row["longitude"],
+            "comment": row["comment"],
+            "seconds_ago": round(time.time() - row["heard_at"]),
         }
 
-    def signal_test_status(self, test_id: str) -> dict | None:
-        record = self._signal_tests.get(test_id)
-        if record is None:
+    async def start_signal_test(self, test_id: str, my_call: str, target_callsign: str) -> None:
+        """Registers a pending RF-reach test in the database -- its only state now, not just
+        incidental logging, so a failure here is raised rather than swallowed: the caller needs to
+        know the test wasn't actually recorded, since nothing else is tracking it."""
+        await db.execute(
+            "INSERT INTO signal_test_results (test_id, started_at, my_call, target_callsign) VALUES (?, ?, ?, ?)",
+            (test_id, time.time(), my_call, target_callsign),
+        )
+
+    async def signal_test_status(self, test_id: str) -> dict | None:
+        row = await db.fetchone(
+            "SELECT received, reply_text FROM signal_test_results WHERE test_id = ?", (test_id,),
+        )
+        if row is None:
             return None
-        return {"received": record["received"], "reply_text": record["reply_text"]}
+        return {"received": bool(row["received"]), "reply_text": row["reply_text"]}
 
-    def _prune_stale_signal_tests(self) -> None:
-        now = time.time()
-        stale = [tid for tid, r in self._signal_tests.items() if now - r["created_at"] > _SIGNAL_TEST_TTL_S]
-        for tid in stale:
-            del self._signal_tests[tid]
-
-    def _check_signal_test_reply(self, parsed: dict) -> None:
-        if not self._signal_tests:
-            return
+    async def _check_signal_test_reply(self, parsed: dict) -> None:
         # A far igate relaying a reply to RF may wrap it in third-party format; unwrap if so.
         message = parsed.get("subpacket", parsed) if parsed.get("format") == "thirdparty" else parsed
         if message.get("format") != "message":
             return
         addresse = (message.get("addresse") or "").strip().upper()
         text = message.get("message_text", "")
-        for test_id, record in self._signal_tests.items():
-            if not record["received"] and addresse == record["my_call"].upper() and test_id in text:
-                record["received"] = True
-                record["reply_text"] = text
+        if not addresse or not text:
+            return
+        # Bounds the query to recent pending tests only, same role the old in-memory TTL prune played.
+        cutoff = time.time() - _SIGNAL_TEST_TTL_S
+        pending = await db.fetchall(
+            "SELECT test_id, my_call FROM signal_test_results WHERE received = 0 AND started_at > ?",
+            (cutoff,),
+        )
+        for row in pending:
+            if row["my_call"].upper() == addresse and row["test_id"] in text:
+                try:
+                    await db.execute(
+                        "UPDATE signal_test_results SET received = 1, reply_text = ?, received_at = ? "
+                        "WHERE test_id = ?",
+                        (text, time.time(), row["test_id"]),
+                    )
+                except Exception as e:
+                    logger.error("Failed to log signal test reply to database: %s", e)
 
-    def beacon_stats(self) -> dict:
+    async def beacon_stats(self) -> dict:
+        rf_row = await db.fetchone("SELECT MAX(sent_at) AS ts FROM sent_packets WHERE type = 'rf_beacon'")
+        ig_row = await db.fetchone("SELECT MAX(sent_at) AS ts FROM sent_packets WHERE type = 'igate_beacon'")
         now = time.time()
         return {
-            "last_rf_beacon_seconds_ago": round(now - self._last_rf_beacon_at) if self._last_rf_beacon_at else None,
-            "last_igate_beacon_seconds_ago": (
-                round(now - self._last_igate_beacon_at) if self._last_igate_beacon_at else None
-            ),
+            "last_rf_beacon_seconds_ago": round(now - rf_row["ts"]) if rf_row and rf_row["ts"] else None,
+            "last_igate_beacon_seconds_ago": round(now - ig_row["ts"]) if ig_row and ig_row["ts"] else None,
         }
 
     async def _run(self) -> None:
@@ -224,7 +259,7 @@ class PacketLog:
                 line = await proc.stdout.readline()
                 if not line:
                     break
-                self._handle_log_line(line.decode(errors="replace").rstrip(), my_call)
+                await self._handle_log_line(line.decode(errors="replace").rstrip(), my_call)
         finally:
             if proc.returncode is None:
                 proc.terminate()
@@ -254,24 +289,61 @@ class PacketLog:
                         continue  # not a data frame on KISS port/channel 0
                     packet_str = _decode_ax25_ui_frame(frame[1:])
                     if packet_str:
-                        self._handle_packet_string(packet_str, my_call)
+                        await self._handle_packet_string(packet_str, my_call)
         finally:
             writer.close()
 
-    def _handle_log_line(self, line: str, my_call: str) -> None:
-        """journalctl path: matches Direwolf's own TX log line, source callsign must be ours."""
+    def _classify_tx(self, packet_text: str, is_own: bool, *, via_igate: bool) -> str:
+        if via_igate:
+            return "igate_beacon" if is_own else "igate_gate"
+        if not is_own:
+            return "digipeat"
+        # Our own RF frame that isn't a position beacon is something we sent directly (e.g. the
+        # signal test's ping message) rather than Direwolf's own PBEACON schedule.
+        if _HAS_APRSLIB:
+            try:
+                if aprslib.parse(packet_text).get("format") == "message":
+                    return "message"
+            except Exception:
+                pass
+        return "rf_beacon"
+
+    async def _handle_log_line(self, line: str, my_call: str) -> None:
+        """journalctl path: matches Direwolf's own TX log line for any frame it transmits -- a beacon,
+        a DIGIPEAT repeat of someone else's packet, an RF packet gated to APRS-IS, or anything else
+        handed to it, e.g. over KISS -- not just ones Direwolf happens to send under our own callsign."""
         if not my_call:
             return
-        call_root = my_call.split("-")[0]
-        m = _RE_RF_XMIT.match(line)
-        if m and m.group(1).split("-")[0].upper() == call_root:
-            self._last_rf_beacon_at = time.time()
-            return
-        m = _RE_IG_XMIT.match(line)
-        if m and m.group(1).split("-")[0].upper() == call_root:
-            self._last_igate_beacon_at = time.time()
+        call_root = my_call.split("-")[0].upper()
 
-    def _handle_packet_string(self, packet_str: str, my_call: str) -> None:
+        via_igate = False
+        m = _RE_RF_XMIT.match(line)
+        if not m:
+            m = _RE_IG_XMIT.match(line)
+            via_igate = True
+        if not m:
+            return
+
+        packet_text = m.group(1)
+        source = packet_text.split(">", 1)[0]
+        is_own = source.split("-")[0].upper() == call_root
+
+        if not log_settings.is_enabled("sent_packets"):
+            # Not just history: beacon_stats() now reads "last beacon sent" straight from this table,
+            # so skipping the write is what makes that card show up as disabled too.
+            return
+
+        now = time.time()
+        packet_type = self._classify_tx(packet_text, is_own, via_igate=via_igate)
+        try:
+            await db.execute(
+                "INSERT INTO sent_packets (sent_at, type, callsign, raw_packet) VALUES (?, ?, ?, ?)",
+                (now, packet_type, source, packet_text),
+            )
+        except Exception as e:
+            logger.error("Failed to log sent packet to database: %s", e)
+
+    async def _handle_packet_string(self, packet_str: str, my_call: str) -> None:
         """KISS path: parses a TNC2-style packet string via aprslib."""
         if not _HAS_APRSLIB:
             return
@@ -280,32 +352,31 @@ class PacketLog:
         except Exception:
             return  # not everything heard is a decodable APRS packet
 
-        self._check_signal_test_reply(parsed)
+        await self._check_signal_test_reply(parsed)
 
         callsign = parsed.get("from", "")
         if not callsign:
             return
         if my_call and callsign.split("-")[0].upper() == my_call.split("-")[0]:
             return  # our own transmission, not a heard station
-        existing_count = self._heard.get(callsign, {}).get("count", 0)
-        self._heard[callsign] = {
-            "callsign": callsign,
-            "symbol": {
-                "table": parsed.get("symbol_table", "/"),
-                "symbol": parsed.get("symbol", ">"),
-            },
-            "latitude": parsed.get("latitude"),
-            "longitude": parsed.get("longitude"),
-            "comment": parsed.get("comment", ""),
-            "count": existing_count + 1,
-            "_last_heard_at": time.time(),
-        }
-        self._evict_stale_stations()
-
-    def _evict_stale_stations(self) -> None:
-        """Keeps at most _MAX_HEARD_STATIONS entries, dropping the least recently heard first."""
-        if len(self._heard) <= _MAX_HEARD_STATIONS:
+        if not log_settings.is_enabled("heard_stations"):
+            # Not just skipping the DB write: heard_stations()/last_heard() read straight from this
+            # table now, so skipping the write is what makes the live list/map/e-ink page show up as
+            # disabled too, not just their history.
             return
-        oldest_first = sorted(self._heard, key=lambda c: self._heard[c]["_last_heard_at"])
-        for callsign in oldest_first[:len(self._heard) - _MAX_HEARD_STATIONS]:
-            del self._heard[callsign]
+
+        heard_at = time.time()
+        symbol_table = parsed.get("symbol_table", "/")
+        symbol = parsed.get("symbol", ">")
+        latitude = parsed.get("latitude")
+        longitude = parsed.get("longitude")
+        comment = parsed.get("comment", "")
+
+        try:
+            await db.execute(
+                "INSERT INTO heard_packets (callsign, heard_at, symbol_table, symbol, latitude, longitude, comment) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (callsign, heard_at, symbol_table, symbol, latitude, longitude, comment),
+            )
+        except Exception as e:
+            logger.error("Failed to log heard station %s to database: %s", callsign, e)
