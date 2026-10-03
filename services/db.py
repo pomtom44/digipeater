@@ -18,8 +18,8 @@ DB_PATH = Path("digipeater.db")
 # edit a past one, an already-deployed database has already applied it.
 _MIGRATIONS: list[tuple[int, list[str]]] = [
     (1, [
-        # One row per decoded packet heard on RF (services/packet_log.py), not just current state, so
-        # history survives a restart/crash and later queries (maps, stats) have more than a snapshot.
+        # One row per decoded packet heard on RF (services/packet_log.py), kept as durable history so
+        # it survives a restart/crash and later queries (maps, stats) have more than a snapshot.
         """
         CREATE TABLE heard_packets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,8 +39,8 @@ _MIGRATIONS: list[tuple[int, list[str]]] = [
         # One row per frame Direwolf actually transmits (services/packet_log.py's journald tail),
         # whatever triggered it: our own PBEACON (rf_beacon/igate_beacon), a DIGIPEAT repeat of someone
         # else's packet (digipeat), an RF packet gated to APRS-IS (igate_gate), or an outbound message
-        # we sent ourselves e.g. the signal test ping (message). callsign is the frame's AX.25 source,
-        # which for digipeat/igate_gate is the *original* station, not us.
+        # we sent ourselves e.g. the signal test ping (message). callsign is the frame's AX.25 source:
+        # for digipeat/igate_gate, that's the *original* station that sent the packet before we repeated/gated it.
         """
         CREATE TABLE sent_packets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

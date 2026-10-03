@@ -206,8 +206,8 @@ class EPD:
         self._wait_busy()
 
     def getbuffer(self, image):
-        # Was ROTATE_270; the standard build's actual panel mounting sits 90 CCW from what that assumed,
-        # so an extra 90 CW (net ROTATE_180) corrects it. Reported from the standard build, not yet re-verified here.
+        # The standard build's panel mounts 90 CCW from upright, so ROTATE_180 corrects it. Confirmed
+        # on the standard build; verification on this build is still pending.
         img = image.copy().convert("1").transpose(Image.Transpose.ROTATE_180)
         linewidth = (self.width + 7) >> 3
         buf = [0xFF] * (linewidth * self.height)

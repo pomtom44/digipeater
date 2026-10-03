@@ -97,7 +97,7 @@
       color: #fff;
     }
 
-    /* Fixed, not a flex sibling, so it doesn't push the centered tab/form content over; pointer-events:none lets clicks fall through except on the buttons. */
+    /* position:fixed keeps it out of the centered tab/form content's flex flow; pointer-events:none lets clicks fall through except on the buttons. */
     #sidebar {
       position: fixed;
       top: 0;
@@ -1064,7 +1064,14 @@
         devices.forEach(dev => {
           addOption(select, dev.id, dev.description ? `${dev.name}: ${dev.description}` : dev.name);
         });
-        if (d.audio_device) select.value = d.audio_device;
+        if (d.audio_device) {
+          select.value = d.audio_device;
+        } else {
+          // Default to a device with a mic/capture input over "None" -- that's the one actually
+          // usable for RX, and most setups only have the one radio-interface adapter plugged in.
+          const withInput = devices.find(dev => dev.has_input);
+          if (withInput) select.value = withInput.id;
+        }
         updateAudioInputWarning(devices);
       } catch (e) {
         updateAudioInputWarning([]);
@@ -1111,11 +1118,17 @@
       try {
         const res = await fetch('/api/hardware/serial-devices');
         const data = await res.json();
-        (data.devices || []).forEach(dev => {
+        const devices = data.devices || [];
+        devices.forEach(dev => {
           const label = dev.description ? `${dev.device} (${dev.description})` : dev.device;
           addOption(select, dev.device, label);
         });
-        if (d.programmer_port) select.value = d.programmer_port;
+        if (d.programmer_port) {
+          select.value = d.programmer_port;
+        } else if (devices.length > 0) {
+          // A detected cable beats "None" by default -- most setups only have the one plugged in.
+          select.value = devices[0].device;
+        }
       } catch (e) {
         // "None" option and radio model picker still work without this; port just won't be pre-populated
       }
@@ -2173,7 +2186,7 @@
       })();
     }
 
-    // ── E-Ink tab: driver/model come from GET /api/display/config, not config.yaml ──
+    // ── E-Ink tab: driver/model come from GET /api/display/config, the live display state ──
     const EINK_DEFAULT_PAGES = [
       { id: 'status', label: 'Status' },
       { id: 'config_summary', label: 'Config summary' },
@@ -2602,7 +2615,7 @@
       }
     }
 
-    // radio.ptt_gpio_pin is read by collectRadioTab() instead, not collected here
+    // radio.ptt_gpio_pin is collected by collectRadioTab()
     function collectGpioTab() {
       const gpio = {
         relay_pin: parseInt(document.getElementById('gpio-relay-pin').value, 10) || GPIO_DEFAULT_RELAY_PIN,
@@ -2751,7 +2764,7 @@
     }
 
     function renderSaveResult(data) {
-      // Radio is reported separately below via the write-to-radio prompt, not as "applied immediately".
+      // Radio is reported separately below via the write-to-radio prompt.
       const applied = (data.applied || []).filter(k => k !== 'radio').map(k => APPLIED_LABELS[k] || k);
       const reboot = (data.reboot_required || []).map(k => REBOOT_LABELS[k] || k);
       let html = '<strong>Saved.</strong>';

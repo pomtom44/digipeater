@@ -183,10 +183,10 @@ async def main() -> None:
         )
         rotation.start()
 
-        # Backgrounded, not awaited here: this can take anywhere from seconds (radio programming,
-        # relay boot delay) to minutes (a slow GPS fix), and none of it needs to finish before the
-        # web server starts -- the dashboard's own Direwolf-status polling already shows "waiting_gps"
-        # /"starting" live, which only works if the page is actually reachable while that's happening.
+        # Runs in the background: this can take anywhere from seconds (radio programming, relay boot
+        # delay) to minutes (a slow GPS fix), and none of it needs to finish before the web server
+        # starts -- the dashboard's own Direwolf-status polling already shows "waiting_gps"/"starting"
+        # live, which needs the page to be reachable while that's happening.
         async def _start_services() -> None:
             try:
                 await gpsconfig.apply(config.get("gps", {}))

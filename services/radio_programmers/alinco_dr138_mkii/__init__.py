@@ -28,14 +28,16 @@ _EXPECTED_ID = "DJ-138"
 _CHANNEL0 = 0x2000  # channel 0's record start; this radio only ever targets channel 0
 _TIME_OUT_TIMER_OFFSET = 0x022c
 
-# Boots to memory (channel) mode on channel 0 rather than the factory default of VFO/frequency mode,
-# since this driver only ever programs channel 0 -- there's nothing else to tune to. Display Mode and
-# VFO/MR are set together: the radio's own menu auto-forces VFO/MR to MR when Display Mode=Channel,
-# but that's UI-side logic, not guaranteed to apply to a directly-written image, so both are set here.
+# Two separate settings, easy to conflate: VFO/MR selects the tuning source (VFO dial vs a memory
+# channel) -- that's the real "memory mode", and setting it to MR with channel 0 always boots the
+# radio into channel 0 regardless of the VFO dial's position. Display Mode controls only what the
+# screen *shows* (00=Frequency, 01=Channel number e.g. "CH-00", 02=Channel name); it's set to Name
+# here, and _encode_name() falls back to the frequency as text when no name is given, so the screen
+# always shows something meaningful.
 _DISPLAY_MODE_OFFSET = 0x0220
 _VFO_MR_OFFSET = 0x0221
 _MR_CHANNEL_OFFSET = 0x0222
-_DISPLAY_MODE_CHANNEL = 0x01
+_DISPLAY_MODE_NAME = 0x02
 _VFO_MR_MR = 0x01
 
 _STEP_VALUES = {
@@ -93,8 +95,9 @@ def _build_overrides(radio_config: dict) -> dict:
     overrides = {
         _CHANNEL0 + 0x00: _encode_frequency(freq_hz),
         _CHANNEL0 + 0x13: _encode_name(name),
-        # Boot to memory mode on channel 0, not VFO/frequency mode (see the constants above).
-        _DISPLAY_MODE_OFFSET: bytes([_DISPLAY_MODE_CHANNEL]),
+        # Boots into memory mode on channel 0, Display Mode set to Name, so the screen shows the
+        # channel's name or frequency text (see the constants above for what each byte controls).
+        _DISPLAY_MODE_OFFSET: bytes([_DISPLAY_MODE_NAME]),
         _VFO_MR_OFFSET: bytes([_VFO_MR_MR]),
         _MR_CHANNEL_OFFSET: bytes([0x00]),
     }
@@ -177,8 +180,9 @@ def _handshake(ser: serial.Serial) -> str:
     ser.write(bytes([0x02]))
     ser.flush()
     id_reply = _read_exact(ser, 9, "ID reply")
-    # 8 bytes, not 7: `05` + "V100" + 2 variable bytes + a trailing 06 ack (see the protocol doc).
-    # Leaving that ack unread shifts every subsequent read by one byte, corrupting the next echo check.
+    # Version reply is 8 bytes: `05` + "V100" + 2 variable bytes + a trailing 06 ack (see the protocol
+    # doc). Leaving that ack unread shifts every subsequent read by one byte, corrupting the next echo
+    # check.
     version_reply = _read_exact(ser, 8, "version reply")
     if version_reply[-1] != _ACK:
         raise IOError(f"version reply missing trailing ack: {version_reply!r}")

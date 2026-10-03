@@ -118,7 +118,7 @@ async def setup_hotspot(ssid: str, password: str) -> bool:
         "type", "wifi",
         "ifname", "wlan0",
         "con-name", _HOTSPOT_CON,
-        # autoconnect=no: the app decides at boot whether the hotspot is needed, not NetworkManager.
+        # autoconnect=no: leaves the boot-time decision of whether the hotspot is needed to the app.
         "autoconnect", "no",
         "ssid", ssid,
         "mode", "ap",

@@ -24,7 +24,8 @@ from services import (
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
-# Session cookie for the web UI's security mode (none/readonly/full). In-memory only, not marked Secure (plain HTTP).
+# Session cookie for the web UI's security mode (none/readonly/full). Held in memory only; the
+# Secure flag is omitted since the server runs plain HTTP.
 SESSION_COOKIE_NAME = "digi_session"
 SESSION_TTL_S = 7 * 24 * 3600
 # WiFi credentials saved during first boot, applied later by main.py's normal-boot network flow.
@@ -140,7 +141,7 @@ def create_app(
     async def root(request: Request):
         if first_boot:
             return FileResponse(STATIC_DIR / "first_run.html")
-        # "Full" security mode requires login to view the dashboard, not just to change settings.
+        # "Full" security mode requires login even to view the dashboard, beyond gating changes.
         if _read_security().get("mode") == "full" and not _is_logged_in(request):
             return FileResponse(STATIC_DIR / "login.html")
         return FileResponse(STATIC_DIR / "normal.html")
@@ -166,7 +167,7 @@ def create_app(
     async def history_page(request: Request):
         if first_boot:
             return RedirectResponse(url="/")
-        # Same gate as /config: it's operational/diagnostic detail, not just the live dashboard.
+        # Same gate as /config: history is operational/diagnostic detail, gated the same way as the live dashboard.
         mode = _read_security().get("mode", "none")
         if mode != "none" and not _is_logged_in(request):
             return FileResponse(STATIC_DIR / "login.html")
@@ -234,7 +235,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="SSID is required")
         if password and len(password) < 8:
             raise HTTPException(status_code=400, detail="WiFi password must be at least 8 characters")
-        # Saved only, not connected now; written owner-only (0600) since the password is stored in plaintext.
+        # Saved for the next boot to pick up; written owner-only (0600) since the password is stored in plaintext.
         fd = os.open(WIFI_PENDING_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(json.dumps({"ssid": ssid, "password": password}))
@@ -356,7 +357,7 @@ def create_app(
         return {"logs": await system.get_direwolf_logs()}
 
     def _require_login_for_action(request: Request) -> None:
-        # Changes require login under both "readonly" and "full" modes, unlike viewing.
+        # Changes require login under both "readonly" and "full" modes; "full" mode also gates viewing.
         if _read_security().get("mode", "none") != "none" and not _is_logged_in(request):
             raise HTTPException(status_code=401, detail="Login required")
 
@@ -396,7 +397,7 @@ def create_app(
         config page's "Write to radio" button (may need to stop a running Direwolf first)."""
         _require_login_for_action(request)
         body = await request.json()
-        # Returned as ok:false rather than a 500, even on failure, so the frontend still learns was_running
+        # Failures come back as a 200 with ok:false, so the frontend still learns was_running
         # and can offer to restart Direwolf if this stopped it.
         return await system.write_radio(body.get("radio") or {})
 
@@ -530,7 +531,8 @@ def create_app(
             headers=passthrough_headers,
         )
 
-    # No size/tile-count estimate endpoint: region extract size depends on actual map data density, not a formula.
+    # No size/tile-count estimate endpoint: region extract size depends on actual map data density,
+    # which varies per region and can only be known by running the extract.
 
     @app.post("/api/map/cache/start")
     async def map_cache_start(request: Request):
@@ -633,7 +635,7 @@ def create_app(
     async def status():
         return {"ok": True, "first_boot": first_boot}
 
-    # Unauthenticated even under "full" mode: a callsign is public information, not a secret.
+    # Unauthenticated even under "full" mode: a callsign is public information.
     @app.get("/api/station-id")
     async def station_id():
         if not CONFIG_PATH.exists():
@@ -649,7 +651,7 @@ def create_app(
     async def get_config(request: Request):
         if not CONFIG_PATH.exists():
             raise HTTPException(status_code=404, detail="Setup has not been completed yet")
-        # Mirrors root()'s gating: "full" mode requires login to view, not just to change.
+        # Mirrors root()'s gating: "full" mode requires login to view, beyond gating changes.
         if _read_security().get("mode") == "full" and not _is_logged_in(request):
             raise HTTPException(status_code=401, detail="Login required")
         try:
@@ -733,7 +735,7 @@ def create_app(
                 if password:
                     security.update(auth.hash_password(password))
                 else:
-                    # Blank password means keep the existing hash/salt rather than requiring a fresh one each save.
+                    # Blank password keeps the existing hash/salt, so the password only changes when a new one is entered.
                     security["hash"] = existing_security.get("hash", "")
                     security["salt"] = existing_security.get("salt", "")
             config["security"] = security
@@ -783,7 +785,7 @@ def create_app(
             radio_needs_programming = radio_changed and radio_programmer.can_program(config.get("radio", {}).get("model"))
             if radio_needs_programming:
                 # A radio change needs a physical write to the radio, which the config page prompts for
-                # separately (Write to radio button) rather than silently power-cycling the radio here.
+                # separately via the Write to radio button, keeping the write visible and user-initiated.
                 radio_write_pending = True
             else:
                 status = await system.get_direwolf_status()
@@ -803,7 +805,7 @@ def create_app(
                 applied.append("aprs")
 
         if rotation is not None and config.get("display", {}).get("pages") != before_pages:
-            # Page-rotation list re-applies live, unlike driver/model changes.
+            # Page-rotation list re-applies live; driver/model changes wait for the next display reboot.
             rotation.reload_pages(load_pages(config["display"]))
             applied.append("display_pages")
 

@@ -163,7 +163,8 @@ class RotationManager:
                 await asyncio.sleep(_EMPTY_ROTATION_POLL_S)
 
     async def _render_page(self, page: Page) -> None:
-        # last_beacon/symbol/last_heard use dedicated template functions, not draw_status_page below.
+        # last_beacon/symbol/last_heard each render through their own dedicated template function;
+        # every other page falls through to draw_status_page below.
         if page.id == "last_beacon":
             title, headers, rows = self._last_beacon_page(_read_config())
             await self._render(self._template.draw_table_page, title, headers, rows)
@@ -263,7 +264,7 @@ class RotationManager:
 
     def _last_beacon_page(self, config: dict) -> tuple[str, list[str], list[tuple[str, list[str]]]]:
         aprs = config.get("aprs", {}) or {}
-        # RF and IGate beacons are configured independently, not a shared aprs.beacon block.
+        # RF and IGate beacons each keep their own config block: aprs.rf_beacon and aprs.igate_beacon.
         rf_beacon = aprs.get("rf_beacon") or {}
         igate_beacon = aprs.get("igate_beacon") or {}
         rf_enabled = aprs.get("digipeat_mode") == "digipeater" and bool(rf_beacon.get("enabled"))

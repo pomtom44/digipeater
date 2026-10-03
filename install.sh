@@ -52,7 +52,7 @@ run_with_spinner() {
     rm -f "$_SPIN_LOG"
 }
 
-# Same as run_with_spinner, but a failure is a warning, not an abort; returns 1 on failure.
+# Same as run_with_spinner; a failure logs a warning and the function returns 1 for the caller to handle.
 run_with_spinner_soft() {
     local msg="$1"
     if _spin "$@"; then
@@ -120,8 +120,8 @@ run_with_spinner "Installing system packages..." sudo apt-get install -y -qq \
     libhamlib-dev
 ok "System packages installed"
 
-# ── Use chrony for system time, not systemd-timesyncd ──
-# Required for the GPS time-sync option (services/gpsconfig.py's refclock); a straight NTP replacement otherwise.
+# ── chrony handles system time ──
+# Required for the GPS time-sync option (services/gpsconfig.py's refclock); otherwise serves as a straight NTP replacement.
 run_with_spinner "Switching to chrony for time sync..." bash -c "
     sudo systemctl disable --now systemd-timesyncd --quiet 2>/dev/null;
     sudo systemctl enable chrony --quiet &&
@@ -189,7 +189,7 @@ run_with_spinner "Configuring NetworkManager..." bash -c "
 ok "NetworkManager configured"
 
 # ── Grant nmcli access for the app's hotspot management ──────
-# nmcli needs root for hotspot management; scoped narrowly, not blanket sudo.
+# nmcli needs root for hotspot management; the sudoers rule is scoped to just this command.
 NMCLI_PATH="$(command -v nmcli)"
 SUDOERS_TMP="$(mktemp)"
 echo "$USER ALL=(root) NOPASSWD: $NMCLI_PATH" > "$SUDOERS_TMP"
@@ -229,7 +229,7 @@ else
 fi
 
 # ── Grant systemctl start/stop access for the dashboard's Direwolf control ──
-# Scoped to just start/stop direwolf, not blanket systemctl access; used by the dashboard toggle and main.py's boot sequence (services/system.py).
+# Scoped to just start/stop direwolf; used by the dashboard toggle and main.py's boot sequence (services/system.py).
 SYSTEMCTL_PATH="$(command -v systemctl)"
 SUDOERS_TMP4="$(mktemp)"
 echo "$USER ALL=(root) NOPASSWD: $SYSTEMCTL_PATH start direwolf, $SYSTEMCTL_PATH stop direwolf" > "$SUDOERS_TMP4"
@@ -242,7 +242,7 @@ else
 fi
 
 # ── Grant access to the restart-policy helper for the Startup tab ──
-# Scoped script for writing direwolf's restart-policy drop-in (services/restart_policy.py), not blanket unit-editing access.
+# Scoped script for writing direwolf's restart-policy drop-in (services/restart_policy.py).
 chmod +x "$APP_DIR/scripts/apply-direwolf-restart-policy.sh"
 RESTARTPOLICY_PATH="$APP_DIR/scripts/apply-direwolf-restart-policy.sh"
 SUDOERS_TMP5="$(mktemp)"

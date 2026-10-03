@@ -24,8 +24,8 @@ except ImportError:
 CONFIG_PATH = Path("config.yaml")
 _DIREWOLF_UNIT = "direwolf"
 
-# Captures the full "SRC>PATH:payload" remainder, not just the source, so every transmitted frame can
-# be logged and classified -- not just ones Direwolf happens to send under our own callsign.
+# Captures the full "SRC>PATH:payload" remainder, so every transmitted frame can be logged and
+# classified, whichever callsign it goes out under.
 _RE_RF_XMIT = re.compile(r"^\[\d[HL][^\]]*\]\s*([^>\s]+>.*)$")
 _RE_IG_XMIT = re.compile(r"^\[ig\]\s*([^>\s]+>.*)$")
 
@@ -33,10 +33,10 @@ _RE_IG_XMIT = re.compile(r"^\[ig\]\s*([^>\s]+>.*)$")
 # packet unless started with "-q h". e.g. "N8VIM audio level = 27   [NONE]" or, when repeated through
 # a WIDEn-0 alias, "WIDE2-1 (probably N3LEE-4) audio level = 28(10/6)   [NONE]   __|||||||". Only the
 # callsign and the leading number matter here -- the rest (DCD state, retry/spectrum display) isn't
-# used. When digipeated through a *named* repeater (not a generic WIDEn alias), "heard" is the
-# repeater's own callsign, not the original source already logged via the KISS path -- correlation
-# below just won't find a row to match in that case, which is correct (attaching the repeater's own
-# signal level to the original station's row would misattribute it).
+# used. When digipeated through a *named* repeater (distinct from a generic WIDEn alias), "heard"
+# reports the repeater's own callsign; the original source is already logged separately via the KISS
+# path. Correlation below won't find a row to match in that case, which is correct (attaching the
+# repeater's signal level to the original station's row would misattribute it).
 _RE_HEARD_LEVEL = re.compile(r"^(?:Digipeater )?(\S+)(?: \(probably (\S+)\))? audio level = (\d+)")
 # How recent a heard_packets row must be to still accept a correlated signal level.
 _HEARD_LEVEL_CORRELATION_WINDOW_S = 5
@@ -403,9 +403,8 @@ class PacketLog:
         if my_call and callsign.split("-")[0].upper() == my_call.split("-")[0]:
             return  # our own transmission, not a heard station
         if not log_settings.is_enabled("heard_stations"):
-            # Not just skipping the DB write: heard_stations()/last_heard() read straight from this
-            # table now, so skipping the write is what makes the live list/map/e-ink page show up as
-            # disabled too, not just their history.
+            # heard_stations()/last_heard() read straight from this table, so skipping the write here
+            # disables the live list/map/e-ink page along with the history.
             return
 
         heard_at = time.time()

@@ -76,7 +76,7 @@ function parseMaidenhead(raw) {
     lonSize = 2 / 24;
     latSize = 1 / 24;
   }
-  // Center of the resolved cell, not its SW corner.
+  // Shifts to the center of the resolved cell, half a cell size right and up from its SW corner.
   lon += lonSize / 2;
   lat += latSize / 2;
   return { lat, lon };
@@ -413,7 +413,7 @@ function hideHelp() {
   helpOverlay.classList.add('hidden');
 }
 
-// innerHTML, not textContent: help text is static wizard copy, some of it lists
+// Sets innerHTML: help text is static wizard copy, some of it markup like lists
 function showHelp(text) {
   helpBoxText.innerHTML = text;
   helpOverlay.classList.remove('hidden');
@@ -533,9 +533,9 @@ function restoreBeaconFields(prefix, saved) {
   }
 }
 
-// var, not let: renderEinkTab() in each page's own script reassigns this directly
+// Declared with var: renderEinkTab() in each page's own script reassigns this directly
 // (`einkPages = ...`), and only var/function declarations are visible as true globals
-// across separate <script> tags — a top-level let here wouldn't be reachable from there.
+// across separate <script> tags.
 var einkPages = [];
 
 function renderEinkPageLists() {
@@ -655,8 +655,8 @@ function renderRadioWriteProgress(el, status) {
   let label = RADIO_WRITE_PHASE_LABELS[phase] || phase;
   let fillHtml;
   if (phase === 'programming' && status.progress) {
-    // Real progress: blocks actually written so far, not a guessed duration (the settle delay
-    // folded into this phase has no fixed length Direwolf-side, so this just holds near 100% then).
+    // Progress reflects blocks actually written so far. The settle delay folded into this phase
+    // has no fixed length Direwolf-side, so it just holds near 100% during that part.
     const [done, total] = status.progress;
     const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
     label += ` (${Math.round(pct)}%)`;

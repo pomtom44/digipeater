@@ -3,7 +3,7 @@
 # wizard. Root-only actions (editing /etc/default/gpsd, chrony config,
 # system timezone) that the app itself can't do as a normal user, invoked
 # via a sudoers NOPASSWD rule scoped to exactly this script path
-# (see install.sh), not blanket root access.
+# (see install.sh).
 #
 # Deliberately does NOT touch direwolf.conf or any APRS beacon position
 # source: that's services/direwolf_config.py's job, called separately from
@@ -65,8 +65,8 @@ fi
 
 # ── System time sync from GPS ──
 # No PPS wiring in this project (see PINOUT.md), so NMEA-over-SHM time is
-# only accurate to ~0.2-0.5s, plenty for a digipeater's own clock, not a
-# precision reference. Still genuinely useful: it's the only time source
+# only accurate to ~0.2-0.5s, plenty for a digipeater's own clock.
+# Still genuinely useful: it's the only time source
 # available at all for a station deployed somewhere with no internet.
 if [ "$TIME_SYNC" = "on" ] && [ "$DEVICE" != "none" ]; then
     cat > "$CHRONY_GPS_CONF" <<EOF

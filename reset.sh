@@ -116,7 +116,7 @@ sudo raspi-config nonint do_spi 1
 ok "SPI disabled"
 
 # ── Re-block WiFi radio ───────────────────────
-# Restores the soft-blocked state install.sh's WiFi-country step lifted, WiFi only, not ethernet.
+# Restores the soft-blocked state install.sh's WiFi-country step lifted; scoped to WiFi, leaving ethernet untouched.
 info "Re-blocking WiFi radio..."
 sudo rfkill block wifi
 ok "WiFi radio re-blocked"

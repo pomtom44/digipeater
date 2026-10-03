@@ -121,7 +121,8 @@ async def _wait_for_gps_fix_impl(gps_config: dict) -> tuple[bool, str | None]:
     while True:
         status = await gps.get_status()
         if not status.get("available"):
-            # gpsd itself isn't reachable, not just "no fix yet"; fail immediately rather than polling.
+            # status unavailable means gpsd itself is unreachable, a different condition from simply
+            # having no fix yet; fail immediately -- polling here would just wait for a fix that never arrives.
             return False, status.get("reason", "GPS not available")
         if status.get("has_fix"):
             return True, None
@@ -131,7 +132,7 @@ async def _wait_for_gps_fix_impl(gps_config: dict) -> tuple[bool, str | None]:
         await asyncio.sleep(GPS_FIX_POLL_INTERVAL_S)
 
 
-# Consecutive polls of a steady "active" state needed to confirm Direwolf has actually settled, not just forked.
+# Consecutive polls of a steady "active" state needed to confirm Direwolf has fully settled after forking.
 DIREWOLF_STARTUP_CONFIRM_S = 8
 DIREWOLF_STARTUP_POLL_INTERVAL_S = 1
 
@@ -160,7 +161,7 @@ async def _supervise_direwolf_startup(attempts: int, delay_s: int) -> dict:
             if consecutive_active >= DIREWOLF_STARTUP_CONFIRM_S:
                 return {"ok": True, "reason": None, "simulated": False}
         else:
-            # activating/deactivating: mid-retry-cycle, not a failure by itself.
+            # activating/deactivating is a normal mid-retry-cycle state.
             consecutive_active = 0
     return {
         "ok": False,

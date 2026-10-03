@@ -629,7 +629,7 @@
         const ok = await confirmModal(`${wantRunning ? 'Start' : 'Stop'} Direwolf?`);
         if (!ok) return;
       }
-      // Failure surfaces via the badge's error state and log modal, not text here.
+      // Failure surfaces via the badge's error state and log modal.
       try {
         await fetch(`/api/system/direwolf/${wantRunning ? 'start' : 'stop'}`, { method: 'POST' });
       } catch (e) {
@@ -652,7 +652,7 @@
       // "simulated" means no real direwolf.service exists yet; an in-memory stand-in for testing the UX.
       const stateLabel = DIREWOLF_STATE_LABELS[status.state] || status.state || 'Standby';
       const label = 'System: ' + stateLabel + (status.simulated ? ' (sim)' : '');
-      // Error detail lives in the log modal (showDirewolfLogs), not here.
+      // Error detail lives in the log modal, opened via showDirewolfLogs.
       const title = status.state === 'error'
         ? 'Click to view logs'
         : status.simulated ? 'No direwolf.service installed yet. This toggles an in-memory simulated state for UI testing only.' : '';
@@ -732,7 +732,7 @@
         return;
       }
       card.classList.remove('hidden');
-      // RF and IGate beacons are independently configured, not a shared block.
+      // RF and IGate beacons each keep their own config block.
       const rfBeacon = aprs.rf_beacon || {};
       const igBeacon = aprs.igate_beacon || {};
       const rfEnabled = aprs.digipeat_mode === 'digipeater' && !!rfBeacon.enabled;

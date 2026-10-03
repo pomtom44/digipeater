@@ -38,8 +38,8 @@ if [ "$AUTORESTART" = "on" ]; then
     # StartLimitBurst counts every start, the initial one plus each
     # auto-restart, so this many total attempts matches "ATTEMPTS" the way
     # the Startup tab describes it. StartLimitIntervalSec is a SLIDING
-    # window (systemd prunes start timestamps older than this before
-    # counting), not a fixed budget: it has to comfortably outlast the
+    # window: systemd prunes start timestamps older than this before
+    # counting, so it has to comfortably outlast the
     # time it actually takes to accumulate ATTEMPTS starts (each
     # DELAY_S apart), or the oldest attempt ages back out of the window
     # just as fast as new ones arrive and the burst count never climbs
@@ -48,9 +48,9 @@ if [ "$AUTORESTART" = "on" ]; then
     # (DELAY_S+5) was tried first and was too tight, a real crash loop
     # went 8+ restarts deep before finally hitting systemd's own
     # "repeated too quickly" fallback instead of stopping at ATTEMPTS).
-    # +1 attempt and +10s per gap is deliberate slack, not a tight
-    # estimate, so normal timing jitter can't push it over the edge
-    # again the way the tighter formula did.
+    # +1 attempt and +10s per gap is deliberate slack, sized so normal
+    # timing jitter can't push it over the edge again the way the
+    # tighter formula did.
     INTERVAL=$(( (ATTEMPTS + 1) * (DELAY_S + 10) ))
     cat > "$DROPIN_DIR/override.conf" <<EOF
 [Unit]

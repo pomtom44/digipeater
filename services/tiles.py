@@ -108,8 +108,8 @@ class RegionDownloader:
         self._bounds = bounds
         self._zoom_max = zoom_max
         self._output_path = output_path
-        # Extraction writes here, not directly to output_path; see run()'s
-        # atomic-rename comment below.
+        # Extraction writes to this temp path; run() renames it onto output_path atomically once
+        # complete, see the comment there.
         self._tmp_path = output_path.with_name(output_path.name + ".part")
         self._active = False
         self._done = False

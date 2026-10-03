@@ -11,7 +11,7 @@ DEFAULT_DC_PIN = 25
 DEFAULT_CS_PIN = 8
 DEFAULT_BUSY_PIN = 24
 
-# relay_pin defaults to GPIO 27, not 17, to avoid conflicting with RST_PIN.
+# relay_pin defaults to GPIO 27, clear of RST_PIN's GPIO 17.
 RST_PIN  = DEFAULT_RST_PIN
 DC_PIN   = DEFAULT_DC_PIN
 CS_PIN   = DEFAULT_CS_PIN

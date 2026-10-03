@@ -561,7 +561,7 @@
       font-weight: 700;
       border-radius: 4px;
     }
-    /* Needs to beat .symbol-badge-inline on specificity, not rule order, since they're otherwise equal. */
+    /* Written with higher specificity than .symbol-badge-inline, since the two rules are otherwise equal in order. */
     .symbol-badge-inline.hidden { display: none; }
     .symbol-select {
       flex: 1 1 160px;
@@ -848,7 +848,7 @@
       192.8, 196.6, 199.5, 203.5, 206.5, 210.7, 218.1, 225.7, 229.1,
       233.6, 241.8, 250.3, 254.1,
     ];
-    // Fixed GPIO PTT pin, not wizard-editable, see PINOUT.md
+    // Fixed GPIO PTT pin, see PINOUT.md
     const RADIO_DEFAULT_PTT_GPIO_PIN = 22;
     // Physical header pin for RADIO_DEFAULT_PTT_GPIO_PIN, shown in the dropdown label only
     const RADIO_DEFAULT_PTT_GPIO_PHYSICAL_PIN = 15;
@@ -1012,7 +1012,14 @@
         devices.forEach(d => {
           addOption(select, d.id, d.description ? `${d.name}: ${d.description}` : d.name);
         });
-        if (wizardData.radio?.audio_device) select.value = wizardData.radio.audio_device;
+        if (wizardData.radio?.audio_device) {
+          select.value = wizardData.radio.audio_device;
+        } else {
+          // Default to a device with a mic/capture input over "None" -- that's the one actually
+          // usable for RX, and most setups only have the one radio-interface adapter plugged in.
+          const withInput = devices.find(d => d.has_input);
+          if (withInput) select.value = withInput.id;
+        }
         updateAudioInputWarning(devices);
       } catch (e) {
         updateAudioInputWarning([]);
@@ -1056,11 +1063,17 @@
       try {
         const res = await fetch('/api/hardware/serial-devices');
         const data = await res.json();
-        (data.devices || []).forEach(d => {
+        const devices = data.devices || [];
+        devices.forEach(d => {
           const label = d.description ? `${d.device} (${d.description})` : d.device;
           addOption(select, d.device, label);
         });
-        if (wizardData.radio?.programmer_port) select.value = wizardData.radio.programmer_port;
+        if (wizardData.radio?.programmer_port) {
+          select.value = wizardData.radio.programmer_port;
+        } else if (devices.length > 0) {
+          // A detected cable beats "None" by default -- most setups only have the one plugged in.
+          select.value = devices[0].device;
+        }
       } catch (e) {
         // "None" option and radio model picker still work without this; port just won't be pre-populated
       }
@@ -1085,7 +1098,7 @@
           busy_lockout: document.getElementById('radio-busy-lockout').checked,
         },
       };
-      // Fixed wiring, not a wizard choice. See RADIO_DEFAULT_PTT_GPIO_PIN.
+      // Fixed wiring. See RADIO_DEFAULT_PTT_GPIO_PIN.
       if (pttMethod === 'gpio') {
         radio.ptt_gpio_pin = RADIO_DEFAULT_PTT_GPIO_PIN;
       }
@@ -1421,7 +1434,7 @@
         // Only shown once something actually transmits a beacon with a position on it
         stationIconField.classList.toggle('hidden', !(isDigi || igateTx));
 
-        // Fully hidden, not just greyed out like the RF/IGate Beacon subsections below
+        // Fully hidden (the RF/IGate Beacon subsections below only grey out)
         digipeatSection.classList.toggle('hidden', !isDigi);
 
         rfEnabled.disabled = !isDigi;
@@ -1886,7 +1899,7 @@
     let mapStatusPollTimer = null;
     // Module-level so showStep() can tear down the WebGL context on navigation
     let currentRegionMap = null;
-    // Registered once globally on first use, not per-render
+    // Registered once globally on first use
     let pmtilesProtocolRegistered = false;
     // Module-level so saveMapStep() can read the region after renderMapStep()'s closure has exited
     let mapRegionBounds = null;
@@ -2098,7 +2111,7 @@
         }
       });
 
-      // Progress is read from the growing size of the output file, not tile counts
+      // Progress is read from the growing size of the output file
       function pollDownloadStatus() {
         mapStatusPollTimer = setInterval(async () => {
           try {

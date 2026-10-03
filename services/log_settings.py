@@ -1,10 +1,10 @@
 """Which database log types are enabled, cached in memory and refreshed whenever config.yaml's
 "logging" section changes (applied the same way as services/gpsconfig.py, restart_policy.py, etc).
 Lets someone who just wants a digipeater, no history, turn off the log types they don't want -- the
-capture itself is skipped, not just the DB write, so a disabled type's live features go with it."""
+capture itself is skipped along with the DB write, so a disabled type's live features go with it."""
 
-# key -> (default enabled, whether a live feature depends on the live-tracked state itself, not just
-# its history -- surfaced by the frontend/API as "disabled because logging is off" rather than "empty").
+# key -> (default enabled, whether a live feature reads the live-tracked state itself, so the
+# frontend/API can report "disabled because logging is off" as a distinct state from "empty").
 LOG_TYPES: dict[str, dict] = {
     "heard_stations": {
         "label": "Heard stations",
