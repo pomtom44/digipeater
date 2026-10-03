@@ -652,12 +652,18 @@ function renderRadioWriteProgress(el, status) {
     _radioProgressState.phaseStartedAt = Date.now();
   }
   if (!phase) return;
-  const label = RADIO_WRITE_PHASE_LABELS[phase] || phase;
-  const knownDurationS = phase === 'powering_on' ? status.boot_delay_s : null;
+  let label = RADIO_WRITE_PHASE_LABELS[phase] || phase;
   let fillHtml;
-  if (knownDurationS) {
+  if (phase === 'programming' && status.progress) {
+    // Real progress: blocks actually written so far, not a guessed duration (the settle delay
+    // folded into this phase has no fixed length Direwolf-side, so this just holds near 100% then).
+    const [done, total] = status.progress;
+    const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
+    label += ` (${Math.round(pct)}%)`;
+    fillHtml = `<div class="progress-bar-fill" style="width: ${pct}%"></div>`;
+  } else if (phase === 'powering_on' && status.boot_delay_s) {
     const elapsedS = (Date.now() - _radioProgressState.phaseStartedAt) / 1000;
-    const pct = Math.min(95, (elapsedS / knownDurationS) * 100);
+    const pct = Math.min(95, (elapsedS / status.boot_delay_s) * 100);
     fillHtml = `<div class="progress-bar-fill" style="width: ${pct}%"></div>`;
   } else {
     fillHtml = '<div class="progress-bar-fill indeterminate"></div>';

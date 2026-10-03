@@ -183,18 +183,30 @@ async def main() -> None:
         )
         rotation.start()
 
-        await gpsconfig.apply(config.get("gps", {}))
-        await restart_policy.apply(config.get("startup", {}))
+        # Backgrounded, not awaited here: this can take anywhere from seconds (radio programming,
+        # relay boot delay) to minutes (a slow GPS fix), and none of it needs to finish before the
+        # web server starts -- the dashboard's own Direwolf-status polling already shows "waiting_gps"
+        # /"starting" live, which only works if the page is actually reachable while that's happening.
+        async def _start_services() -> None:
+            try:
+                await gpsconfig.apply(config.get("gps", {}))
+                await restart_policy.apply(config.get("startup", {}))
 
-        # Regenerated fresh on every boot so a manually edited config.yaml still takes effect.
-        try:
-            direwolf_config.write(config)
-        except OSError as e:
-            logger.error("Failed to write direwolf.conf: %s", e)
-        want_running = (config.get("startup", {}) or {}).get("autostart", True)
-        result = await system.set_direwolf_running(want_running, config)
-        if not result["ok"]:
-            logger.error("Failed to %s direwolf: %s", "start" if want_running else "stop", result["reason"])
+                # Regenerated fresh on every boot so a manually edited config.yaml still takes effect.
+                try:
+                    direwolf_config.write(config)
+                except OSError as e:
+                    logger.error("Failed to write direwolf.conf: %s", e)
+                want_running = (config.get("startup", {}) or {}).get("autostart", True)
+                result = await system.set_direwolf_running(want_running, config)
+                if not result["ok"]:
+                    logger.error("Failed to %s direwolf: %s", "start" if want_running else "stop", result["reason"])
+            except Exception as e:
+                logger.error("Startup service sequence failed: %s", e)
+
+        # Assigned (not fire-and-forget) so the task object stays referenced for main()'s whole
+        # lifetime -- otherwise nothing guarantees it isn't garbage-collected before it gets to run.
+        startup_services_task = asyncio.create_task(_start_services())  # noqa: F841
 
     app = create_app(display_driver, first_boot, network_status, rotation, packets)
 

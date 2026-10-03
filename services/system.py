@@ -231,13 +231,16 @@ async def _set_direwolf_running_impl(running: bool, config: dict | None = None) 
 
             await relay.power_on()
 
-            prog_result = await radio_programmer.program_channel(radio_config)
+            # Only writes if the radio config actually changed since the last successful write --
+            # the manual Write-to-radio button (system.write_radio) is what forces a rewrite.
+            prog_result = await radio_programmer.program_channel_if_changed(radio_config)
             if not prog_result["ok"]:
                 await relay.power_off()
                 _last_error = f"Radio programming failed: {prog_result['reason']}"
                 logger.error(_last_error)
                 return {"ok": False, "reason": _last_error}
-            await asyncio.sleep(radio_programmer.PROGRAM_SETTLE_DELAY_S)
+            if not prog_result.get("skipped"):
+                await asyncio.sleep(radio_programmer.PROGRAM_SETTLE_DELAY_S)
 
         result = await _run_systemctl(action)
         if running and result["ok"] and not result.get("simulated"):
@@ -265,14 +268,19 @@ async def _set_direwolf_running_impl(running: bool, config: dict | None = None) 
 
 # Polled by the frontend's progress bar while write_radio() is in flight; None when idle.
 _radio_write_phase: str | None = None
+# (blocks_done, blocks_total) during the "programming" phase, updated from the driver's worker
+# thread (see radio_programmer.program_channel's on_progress); None outside that phase.
+_radio_write_progress: tuple[int, int] | None = None
 
 
 def get_radio_write_status() -> dict:
     """Read-only progress snapshot for the frontend to poll during write_radio(); includes the fixed
-    boot delay it knows about up front so a determinate bar can be drawn for that phase."""
+    boot delay it knows about up front so a determinate bar can be drawn for that phase, and the
+    real blocks-written count for the programming phase."""
     return {
         "phase": _radio_write_phase,
         "boot_delay_s": relay.BOOT_DELAY_S,
+        "progress": _radio_write_progress,
     }
 
 
@@ -293,7 +301,7 @@ async def _write_radio_impl(radio_config: dict) -> dict:
     """Powers the relay on if the radio is off, or stops Direwolf first (leaving the radio powered) if
     it's already running, then programs and settles. Returns was_running so the caller can offer to
     restart Direwolf or power the radio back off."""
-    global _radio_write_phase
+    global _radio_write_phase, _radio_write_progress
     if not radio_config.get("model"):
         return {"ok": False, "reason": "Pick a radio model first.", "was_running": False}
     if not radio_programmer.can_program(radio_config["model"]):
@@ -315,7 +323,14 @@ async def _write_radio_impl(radio_config: dict) -> dict:
             await relay.power_on()
 
         _radio_write_phase = "programming"
-        prog_result = await radio_programmer.program_channel(radio_config)
+
+        def _on_progress(done: int, total: int) -> None:
+            # Runs on the driver's worker thread; a plain tuple reassignment is enough for a value
+            # that's only ever polled for display, no lock needed.
+            global _radio_write_progress
+            _radio_write_progress = (done, total)
+
+        prog_result = await radio_programmer.program_channel(radio_config, on_progress=_on_progress)
         # Still settles after writing, just folded into the "programming" phase rather than its own
         # step -- the UI shows one continuous "Writing to radio" instead of a separate settling label.
         await asyncio.sleep(radio_programmer.PROGRAM_SETTLE_DELAY_S)
@@ -329,6 +344,7 @@ async def _write_radio_impl(radio_config: dict) -> dict:
         return {"ok": True, "reason": None, "was_running": was_running}
     finally:
         _radio_write_phase = None
+        _radio_write_progress = None
 
 
 async def power_off_radio() -> None:

@@ -29,6 +29,18 @@ _DIREWOLF_UNIT = "direwolf"
 _RE_RF_XMIT = re.compile(r"^\[\d[HL][^\]]*\]\s*([^>\s]+>.*)$")
 _RE_IG_XMIT = re.compile(r"^\[ig\]\s*([^>\s]+>.*)$")
 
+# Direwolf's own per-packet "heard" summary line (src/direwolf.c), printed right after a decoded
+# packet unless started with "-q h". e.g. "N8VIM audio level = 27   [NONE]" or, when repeated through
+# a WIDEn-0 alias, "WIDE2-1 (probably N3LEE-4) audio level = 28(10/6)   [NONE]   __|||||||". Only the
+# callsign and the leading number matter here -- the rest (DCD state, retry/spectrum display) isn't
+# used. When digipeated through a *named* repeater (not a generic WIDEn alias), "heard" is the
+# repeater's own callsign, not the original source already logged via the KISS path -- correlation
+# below just won't find a row to match in that case, which is correct (attaching the repeater's own
+# signal level to the original station's row would misattribute it).
+_RE_HEARD_LEVEL = re.compile(r"^(?:Digipeater )?(\S+)(?: \(probably (\S+)\))? audio level = (\d+)")
+# How recent a heard_packets row must be to still accept a correlated signal level.
+_HEARD_LEVEL_CORRELATION_WINDOW_S = 5
+
 _MAX_HEARD_STATIONS = 50
 _SIGNAL_TEST_TTL_S = 900
 # Backoff before reconnecting journalctl/KISS after either drops.
@@ -127,7 +139,7 @@ class PacketLog:
         rows = await db.fetchall(
             """
             SELECT h.callsign, h.heard_at, h.symbol_table, h.symbol, h.latitude, h.longitude,
-                   h.comment, agg.count
+                   h.comment, h.signal_level, agg.count
             FROM heard_packets h
             INNER JOIN (
                 SELECT callsign, MAX(id) AS latest_id, COUNT(*) AS count
@@ -147,6 +159,7 @@ class PacketLog:
                 "latitude": r["latitude"],
                 "longitude": r["longitude"],
                 "comment": r["comment"],
+                "signal_level": r["signal_level"],
                 "count": r["count"],
                 "seconds_ago": round(now - r["heard_at"]),
             }
@@ -164,6 +177,7 @@ class PacketLog:
             "latitude": row["latitude"],
             "longitude": row["longitude"],
             "comment": row["comment"],
+            "signal_level": row["signal_level"],
             "seconds_ago": round(time.time() - row["heard_at"]),
         }
 
@@ -308,10 +322,39 @@ class PacketLog:
                 pass
         return "rf_beacon"
 
+    async def _correlate_heard_level(self, match: "re.Match") -> None:
+        """Attaches Direwolf's own audio-level number to the heard_packets row the KISS path already
+        logged for the same packet, matched by callsign within a short recency window. No match (a
+        named-digipeater repeat, or the KISS decode never landing) just leaves signal_level NULL."""
+        if not log_settings.is_enabled("heard_stations"):
+            return
+        heard_call = match.group(2) or match.group(1)
+        level = int(match.group(3))
+        cutoff = time.time() - _HEARD_LEVEL_CORRELATION_WINDOW_S
+        try:
+            await db.execute(
+                """
+                UPDATE heard_packets SET signal_level = ?
+                WHERE id = (
+                    SELECT id FROM heard_packets WHERE callsign = ? AND heard_at > ?
+                    ORDER BY heard_at DESC LIMIT 1
+                )
+                """,
+                (level, heard_call, cutoff),
+            )
+        except Exception as e:
+            logger.error("Failed to correlate signal level for %s: %s", heard_call, e)
+
     async def _handle_log_line(self, line: str, my_call: str) -> None:
         """journalctl path: matches Direwolf's own TX log line for any frame it transmits -- a beacon,
         a DIGIPEAT repeat of someone else's packet, an RF packet gated to APRS-IS, or anything else
-        handed to it, e.g. over KISS -- not just ones Direwolf happens to send under our own callsign."""
+        handed to it, e.g. over KISS -- not just ones Direwolf happens to send under our own callsign.
+        Also matches Direwolf's per-packet "heard" summary line, which carries its own audio level."""
+        heard_match = _RE_HEARD_LEVEL.match(line)
+        if heard_match:
+            await self._correlate_heard_level(heard_match)
+            return
+
         if not my_call:
             return
         call_root = my_call.split("-")[0].upper()

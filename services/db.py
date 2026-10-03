@@ -143,6 +143,13 @@ _MIGRATIONS: list[tuple[int, list[str]]] = [
         "CREATE INDEX idx_system_events_at ON system_events (at)",
         "CREATE INDEX idx_system_events_type ON system_events (type)",
     ]),
+    (9, [
+        # Direwolf's own "audio level" for the packet, correlated in from its journald "heard" line
+        # (services/packet_log.py) after the fact -- not available from the KISS-decoded packet
+        # itself, which carries no signal-quality metadata. NULL when correlation didn't find a match
+        # (e.g. a packet heard via a named digipeater rather than directly from the source).
+        "ALTER TABLE heard_packets ADD COLUMN signal_level INTEGER",
+    ]),
 ]
 
 _connection: sqlite3.Connection | None = None

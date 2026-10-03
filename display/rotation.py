@@ -137,6 +137,13 @@ class RotationManager:
         self._pages = pages
         self._index = 0
 
+    async def show_message(self, title: str, rows: list[tuple[str, str]]) -> None:
+        """Stops rotation and renders a one-off status page -- e.g. a reboot notice -- that stays on
+        screen afterward since nothing will tick past it. Not meant to be resumed from; the process
+        is expected to exit/reboot shortly after this is called."""
+        self.stop()
+        await self._render(self._template.draw_status_page, title, rows)
+
     async def _loop(self) -> None:
         while True:
             try:

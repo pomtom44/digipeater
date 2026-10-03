@@ -460,6 +460,8 @@ def create_app(
         # Post-setup equivalent of /api/setup/complete's reboot: the config page's "Reboot now" button.
         _require_login_for_action(request)
         async def _delayed_reboot():
+            if rotation is not None:
+                await rotation.show_message("Rebooting", [("Status:", "Restarting now...")])
             await asyncio.sleep(1.5)
             await system.reboot()
         asyncio.create_task(_delayed_reboot())
@@ -611,6 +613,17 @@ def create_app(
         )
         # Reboot fires in the background with a short delay so the response reaches the client first.
         async def _delayed_reboot():
+            # No RotationManager exists yet during first boot (it's only created on a normal boot),
+            # so render directly via the already-running display_driver instead.
+            try:
+                from display.templates import get_template
+                template = get_template(display_cfg.get("model", ""))
+                image = await asyncio.to_thread(
+                    template.draw_status_page, display_driver, "Rebooting", [("Status:", "Restarting now...")],
+                )
+                await asyncio.to_thread(display_driver.show, image)
+            except Exception as e:
+                logger.error("Failed to show reboot message on display: %s", e)
             await asyncio.sleep(1.5)
             await system.reboot()
         asyncio.create_task(_delayed_reboot())

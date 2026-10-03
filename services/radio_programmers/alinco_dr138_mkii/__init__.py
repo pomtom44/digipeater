@@ -28,6 +28,16 @@ _EXPECTED_ID = "DJ-138"
 _CHANNEL0 = 0x2000  # channel 0's record start; this radio only ever targets channel 0
 _TIME_OUT_TIMER_OFFSET = 0x022c
 
+# Boots to memory (channel) mode on channel 0 rather than the factory default of VFO/frequency mode,
+# since this driver only ever programs channel 0 -- there's nothing else to tune to. Display Mode and
+# VFO/MR are set together: the radio's own menu auto-forces VFO/MR to MR when Display Mode=Channel,
+# but that's UI-side logic, not guaranteed to apply to a directly-written image, so both are set here.
+_DISPLAY_MODE_OFFSET = 0x0220
+_VFO_MR_OFFSET = 0x0221
+_MR_CHANNEL_OFFSET = 0x0222
+_DISPLAY_MODE_CHANNEL = 0x01
+_VFO_MR_MR = 0x01
+
 _STEP_VALUES = {
     "2.5K": 0x00, "5K": 0x01, "6.25K": 0x02, "8.33K": 0x03, "10K": 0x04,
     "12.5K": 0x05, "20K": 0x06, "25K": 0x07, "30K": 0x08, "50K": 0x09,
@@ -83,6 +93,10 @@ def _build_overrides(radio_config: dict) -> dict:
     overrides = {
         _CHANNEL0 + 0x00: _encode_frequency(freq_hz),
         _CHANNEL0 + 0x13: _encode_name(name),
+        # Boot to memory mode on channel 0, not VFO/frequency mode (see the constants above).
+        _DISPLAY_MODE_OFFSET: bytes([_DISPLAY_MODE_CHANNEL]),
+        _VFO_MR_OFFSET: bytes([_VFO_MR_MR]),
+        _MR_CHANNEL_OFFSET: bytes([0x00]),
     }
 
     direction_bit = 0x01 if advanced.get("duplex_direction") == "+" else 0x00
@@ -172,8 +186,12 @@ def _handshake(ser: serial.Serial) -> str:
     return id_reply[1:8].decode("ascii", errors="replace").rstrip("\x00")
 
 
-def program_sync(port: str, image: bytearray) -> None:
-    """Blocking; runs in a thread-pool executor, see radio_programmer.program_channel()."""
+_TOTAL_BLOCKS = (_WRITE_END - _WRITE_START) // _BLOCK_LEN + 1
+
+
+def program_sync(port: str, image: bytearray, on_progress=None) -> None:
+    """Blocking; runs in a thread-pool executor, see radio_programmer.program_channel(). If given,
+    on_progress(blocks_done, blocks_total) is called after each block write."""
     with serial.Serial(port=port, baudrate=_SERIAL_BAUD, timeout=_SERIAL_TIMEOUT) as ser:
         ser.reset_input_buffer()
         ser.reset_output_buffer()
@@ -181,10 +199,14 @@ def program_sync(port: str, image: bytearray) -> None:
         if _EXPECTED_ID not in model:
             raise IOError(f"radio ID reply {model!r} doesn't match expected {_EXPECTED_ID!r}")
         addr = _WRITE_START
+        done = 0
         while addr <= _WRITE_END:
             offset = addr - _FACTORY_IMAGE_BASE
             _write_block(ser, addr, bytes(image[offset:offset + _BLOCK_LEN]))
             addr += _BLOCK_LEN
+            done += 1
+            if on_progress:
+                on_progress(done, _TOTAL_BLOCKS)
         ser.write(_END_CMD)
         ser.flush()
         _expect(ser, _END_CMD + bytes([_ACK]), "END echo+ack")
