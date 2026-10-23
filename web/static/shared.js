@@ -769,3 +769,52 @@ function createAudioLevelMeter(containerEl, getDeviceId) {
   _activeAudioLevelMeter = { stop };
   return _activeAudioLevelMeter;
 }
+
+// ── Line-out -> mic-in loopback clipping test (radio setup, right after the audio level meter above) ──
+// A one-shot test, not a continuous poll like the meter above -- it actively plays a tone, so running
+// it is a deliberate action rather than passive monitoring. See services/audio_level.py's
+// test_loopback for why clipping is judged by crest factor (peak/RMS) rather than raw sample level.
+function createLoopbackTest(containerEl, getDeviceId) {
+  containerEl.innerHTML = `
+    <button type="button" class="loopback-test-btn">Test line-out for clipping</button>
+    <p class="hint">Jumper the headphone/line-out jack to the mic-in jack first (temporarily, just for this test) -- confirms the Pi's own audio output isn't already distorted before it's wired into the radio.</p>
+    <div class="loopback-test-result"></div>
+  `;
+  const btn = containerEl.querySelector('.loopback-test-btn');
+  const resultEl = containerEl.querySelector('.loopback-test-result');
+
+  btn.addEventListener('click', async () => {
+    const device = getDeviceId();
+    if (!device) {
+      resultEl.textContent = 'Select an audio device first.';
+      resultEl.style.color = 'var(--status-warning)';
+      return;
+    }
+    btn.disabled = true;
+    resultEl.textContent = 'Testing...';
+    resultEl.style.color = '';
+    try {
+      const res = await fetch('/api/radio/audio_loopback_test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        resultEl.textContent = data.reason || 'Error running loopback test';
+        resultEl.style.color = 'var(--status-warning)';
+      } else if (data.clipped) {
+        resultEl.textContent = `Clipped (crest factor ${data.crest_factor}, expected ~1.41 clean) -- lower the volume before wiring into the radio.`;
+        resultEl.style.color = 'var(--status-critical)';
+      } else {
+        resultEl.textContent = `Clean (crest factor ${data.crest_factor}) -- no clipping detected.`;
+        resultEl.style.color = 'var(--status-good)';
+      }
+    } catch (e) {
+      resultEl.textContent = 'Error running loopback test';
+      resultEl.style.color = 'var(--status-warning)';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}

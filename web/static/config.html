@@ -923,6 +923,7 @@
                 <br><button type="button" id="btn-audio-warning-ack" style="margin-top: 8px;">Yes, I understand</button>
               </p>
               <div id="radio-audio-level-wrap" style="margin-top: 10px;"></div>
+              <div id="radio-loopback-test-wrap" style="margin-top: 10px;"></div>
             </div>
             <div class="field">
               <label for="radio-power">TX power level</label>
@@ -1041,6 +1042,10 @@
       loadSerialPttOptions();
       createAudioLevelMeter(
         document.getElementById('radio-audio-level-wrap'),
+        () => document.getElementById('radio-audio').value,
+      );
+      createLoopbackTest(
+        document.getElementById('radio-loopback-test-wrap'),
         () => document.getElementById('radio-audio').value,
       );
     }

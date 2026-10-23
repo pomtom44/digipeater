@@ -259,6 +259,16 @@ def create_app(
         before a signal shows up."""
         return await audio_level.read_level(device)
 
+    @app.post("/api/radio/audio_loopback_test")
+    async def radio_audio_loopback_test(request: Request):
+        """The radio setup page's line-out clipping check, run right after the audio level meter above:
+        jumper headphone/line-out to mic-in, play a known tone and record it back, and flag clipping --
+        confirms the Pi's own audio output isn't already distorted before it's ever wired into the radio."""
+        _require_login_for_action(request)
+        body = await request.json()
+        device = (body.get("device") or "").strip()
+        return await audio_level.test_loopback(device, device)
+
     @app.get("/api/hardware/serial-devices")
     async def serial_devices():
         return {"devices": await hardware.list_serial_devices()}
