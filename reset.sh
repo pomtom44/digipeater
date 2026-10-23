@@ -6,7 +6,7 @@ set -e
 # Full uninstall, reverses everything install.sh sets up, back to a clean state.
 # ─────────────────────────────────────────────
 
-RESET_SCRIPT_VERSION="2026-10-24.1"
+RESET_SCRIPT_VERSION="2026-10-24.2"
 
 INSTALL_DIR="/opt/digipeater"
 SERVICE_NAME="digipeater"
@@ -118,6 +118,16 @@ PYEOF
         ok "GPIO outputs turned off ($GPIO_OUT)"
     elif GPIO_OUT="$(sudo "$GPIO_PY" "$GPIO_SCRIPT" "$INSTALL_DIR/config.yaml" 2>&1)"; then
         ok "GPIO outputs turned off, needed sudo ($GPIO_OUT)"
+    elif command -v raspi-gpio >/dev/null 2>&1; then
+        # RPi.GPIO missing entirely (e.g. python3-rpi.gpio already purged by an earlier reset run) --
+        # raspi-gpio talks to the GPIO registers directly, no Python module needed. Can't read a
+        # custom relay_pin override from config.yaml this way, so this only covers the default pin.
+        info "RPi.GPIO unavailable ($GPIO_OUT), falling back to raspi-gpio for the default relay pin (27)"
+        if sudo raspi-gpio set 27 op dl; then
+            ok "Relay pin 27 driven low via raspi-gpio"
+        else
+            info "raspi-gpio fallback also failed, check wiring/relay manually"
+        fi
     else
         info "GPIO cleanup failed, check wiring/relay manually: $GPIO_OUT"
     fi
