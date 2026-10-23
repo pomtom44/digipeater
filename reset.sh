@@ -6,6 +6,8 @@ set -e
 # Full uninstall, reverses everything install.sh sets up, back to a clean state.
 # ─────────────────────────────────────────────
 
+RESET_SCRIPT_VERSION="2026-10-24.1"
+
 INSTALL_DIR="/opt/digipeater"
 SERVICE_NAME="digipeater"
 VAR_DIR="/var/digipeater"
@@ -25,6 +27,7 @@ echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║      APRS Digipeater: Reset          ║"
 echo "╚══════════════════════════════════════╝"
+echo "  Script version: $RESET_SCRIPT_VERSION"
 echo ""
 
 # ── Check running as correct user ────────────
@@ -76,12 +79,14 @@ info "Turning off GPIO outputs (radio power relay, e-ink)..."
 GPIO_PY="$VENV_DIR/bin/python"
 [ -x "$GPIO_PY" ] || GPIO_PY="$(command -v python3 || true)"
 if [ -n "$GPIO_PY" ]; then
-    "$GPIO_PY" - "$INSTALL_DIR/config.yaml" <<'PYEOF' 2>/dev/null || true
+    GPIO_SCRIPT="$(mktemp)"
+    cat > "$GPIO_SCRIPT" <<'PYEOF'
 import sys
 try:
     import RPi.GPIO as GPIO
-except ImportError:
-    sys.exit(0)
+except ImportError as e:
+    print(f"RPi.GPIO not importable: {e}", file=sys.stderr)
+    sys.exit(1)
 
 relay_pin, rst_pin, dc_pin, cs_pin, busy_pin = 27, 17, 25, 8, 24
 config_path = sys.argv[1] if len(sys.argv) > 1 else None
@@ -96,7 +101,7 @@ if config_path:
         dc_pin = gpio_cfg.get("eink_dc", dc_pin)
         cs_pin = gpio_cfg.get("eink_cs", cs_pin)
         busy_pin = gpio_cfg.get("eink_busy", busy_pin)
-    except Exception:
+    except FileNotFoundError:
         pass
 
 GPIO.setmode(GPIO.BCM)
@@ -107,8 +112,16 @@ GPIO.setwarnings(False)
 GPIO.setup(relay_pin, GPIO.OUT, initial=GPIO.LOW)
 GPIO.output(relay_pin, GPIO.LOW)
 GPIO.cleanup([rst_pin, dc_pin, cs_pin, busy_pin])
+print(f"relay pin {relay_pin} driven LOW")
 PYEOF
-    ok "GPIO outputs turned off"
+    if GPIO_OUT="$("$GPIO_PY" "$GPIO_SCRIPT" "$INSTALL_DIR/config.yaml" 2>&1)"; then
+        ok "GPIO outputs turned off ($GPIO_OUT)"
+    elif GPIO_OUT="$(sudo "$GPIO_PY" "$GPIO_SCRIPT" "$INSTALL_DIR/config.yaml" 2>&1)"; then
+        ok "GPIO outputs turned off, needed sudo ($GPIO_OUT)"
+    else
+        info "GPIO cleanup failed, check wiring/relay manually: $GPIO_OUT"
+    fi
+    rm -f "$GPIO_SCRIPT"
 else
     info "No Python with RPi.GPIO found, skipping GPIO cleanup"
 fi
