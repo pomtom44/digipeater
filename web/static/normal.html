@@ -97,8 +97,22 @@
       flex-direction: column;
       background: var(--panel);
       border-right: 1px solid var(--border);
-      overflow-y: auto;
+      overflow: hidden;
       padding: 16px;
+    }
+
+    /* Flexes to fill whatever space the other cards leave, so a long heard-stations list scrolls
+       inside itself instead of pushing the auth-row buttons below the viewport. */
+    #heard-card {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    #heard-list {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
     }
 
     #map-wrap {
@@ -148,6 +162,33 @@
       font-size: 13px;
     }
     .heard-row:last-child { border-bottom: none; }
+    .heard-row { cursor: pointer; }
+    .heard-row.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 4px; }
+
+    /* maplibre-gl.css hardcodes the popup background to white with no color of its own, so text
+       would otherwise inherit --text and go invisible (white-on-white) in dark theme. */
+    .maplibregl-popup-content { color: #1a2226; }
+
+    .history-slider-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .history-slider-row label { flex-shrink: 0; }
+    .history-slider-row input[type="range"] { flex: 1; }
+
+    #gps-title { display: flex; align-items: baseline; }
+    .gps-title-pos {
+      text-transform: none;
+      letter-spacing: normal;
+      font-weight: 400;
+      color: var(--text);
+      margin-left: auto;
+      padding-left: 6px;
+    }
     .heard-icon {
       width: 20px;
       height: 20px;
@@ -273,8 +314,8 @@
     .auth-row {
       display: flex;
       gap: 8px;
-      /* Pinned to the bottom of the flex-column sidebar. */
-      margin-top: auto;
+      /* Sits at the bottom of the flex-column sidebar since #heard-card above absorbs the rest of
+         the available space. */
       padding-top: 16px;
     }
 
@@ -377,8 +418,12 @@
         <div id="beacon-stats-body"></div>
       </div>
 
-      <div class="card">
+      <div class="card" id="heard-card">
         <h2>Heard stations</h2>
+        <div class="history-slider-row">
+          <label for="history-slider">History: <span id="history-slider-label">24h</span></label>
+          <input type="range" id="history-slider" min="1" max="24" step="1" value="24">
+        </div>
         <div id="heard-list"></div>
       </div>
 
@@ -493,6 +538,202 @@
     const GPS_POLL_MS = 5000;
     const APRS_POLL_MS = 10000;
 
+    // ── Heard-station selection, shared between the heard list and the dashboard map ──
+    let selectedCallsign = null;
+    // Latest /api/aprs/heard fetch, unfiltered -- either poller (list or markers) can refresh this.
+    let allHeardStations = [];
+    // allHeardStations filtered to the history-slider window; what the list/markers/trace actually use.
+    let lastHeardStations = [];
+    let historyHours = 24;
+    // Set by initDashboardMap once the map/markers exist; station-selection helpers below no-op
+    // until then (e.g. a list click before the map finishes loading).
+    let dashboardMapInstance = null;
+    let stationMarkers = new Map(); // callsign -> { marker, el }
+    let homeLngLat = null;
+    let selectedPopup = null;
+    let selectedPopupCallsign = null;
+
+    function filterByHistory(stations) {
+      const cutoffS = historyHours * 3600;
+      return stations.filter(s => s.seconds_ago <= cutoffS);
+    }
+
+    function selectStation(callsign) {
+      selectedCallsign = (selectedCallsign === callsign) ? null : callsign;
+      applyStationSelection();
+    }
+
+    function clearSelection() {
+      if (selectedCallsign === null) return;
+      selectedCallsign = null;
+      applyStationSelection();
+    }
+
+    // Named digipeaters in station.path that we also have a position for, in path order --
+    // skipping unknown hops (generic WIDEn-N aliases included, since those never appear as a
+    // heard station's own callsign) rather than breaking the chain.
+    function knownPathHops(station) {
+      const hops = [];
+      for (const hop of (station.path || [])) {
+        const hopCall = hop.replace(/\*$/, '').toUpperCase();
+        const hopStation = lastHeardStations.find(s => s.callsign.toUpperCase() === hopCall);
+        if (hopStation && hopStation.latitude != null && hopStation.longitude != null) {
+          hops.push(hopStation);
+        }
+      }
+      return hops;
+    }
+
+    // null = no selection, every marker stays visible. Otherwise the set of callsigns that should
+    // stay visible while everything else is hidden: the selected station plus its relay chain.
+    function relevantCallsigns() {
+      if (!selectedCallsign) return null;
+      const station = lastHeardStations.find(s => s.callsign === selectedCallsign);
+      const relevant = new Set([selectedCallsign]);
+      if (station) for (const hop of knownPathHops(station)) relevant.add(hop.callsign);
+      return relevant;
+    }
+
+    function applyStationSelection() {
+      document.querySelectorAll('#heard-list .heard-row').forEach(row => {
+        row.classList.toggle('selected', row.dataset.callsign === selectedCallsign);
+      });
+      const relevant = relevantCallsigns();
+      for (const [callsign, { el }] of stationMarkers) {
+        // display:none (not opacity) so a hidden marker is fully gone rather than an invisible
+        // layer that can resurface mid-zoom/pan compositing.
+        el.style.display = (!relevant || relevant.has(callsign)) ? '' : 'none';
+      }
+      if (selectedPopup && selectedPopupCallsign !== selectedCallsign) {
+        selectedPopup.remove();
+        selectedPopup = null;
+        selectedPopupCallsign = null;
+      }
+      updateTraceLine();
+      updateStationTrack();
+    }
+
+    // Creates/repositions/removes map markers to match lastHeardStations (post history-filter) --
+    // called after every fetch and also directly by the history slider, no re-fetch needed for that.
+    function syncStationMarkers() {
+      if (!dashboardMapInstance) return;
+      const relevant = relevantCallsigns();
+      const seen = new Set();
+      for (const s of lastHeardStations) {
+        if (s.latitude == null || s.longitude == null) continue;
+        seen.add(s.callsign);
+        const lngLat = [s.longitude, s.latitude];
+        const existing = stationMarkers.get(s.callsign);
+        if (existing) {
+          existing.marker.setLngLat(lngLat);
+          existing.el.style.display = (!relevant || relevant.has(s.callsign)) ? '' : 'none';
+          continue;
+        }
+        const sEl = document.createElement('div');
+        sEl.style.cssText = 'width:28px;height:28px;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.5));cursor:pointer;';
+        sEl.innerHTML = symbolGlyphHTML(s.symbol, 28);
+        if (relevant && !relevant.has(s.callsign)) {
+          sEl.style.display = 'none';
+        }
+        sEl.addEventListener('click', (e) => {
+          e.stopPropagation(); // keep the map's own background-click handler from also clearing this
+          selectStation(s.callsign);
+          if (selectedCallsign === s.callsign) showStationPopup(s.callsign);
+        });
+        stationMarkers.set(s.callsign, {
+          marker: new maplibregl.Marker({ element: sEl }).setLngLat(lngLat).addTo(dashboardMapInstance),
+          el: sEl,
+        });
+      }
+      // Drops the marker for a callsign that fell out of the heard list (its DB row aged out, or
+      // the history slider now excludes it).
+      for (const [callsign, { marker }] of stationMarkers) {
+        if (!seen.has(callsign)) {
+          marker.remove();
+          stationMarkers.delete(callsign);
+        }
+      }
+      // The selected station itself dropped out -- clear selection rather than leaving every other
+      // marker hidden with nothing left to be relative to.
+      if (selectedCallsign && !seen.has(selectedCallsign)) {
+        clearSelection();
+      } else {
+        updateTraceLine();
+        updateStationTrack();
+      }
+    }
+
+    // Draws a line from the selected station through its relay chain (knownPathHops) to this
+    // station's own position.
+    function updateTraceLine() {
+      if (!dashboardMapInstance || !dashboardMapInstance.getSource('trace-line')) return;
+      let coords = [];
+      const station = lastHeardStations.find(s => s.callsign === selectedCallsign);
+      if (station && station.latitude != null && station.longitude != null) {
+        coords.push([station.longitude, station.latitude]);
+        for (const hop of knownPathHops(station)) coords.push([hop.longitude, hop.latitude]);
+        if (homeLngLat) coords.push(homeLngLat);
+      }
+      dashboardMapInstance.getSource('trace-line').setData({
+        type: 'FeatureCollection',
+        features: coords.length >= 2
+          ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }]
+          : [],
+      });
+    }
+
+    // Selected station's own movement history (services/packet_log.py's station_track), re-fetched
+    // on each selection change and each marker poll so a moving station's trail stays current.
+    async function updateStationTrack() {
+      if (!dashboardMapInstance || !dashboardMapInstance.getSource('station-track')) return;
+      if (!selectedCallsign) {
+        dashboardMapInstance.getSource('station-track').setData({ type: 'FeatureCollection', features: [] });
+        return;
+      }
+      let points = [];
+      try {
+        const res = await fetch(`/api/aprs/station-track?callsign=${encodeURIComponent(selectedCallsign)}`);
+        points = (await res.json()).points || [];
+      } catch (e) {
+        return;
+      }
+      const coords = points.map(p => [p.longitude, p.latitude]);
+      dashboardMapInstance.getSource('station-track').setData({
+        type: 'FeatureCollection',
+        features: coords.length >= 2
+          ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }]
+          : [],
+      });
+    }
+
+    function stationPopupHTML(station) {
+      const pos = (station.latitude != null && station.longitude != null)
+        ? `${station.latitude.toFixed(4)}, ${station.longitude.toFixed(4)}` : '-';
+      const sig = station.signal_level != null ? String(station.signal_level) : '-';
+      return `
+        <div style="font-size:13px;line-height:1.5;min-width:160px;">
+          <strong>${station.callsign}</strong><br>
+          <span>Position: ${pos}</span><br>
+          <span>Signal: ${sig}</span><br>
+          <span>Heard: ${timeSinceLabel(new Date(Date.now() - station.seconds_ago * 1000))}</span>
+          ${station.comment ? `<br><span>${station.comment}</span>` : ''}
+        </div>
+      `;
+    }
+
+    function showStationPopup(callsign) {
+      if (!dashboardMapInstance) return;
+      const station = lastHeardStations.find(s => s.callsign === callsign);
+      if (!station || station.latitude == null || station.longitude == null) return;
+      if (selectedPopup) selectedPopup.remove();
+      selectedPopupCallsign = callsign;
+      selectedPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: false })
+        .setLngLat([station.longitude, station.latitude])
+        .setHTML(stationPopupHTML(station))
+        .addTo(dashboardMapInstance);
+      selectedPopup.on('close', clearSelection);
+    }
+
     function timeSinceLabel(date) {
       const s = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
       if (s < 60) return `${s}s ago`;
@@ -513,10 +754,11 @@
       const title = document.getElementById('gps-title');
       const body = document.getElementById('gps-body');
       if (gpsCfg.position_source === 'manual') {
-        title.textContent = 'GPS: Manual';
         const hasPos = gpsCfg.latitude !== undefined && gpsCfg.longitude !== undefined && gpsCfg.latitude !== '' && gpsCfg.longitude !== '';
         const pos = hasPos ? `${parseFloat(gpsCfg.latitude).toFixed(5)}, ${parseFloat(gpsCfg.longitude).toFixed(5)}` : '-';
-        body.innerHTML = `<div class="kv"><span class="k">Position</span><span class="v">${pos}</span></div>`;
+        title.innerHTML = `GPS: Manual <span class="gps-title-pos">${pos}</span>`;
+        // Room below for more stats, if this ever grows beyond a fixed lat/lon.
+        body.innerHTML = '';
         return;
       }
       title.textContent = 'GPS: Live';
@@ -590,7 +832,7 @@
     });
 
     // ── Confirm modal, reused for plain confirmations and the login-required prompt ──
-    function confirmModal(text, { okLabel = 'Confirm', cancelLabel = 'Cancel' } = {}) {
+    function confirmModal(text, { okLabel = 'Confirm', cancelLabel = 'Cancel', hideCancel = false } = {}) {
       return new Promise((resolve) => {
         const overlay = document.getElementById('confirm-modal');
         const okBtn = document.getElementById('confirm-modal-ok');
@@ -598,9 +840,11 @@
         document.getElementById('confirm-modal-text').textContent = text;
         okBtn.textContent = okLabel;
         cancelBtn.textContent = cancelLabel;
+        cancelBtn.classList.toggle('hidden', hideCancel);
         overlay.classList.remove('hidden');
         function cleanup(result) {
           overlay.classList.add('hidden');
+          cancelBtn.classList.remove('hidden');
           okBtn.removeEventListener('click', onOk);
           cancelBtn.removeEventListener('click', onCancel);
           resolve(result);
@@ -758,7 +1002,6 @@
 
     // ── Heard stations card: same live source as the beacon stats above. ──
     async function renderHeardStations() {
-      const list = document.getElementById('heard-list');
       let data;
       try {
         data = await (await fetch('/api/aprs/heard')).json();
@@ -766,23 +1009,52 @@
         return; // leave the list showing its previous contents
       }
       if (data.enabled === false) {
-        list.innerHTML = `<div class="note">Heard-station logging is off (Settings &gt; Database).</div>`;
+        document.getElementById('heard-list').innerHTML =
+          `<div class="note">Heard-station logging is off (Settings &gt; Database).</div>`;
         return;
       }
-      const stations = data.stations;
-      if (!stations || stations.length === 0) {
-        list.innerHTML = `<div class="note">No stations heard yet.</div>`;
+      allHeardStations = data.stations || [];
+      renderHeardListFromCache();
+    }
+
+    // Re-renders from the last fetch, no network round-trip -- used by the poll above and by the
+    // history slider so dragging it feels instant.
+    function renderHeardListFromCache() {
+      const list = document.getElementById('heard-list');
+      const stations = filterByHistory(allHeardStations);
+      lastHeardStations = stations;
+      if (stations.length === 0) {
+        list.innerHTML = `<div class="note">No stations heard ${historyHours < 24 ? 'in this window' : 'yet'}.</div>`;
+        updateTraceLine();
+        updateStationTrack();
         return;
       }
       list.innerHTML = stations.map(s => `
-        <div class="heard-row">
+        <div class="heard-row${s.callsign === selectedCallsign ? ' selected' : ''}" data-callsign="${s.callsign}">
           <span class="heard-icon">${symbolGlyphHTML(s.symbol, 20)}</span>
           <span class="heard-call">${s.callsign}</span>
           <span class="heard-count">×${s.count}</span>
           <span class="heard-time">${timeSinceLabel(new Date(Date.now() - s.seconds_ago * 1000))}</span>
         </div>
       `).join('');
+      updateTraceLine();
     }
+
+    // Delegated so it keeps working across renderHeardStations()'s innerHTML replacements -- no
+    // popup here, just the list highlight/map-dim/trace that selectStation() already does.
+    document.getElementById('heard-list').addEventListener('click', (e) => {
+      const row = e.target.closest('.heard-row');
+      if (row) selectStation(row.dataset.callsign);
+    });
+
+    // Re-applies instantly from the cached fetch -- no need to wait for the next poll.
+    const historySlider = document.getElementById('history-slider');
+    historySlider.addEventListener('input', () => {
+      historyHours = parseInt(historySlider.value, 10);
+      document.getElementById('history-slider-label').textContent = `${historyHours}h`;
+      renderHeardListFromCache();
+      syncStationMarkers();
+    });
 
     // ── Home-location map ─────────────────────────────────────────────
     async function initDashboardMap(cfg, worldAvailable, regionAvailable, online) {
@@ -878,8 +1150,33 @@
       map.addControl(new MapThemeControl(), 'top-left');
 
       await new Promise(resolve => map.on('load', resolve));
+      dashboardMapInstance = map;
+
+      // Background click (not caught by a marker's own listener below) clears the selection.
+      map.on('click', clearSelection);
+
+      // Resolved once since MapLibre paint properties need a real color, not a CSS custom property.
+      const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#2563eb';
+      const mutedColor = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() || '#888';
+      map.addSource('trace-line', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'trace-line-layer',
+        type: 'line',
+        source: 'trace-line',
+        paint: { 'line-color': accentColor, 'line-width': 2.5, 'line-dasharray': [2, 1.5] },
+      });
+      // Selected station's own past positions -- solid/muted so it reads as "history", distinct
+      // from the dashed accent-colored relay chain above.
+      map.addSource('station-track', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'station-track-layer',
+        type: 'line',
+        source: 'station-track',
+        paint: { 'line-color': mutedColor, 'line-width': 2, 'line-opacity': 0.7 },
+      });
 
       if (homeLat !== null) {
+        homeLngLat = center;
         // Ring outline distinguishes the home marker from heard-station markers of the same size.
         const el = document.createElement('div');
         el.style.cssText = 'width:34px;height:34px;border-radius:50%;border:3px solid var(--accent);box-sizing:border-box;display:flex;align-items:center;justify-content:center;background:transparent;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));';
@@ -887,23 +1184,23 @@
         const sym = (aprs.symbol && aprs.symbol.table && aprs.symbol.symbol) ? aprs.symbol : { table: '/', symbol: '#' };
         el.innerHTML = symbolGlyphHTML(sym, 28);
         new maplibregl.Marker({ element: el }).setLngLat(center).addTo(map);
-
-        // One-time snapshot of heard stations, plotted at their real positions.
-        try {
-          const data = await (await fetch('/api/aprs/heard')).json();
-          for (const s of (data.stations || [])) {
-            if (s.latitude == null || s.longitude == null) continue;
-            const sEl = document.createElement('div');
-            sEl.style.cssText = 'width:28px;height:28px;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.5));';
-            sEl.innerHTML = symbolGlyphHTML(s.symbol, 28);
-            new maplibregl.Marker({ element: sEl })
-              .setLngLat([s.longitude, s.latitude])
-              .addTo(map);
-          }
-        } catch (e) {
-          // No heard-station markers this load; the home marker above still shows.
-        }
       }
+
+      // Heard-station markers, kept one per callsign and refreshed on the same interval as the
+      // heard-stations list, so a station heard after the map first loaded still gets a marker.
+      async function updateStationMarkers() {
+        let data;
+        try {
+          data = await (await fetch('/api/aprs/heard')).json();
+        } catch (e) {
+          return;
+        }
+        allHeardStations = data.stations || [];
+        lastHeardStations = filterByHistory(allHeardStations);
+        syncStationMarkers();
+      }
+      await updateStationMarkers();
+      setInterval(updateStationMarkers, APRS_POLL_MS);
     }
 
     // ── Boot ──────────────────────────────────────────────────────────
@@ -914,6 +1211,16 @@
         authState = { mode: 'none', logged_in: false };
       }
       renderAuthControls();
+
+      try {
+        const status = await (await fetch('/api/status')).json();
+        if (status.autostart_skipped_notice) {
+          confirmModal(
+            'First boot autostart disabled to allow for advanced config, subsequent boots will have autostart enabled',
+            { okLabel: 'OK', hideCancel: true },
+          );
+        }
+      } catch (e) {}
 
       let cfg = {};
       try {

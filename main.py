@@ -21,6 +21,9 @@ CONFIG_PATH = Path("config.yaml")
 DISPLAY_CONFIG_PATH = Path("display_config.json")
 # Written by web/server.py's /api/network/wifi, consumed once then deleted.
 WIFI_PENDING_PATH = Path("wifi_pending.json")
+# Touched by web/server.py's setup wizard Finish step; present only on the normal boot right
+# after setup, so that one boot can skip autostart and leave Direwolf off for advanced config.
+FIRST_NORMAL_BOOT_PATH = Path("first_boot_autostart_pending")
 
 HOTSPOT_SSID = "Digipeater"
 HOTSPOT_PASSWORD = "Digi1234"
@@ -168,10 +171,17 @@ async def main() -> None:
 
     rotation = None
     packets = None
+    autostart_skipped_notice = False
     if first_boot:
         logger.info("No config.yaml found, running first-boot sequence")
         await _show_network_status(display_driver, template, "Initial config", kind, ip)
     else:
+        # Present only on the first normal boot right after setup; skips autostart for just this
+        # boot so the dashboard's advanced config stays reachable before Direwolf starts.
+        autostart_skipped_notice = FIRST_NORMAL_BOOT_PATH.exists()
+        if autostart_skipped_notice:
+            FIRST_NORMAL_BOOT_PATH.unlink(missing_ok=True)
+
         log_settings.apply(config.get("logging", {}))
         db.start_retention_loop()
 
@@ -197,7 +207,7 @@ async def main() -> None:
                     direwolf_config.write(config)
                 except OSError as e:
                     logger.error("Failed to write direwolf.conf: %s", e)
-                want_running = (config.get("startup", {}) or {}).get("autostart", True)
+                want_running = (config.get("startup", {}) or {}).get("autostart", True) and not autostart_skipped_notice
                 result = await system.set_direwolf_running(want_running, config)
                 if not result["ok"]:
                     logger.error("Failed to %s direwolf: %s", "start" if want_running else "stop", result["reason"])
@@ -208,7 +218,7 @@ async def main() -> None:
         # lifetime -- otherwise nothing guarantees it isn't garbage-collected before it gets to run.
         startup_services_task = asyncio.create_task(_start_services())  # noqa: F841
 
-    app = create_app(display_driver, first_boot, network_status, rotation, packets)
+    app = create_app(display_driver, first_boot, network_status, rotation, packets, autostart_skipped_notice)
 
     server_config = uvicorn.Config(app, host="0.0.0.0", port=80, log_level="warning")
     server = uvicorn.Server(server_config)

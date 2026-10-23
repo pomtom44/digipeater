@@ -1782,7 +1782,14 @@
         try {
           const res = await fetch('/api/hardware/serial-devices');
           const data = await res.json();
-          (data.devices || []).forEach(d => {
+          // Exclude the radio's own serial ports (programming cable, serial PTT) -- same
+          // enumeration feeds all three pickers, and a radio cable isn't a GPS.
+          const pttMethod = state.radio?.ptt_method || '';
+          const radioPorts = new Set([
+            state.radio?.programmer_port,
+            pttMethod.startsWith('serial:') ? pttMethod.slice('serial:'.length) : null,
+          ].filter(Boolean));
+          (data.devices || []).filter(d => !radioPorts.has(d.device)).forEach(d => {
             const label = d.description ? `${d.device}: ${d.description}` : d.device;
             addOption(deviceSelect, `serial:${d.device}`, label);
           });

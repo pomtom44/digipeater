@@ -34,6 +34,9 @@ WIFI_PENDING_PATH = Path("wifi_pending.json")
 CONFIG_PATH = Path("config.yaml")
 # Written by install.sh's display-selection prompt and by the wizard's display step; read by main.py on every boot.
 DISPLAY_CONFIG_PATH = Path("display_config.json")
+# Touched by the wizard's Finish step; main.py deletes it on the normal boot that follows, after
+# skipping autostart for that one boot so advanced config stays reachable before Direwolf starts.
+FIRST_NORMAL_BOOT_PATH = Path("first_boot_autostart_pending")
 
 
 def _build_test_image(display_driver: DisplayDriver):
@@ -95,8 +98,12 @@ def _history_summary(log_type: str, e: dict) -> str:
 
 def create_app(
     display_driver: DisplayDriver, first_boot: bool, network_status: dict, rotation=None, packets=None,
+    autostart_skipped_notice: bool = False,
 ) -> FastAPI:
     app = FastAPI(title="APRS Digipeater")
+    # Mutable so /api/status can clear it after the dashboard's first read, showing the
+    # explanatory modal exactly once for the boot that skipped autostart.
+    _autostart_notice = {"pending": autostart_skipped_notice}
 
     # Static assets referenced by URL from the served HTML (e.g. APRS symbol sprite sheets).
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -274,6 +281,12 @@ def create_app(
         # all) from "nothing heard yet" (enabled, stations: []).
         stations = await packets.heard_stations() if (packets and enabled) else None
         return {"enabled": enabled, "stations": stations}
+
+    @app.get("/api/aprs/station-track")
+    async def aprs_station_track(callsign: str):
+        if not packets or not log_settings.is_enabled("heard_stations"):
+            return {"points": []}
+        return {"points": await packets.station_track(callsign)}
 
     @app.get("/api/aprs/beacon-stats")
     async def aprs_beacon_stats():
@@ -613,6 +626,7 @@ def create_app(
             "# Its existence is what marks first-boot setup as complete.\n"
             + yaml.safe_dump(config, sort_keys=False)
         )
+        FIRST_NORMAL_BOOT_PATH.touch()
         # Reboot fires in the background with a short delay so the response reaches the client first.
         async def _delayed_reboot():
             # No RotationManager exists yet during first boot (it's only created on a normal boot),
@@ -633,7 +647,9 @@ def create_app(
 
     @app.get("/api/status")
     async def status():
-        return {"ok": True, "first_boot": first_boot}
+        autostart_skipped = _autostart_notice["pending"]
+        _autostart_notice["pending"] = False
+        return {"ok": True, "first_boot": first_boot, "autostart_skipped_notice": autostart_skipped}
 
     # Unauthenticated even under "full" mode: a callsign is public information.
     @app.get("/api/station-id")

@@ -9,7 +9,7 @@ Physical pin numbers down the middle, matching the two columns of the actual hea
 | | Pin | Pin | |
 |---|---|---|---|
 | E-Ink VCC | 1 | 2 | Relay 5V |
-| --- | 3 | 4 | --- |
+| --- | 3 | 4 | Pi 5V in |
 | --- | 5 | 6 | Relay GND |
 | --- | 7 | 8 | GPS UART TX |
 | E-Ink GND | 9 | 10 | GPS UART RX |
@@ -27,7 +27,7 @@ Physical pin numbers down the middle, matching the two columns of the actual hea
 | --- | 33 | 34 | --- |
 | --- | 35 | 36 | --- |
 | --- | 37 | 38 | --- |
-| --- | 39 | 40 | --- |
+| Pi power GND | 39 | 40 | --- |
 
 ---
 

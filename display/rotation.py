@@ -166,7 +166,7 @@ class RotationManager:
         # last_beacon/symbol/last_heard each render through their own dedicated template function;
         # every other page falls through to draw_status_page below.
         if page.id == "last_beacon":
-            title, headers, rows = self._last_beacon_page(_read_config())
+            title, headers, rows = await self._last_beacon_page(_read_config())
             await self._render(self._template.draw_table_page, title, headers, rows)
             return
         if page.id == "symbol":
@@ -262,14 +262,14 @@ class RotationManager:
         ]
         return "Location", rows
 
-    def _last_beacon_page(self, config: dict) -> tuple[str, list[str], list[tuple[str, list[str]]]]:
+    async def _last_beacon_page(self, config: dict) -> tuple[str, list[str], list[tuple[str, list[str]]]]:
         aprs = config.get("aprs", {}) or {}
         # RF and IGate beacons each keep their own config block: aprs.rf_beacon and aprs.igate_beacon.
         rf_beacon = aprs.get("rf_beacon") or {}
         igate_beacon = aprs.get("igate_beacon") or {}
         rf_enabled = aprs.get("digipeat_mode") == "digipeater" and bool(rf_beacon.get("enabled"))
         igate_enabled = (aprs.get("igate_mode") or "off") != "off" and bool(igate_beacon.get("enabled"))
-        stats = self._packets.beacon_stats() if self._packets else {}
+        stats = await self._packets.beacon_stats() if self._packets else {}
         rows = [
             (
                 "RF",

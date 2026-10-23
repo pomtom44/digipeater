@@ -3,6 +3,7 @@ them to the database (services/db.py) -- the only copy of this state, live reads
 separate in-memory cache kept alongside it."""
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -40,8 +41,12 @@ _RE_IG_XMIT = re.compile(r"^\[ig\]\s*([^>\s]+>.*)$")
 _RE_HEARD_LEVEL = re.compile(r"^(?:Digipeater )?(\S+)(?: \(probably (\S+)\))? audio level = (\d+)")
 # How recent a heard_packets row must be to still accept a correlated signal level.
 _HEARD_LEVEL_CORRELATION_WINDOW_S = 5
+# How recent a matching row must be to treat a new KISS decode as Direwolf's multi-decoder
+# re-reporting the same over-the-air transmission, rather than a genuine second beacon.
+_DUPLICATE_DECODE_WINDOW_S = 3
 
 _MAX_HEARD_STATIONS = 50
+_MAX_TRACK_POINTS = 200
 _SIGNAL_TEST_TTL_S = 900
 # Backoff before reconnecting journalctl/KISS after either drops.
 _JOURNALCTL_RECONNECT_DELAY_S = 5
@@ -55,6 +60,15 @@ _KISS_FEND = 0xC0
 _KISS_FESC = 0xDB
 _KISS_TFEND = 0xDC
 _KISS_TFESC = 0xDD
+
+
+def _decode_path(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except Exception:
+        return []
 
 
 def _my_callsign() -> str:
@@ -139,7 +153,7 @@ class PacketLog:
         rows = await db.fetchall(
             """
             SELECT h.callsign, h.heard_at, h.symbol_table, h.symbol, h.latitude, h.longitude,
-                   h.comment, h.signal_level, agg.count
+                   h.comment, h.signal_level, h.path, agg.count
             FROM heard_packets h
             INNER JOIN (
                 SELECT callsign, MAX(id) AS latest_id, COUNT(*) AS count
@@ -160,11 +174,27 @@ class PacketLog:
                 "longitude": r["longitude"],
                 "comment": r["comment"],
                 "signal_level": r["signal_level"],
+                "path": _decode_path(r["path"]),
                 "count": r["count"],
                 "seconds_ago": round(now - r["heard_at"]),
             }
             for r in rows
         ]
+
+    async def station_track(self, callsign: str) -> list[dict]:
+        """A callsign's own positions over time, oldest first, for drawing its movement on the map
+        -- capped to the most recent _MAX_TRACK_POINTS rather than its whole history."""
+        rows = await db.fetchall(
+            """
+            SELECT heard_at, latitude, longitude FROM (
+                SELECT heard_at, latitude, longitude FROM heard_packets
+                WHERE callsign = ? AND latitude IS NOT NULL AND longitude IS NOT NULL
+                ORDER BY heard_at DESC LIMIT ?
+            ) ORDER BY heard_at ASC
+            """,
+            (callsign, _MAX_TRACK_POINTS),
+        )
+        return [{"latitude": r["latitude"], "longitude": r["longitude"], "heard_at": r["heard_at"]} for r in rows]
 
     async def last_heard(self) -> dict | None:
         """The single most recently heard station, or None if nothing's been heard yet."""
@@ -357,7 +387,6 @@ class PacketLog:
 
         if not my_call:
             return
-        call_root = my_call.split("-")[0].upper()
 
         via_igate = False
         m = _RE_RF_XMIT.match(line)
@@ -369,7 +398,10 @@ class PacketLog:
 
         packet_text = m.group(1)
         source = packet_text.split(">", 1)[0]
-        is_own = source.split("-")[0].upper() == call_root
+        # Exact match including SSID: a different SSID on the same callsign root (e.g. a personal
+        # tracker sharing the digipeater owner's callsign) is a distinct station being digipeated,
+        # not a frame we originated.
+        is_own = source.upper() == my_call.upper()
 
         if not log_settings.is_enabled("sent_packets"):
             # Not just history: beacon_stats() now reads "last beacon sent" straight from this table,
@@ -400,7 +432,9 @@ class PacketLog:
         callsign = parsed.get("from", "")
         if not callsign:
             return
-        if my_call and callsign.split("-")[0].upper() == my_call.split("-")[0]:
+        # Exact match including SSID: a different SSID on the same callsign root (e.g. a personal
+        # tracker sharing the digipeater owner's callsign) is a distinct station, not our own echo.
+        if my_call and callsign.upper() == my_call.upper():
             return  # our own transmission, not a heard station
         if not log_settings.is_enabled("heard_stations"):
             # heard_stations()/last_heard() read straight from this table, so skipping the write here
@@ -413,12 +447,29 @@ class PacketLog:
         latitude = parsed.get("latitude")
         longitude = parsed.get("longitude")
         comment = parsed.get("comment", "")
+        path_json = json.dumps(parsed.get("path") or [])
 
         try:
+            # Direwolf's multi-decoder ("A+" channel mode) can pass the same over-the-air packet up
+            # through KISS more than once, each with its own audio level -- same callsign and content
+            # within a couple seconds means a second decode of that one transmission, not a repeat
+            # beacon, so skip it rather than double-counting the station and splitting the signal
+            # level across two rows.
+            dup = await db.fetchone(
+                """
+                SELECT id FROM heard_packets
+                WHERE callsign = ? AND heard_at > ?
+                    AND symbol_table IS ? AND symbol IS ? AND latitude IS ? AND longitude IS ? AND comment IS ?
+                ORDER BY heard_at DESC LIMIT 1
+                """,
+                (callsign, heard_at - _DUPLICATE_DECODE_WINDOW_S, symbol_table, symbol, latitude, longitude, comment),
+            )
+            if dup:
+                return
             await db.execute(
-                "INSERT INTO heard_packets (callsign, heard_at, symbol_table, symbol, latitude, longitude, comment) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (callsign, heard_at, symbol_table, symbol, latitude, longitude, comment),
+                "INSERT INTO heard_packets (callsign, heard_at, symbol_table, symbol, latitude, longitude, comment, path) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (callsign, heard_at, symbol_table, symbol, latitude, longitude, comment, path_json),
             )
         except Exception as e:
             logger.error("Failed to log heard station %s to database: %s", callsign, e)

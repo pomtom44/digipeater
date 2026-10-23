@@ -150,6 +150,12 @@ _MIGRATIONS: list[tuple[int, list[str]]] = [
         # (e.g. a packet heard via a named digipeater rather than directly from the source).
         "ALTER TABLE heard_packets ADD COLUMN signal_level INTEGER",
     ]),
+    (10, [
+        # The AX.25 path exactly as heard (JSON list, e.g. ["WIDE1-1", "ZL1AAF-3*", "WIDE2"]), so the
+        # dashboard map can trace which named digipeaters a packet passed through -- generic WIDEn-N
+        # aliases carry no station identity and are skipped client-side when drawing that trace.
+        "ALTER TABLE heard_packets ADD COLUMN path TEXT",
+    ]),
 ]
 
 _connection: sqlite3.Connection | None = None
