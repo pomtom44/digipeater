@@ -101,9 +101,12 @@ if config_path:
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
+# Relay pin: drive LOW and leave it driven, do NOT cleanup() it -- cleanup() floats the pin to an
+# input, and a floating trigger input re-energizes some relay boards. Register state stays latched
+# after this process exits even without cleanup(), same reasoning as services/relay.py's own pattern.
 GPIO.setup(relay_pin, GPIO.OUT, initial=GPIO.LOW)
 GPIO.output(relay_pin, GPIO.LOW)
-GPIO.cleanup([relay_pin, rst_pin, dc_pin, cs_pin, busy_pin])
+GPIO.cleanup([rst_pin, dc_pin, cs_pin, busy_pin])
 PYEOF
     ok "GPIO outputs turned off"
 else
