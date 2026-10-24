@@ -308,6 +308,27 @@ def create_app(
             }
         return {"enabled": True, **await packets.beacon_stats()}
 
+    # Matches config.html's own 120s poll deadline for a signal test reply, plus margin for this
+    # server's own poll interval.
+    _SIGNAL_TEST_LISTEN_WINDOW_S = 130
+    _SIGNAL_TEST_POLL_INTERVAL_S = 5
+
+    async def _stop_ephemeral_signal_test_direwolf(test_id: str, config: dict) -> None:
+        """Keeps a Direwolf instance that aprs_signal_test_start started just for this test alive
+        long enough to catch a reply, then stops it and restores the real direwolf.conf -- used when
+        autostart was off and the test had to start Direwolf itself rather than reuse one already running."""
+        deadline = asyncio.get_event_loop().time() + _SIGNAL_TEST_LISTEN_WINDOW_S
+        while asyncio.get_event_loop().time() < deadline:
+            result = await packets.signal_test_status(test_id) if packets else None
+            if result and result.get("received"):
+                break
+            await asyncio.sleep(_SIGNAL_TEST_POLL_INTERVAL_S)
+        await system.set_direwolf_running(False, config)
+        try:
+            direwolf_config.write(config)
+        except OSError as e:
+            logger.error("Failed to restore direwolf.conf after signal test: %s", e)
+
     @app.post("/api/aprs/signal_test")
     async def aprs_signal_test_start(request: Request):
         _require_login_for_action(request)
@@ -321,7 +342,8 @@ def create_app(
             raise HTTPException(status_code=400, detail="Callsign is required")
         if len(target) > 9:
             raise HTTPException(status_code=400, detail="Callsign is too long")
-        aprs_cfg = _read_config().get("aprs", {}) or {}
+        full_config = _read_config()
+        aprs_cfg = full_config.get("aprs", {}) or {}
         # RF-reach test only: needs RF TX/RX, and only makes sense when there's no IGate uplink of our own.
         if aprs_cfg.get("digipeat_mode") != "digipeater":
             raise HTTPException(status_code=400, detail="Signal test needs digipeating set to RX & TX first")
@@ -336,16 +358,42 @@ def create_app(
         my_call = f"{my_callsign}-{ssid}" if ssid else my_callsign
         path_str = (aprs_cfg.get("rf_beacon", {}) or {}).get("path") or "WIDE1-1"
         path = [p.strip().upper() for p in path_str.split(",") if p.strip()]
+
+        # Autostart is often left off between config changes; the test still needs a live Direwolf
+        # to send through and listen on. Spin one up with digipeating/beaconing disabled so it only
+        # handles this one test packet, not real traffic -- then tear it back down once the test's
+        # listen window (matching config.html's own 120s poll deadline) ends.
+        status = await system.get_direwolf_status()
+        started_for_test = False
+        if not status.get("running"):
+            direwolf_config.write(full_config, test_only=True)
+            start_result = await system.set_direwolf_running(True, full_config)
+            if not start_result["ok"]:
+                direwolf_config.write(full_config)
+                raise HTTPException(
+                    status_code=502, detail=f"Could not start Direwolf for the test: {start_result['reason']}",
+                )
+            started_for_test = True
+
         test_id = secrets.token_hex(4)
         try:
             await packets.start_signal_test(test_id, my_call, target)
         except Exception as e:
             logger.error("Failed to start signal test: %s", e)
+            if started_for_test:
+                await system.set_direwolf_running(False, full_config)
+                direwolf_config.write(full_config)
             raise HTTPException(status_code=500, detail="Could not record the signal test; nothing was sent")
         try:
             await signal_test.send_ping(my_call, target, path, test_id)
         except RuntimeError as e:
+            if started_for_test:
+                await system.set_direwolf_running(False, full_config)
+                direwolf_config.write(full_config)
             raise HTTPException(status_code=502, detail=str(e))
+
+        if started_for_test:
+            asyncio.create_task(_stop_ephemeral_signal_test_direwolf(test_id, full_config))
         return {"ok": True, "test_id": test_id}
 
     @app.get("/api/aprs/signal_test/{test_id}")
