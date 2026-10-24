@@ -6,7 +6,7 @@ set -e
 # Full uninstall, reverses everything install.sh sets up, back to a clean state.
 # ─────────────────────────────────────────────
 
-RESET_SCRIPT_VERSION="2026-10-24.3"
+RESET_SCRIPT_VERSION="2026-10-24.4"
 
 INSTALL_DIR="/opt/digipeater"
 VENV_DIR="$INSTALL_DIR/venv"
@@ -218,11 +218,22 @@ sudo rfkill block wifi
 ok "WiFi radio re-blocked"
 
 # ── Restore systemd-timesyncd as the time-sync service ─
-# Reverses install.sh's switch to chrony (needed for GPS time sync).
+# Reverses install.sh's switch to chrony (needed for GPS time sync). systemd-timesyncd isn't
+# guaranteed to still be present -- on some images/setups it's been removed entirely (confirmed on
+# real hardware: "Unit systemd-timesyncd.service not found"), in which case blindly `enable --now`ing
+# it fails silently and leaves the Pi with NO time-sync daemon at all once chrony is purged below.
 info "Restoring systemd-timesyncd..."
 sudo systemctl disable --now chrony --quiet 2>/dev/null || true
-sudo systemctl enable --now systemd-timesyncd --quiet 2>/dev/null || true
-ok "systemd-timesyncd restored"
+if ! systemctl list-unit-files 2>/dev/null | grep -q "^systemd-timesyncd.service"; then
+    info "systemd-timesyncd isn't installed, reinstalling it..."
+    sudo apt-get install -y -qq systemd-timesyncd 2>/dev/null || true
+fi
+if systemctl list-unit-files 2>/dev/null | grep -q "^systemd-timesyncd.service" \
+    && sudo systemctl enable --now systemd-timesyncd --quiet 2>/dev/null; then
+    ok "systemd-timesyncd restored"
+else
+    info "Could not restore systemd-timesyncd -- the Pi has no time-sync daemon now. Fix manually: sudo apt-get install systemd-timesyncd && sudo timedatectl set-ntp true"
+fi
 
 # ── Remove chrony's GPS config ───────────────
 # Dropped in by scripts/apply-gps-config.sh; apt purge below won't remove it since it's not a
