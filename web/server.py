@@ -431,6 +431,15 @@ def create_app(
         await system.power_off_radio()
         return {"ok": True}
 
+    @app.post("/api/radio/power_on")
+    async def radio_power_on(request: Request):
+        """Powers the radio on directly, for the setup wizard's Audio step -- write_radio() powers the
+        radio back off once programming finishes, so the level meter/loopback test need this to get a
+        live radio to read."""
+        _require_login_for_action(request)
+        await system.power_on_radio()
+        return {"ok": True}
+
     @app.post("/api/logging/clear/{log_type}")
     async def logging_clear(log_type: str, request: Request):
         """The Database tab's per-row Clear button: permanently deletes that log type's history."""

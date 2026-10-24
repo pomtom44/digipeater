@@ -361,6 +361,12 @@ async def power_off_radio() -> None:
     await relay.power_off()
 
 
+async def power_on_radio() -> None:
+    """Powers the radio on directly (waits for BOOT_DELAY_S); used by the setup wizard's Audio step so
+    the level meter/loopback test have a live radio to read, since write_radio() powers it back off."""
+    await relay.power_on()
+
+
 _DIREWOLF_LOG_LINES = 200
 
 

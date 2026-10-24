@@ -668,6 +668,11 @@
         onNext: saveRadioStep,
       },
       {
+        title: 'Audio tuning',
+        render: renderAudioStep,
+        onNext: saveAudioStep,
+      },
+      {
         title: 'GPS setup',
         render: renderGpsStep,
         onNext: saveGpsStep,
@@ -898,8 +903,6 @@
                 No audio input device detected. Direwolf needs a microphone/audio input to receive on, it can't start without one.
                 <br><button type="button" id="btn-audio-warning-ack" style="margin-top: 8px;">Yes, I understand</button>
               </p>
-              <div id="radio-audio-level-wrap" style="margin-top: 10px;"></div>
-              <div id="radio-loopback-test-wrap" style="margin-top: 10px;"></div>
             </div>
             <div class="field">
               <label for="radio-power">TX power level</label>
@@ -992,14 +995,6 @@
       loadAudioDevices();
       loadCm108PttOptions();
       loadSerialPttOptions();
-      createAudioLevelMeter(
-        document.getElementById('radio-audio-level-wrap'),
-        () => document.getElementById('radio-audio').value,
-      );
-      createLoopbackTest(
-        document.getElementById('radio-loopback-test-wrap'),
-        () => document.getElementById('radio-audio').value,
-      );
     }
 
     // Set once "Yes, I understand" is clicked, so the warning doesn't reappear on re-render
@@ -1134,6 +1129,9 @@
       const radio = SUPPORTED_RADIOS.find(r => r.model === wizardData.radio.model);
       if (radio && radio.programmable) {
         await openRadioWriteModal();
+      } else {
+        // Nothing to warn about on the next step -- there's no programmable radio to have skipped.
+        wizardData.radioWriteStatus = 'not_programmable';
       }
       return true;
     }
@@ -1161,7 +1159,10 @@
           <button type="button" class="primary" id="radio-write-modal-go">Program now</button>
         </div>
       `;
-      document.getElementById('radio-write-modal-skip').addEventListener('click', () => _radioWriteModalResolve(true));
+      document.getElementById('radio-write-modal-skip').addEventListener('click', () => {
+        wizardData.radioWriteStatus = 'skipped';
+        _radioWriteModalResolve(true);
+      });
       document.getElementById('radio-write-modal-go').addEventListener('click', runRadioWriteInModal);
     }
 
@@ -1185,7 +1186,10 @@
           <button type="button" class="primary" id="radio-write-modal-continue">Continue</button>
         </div>
       `;
-      document.getElementById('radio-write-modal-continue').addEventListener('click', () => _radioWriteModalResolve(true));
+      document.getElementById('radio-write-modal-continue').addEventListener('click', () => {
+        wizardData.radioWriteStatus = 'written';
+        _radioWriteModalResolve(true);
+      });
     }
 
     function renderRadioWriteModalError(message) {
@@ -1196,8 +1200,53 @@
           <button type="button" class="primary" id="radio-write-modal-retry">Retry</button>
         </div>
       `;
-      document.getElementById('radio-write-modal-skip-anyway').addEventListener('click', () => _radioWriteModalResolve(true));
+      document.getElementById('radio-write-modal-skip-anyway').addEventListener('click', () => {
+        wizardData.radioWriteStatus = 'failed';
+        _radioWriteModalResolve(true);
+      });
       document.getElementById('radio-write-modal-retry').addEventListener('click', runRadioWriteInModal);
+    }
+
+    // ── Audio tuning step ─────────────────────────────────────────────
+    // Runs after the radio's been powered on/programmed (previous step) rather than alongside its
+    // config fields -- there's nothing to monitor until the radio is actually live. write_radio()
+    // leaves the radio powered off again once done, so this step's own "Start monitoring"/loopback
+    // test power it back on/off itself (see the onStart/onStop hooks below and /api/radio/power_on).
+    const AUDIO_STEP_WARNINGS = {
+      skipped: "Radio programming was skipped last step -- its frequency/power may not match what you just configured. Audio levels below are still worth checking, but the radio's RF behavior may not reflect your settings yet.",
+      failed: "Radio programming failed last step -- the radio may still be on its previous channel. Audio levels below are still worth checking, but the radio's RF behavior may not reflect your settings yet.",
+    };
+
+    function renderAudioStep() {
+      const warningText = AUDIO_STEP_WARNINGS[wizardData.radioWriteStatus];
+      document.getElementById('step-content').innerHTML = `
+        <section>
+          <p class="hint">Tune the radio's RX volume so background static sits in the healthy range below, and confirm the Pi's own TX audio isn't clipping -- both against the radio that was just configured.</p>
+          ${warningText ? `<p class="warn-banner">${warningText}</p>` : ''}
+          <div id="audio-level-wrap"></div>
+          <div id="audio-loopback-wrap" style="margin-top: 10px;"></div>
+        </section>
+      `;
+
+      createAudioLevelMeter(
+        document.getElementById('audio-level-wrap'),
+        () => wizardData.radio?.audio_device,
+        {
+          onStart: async () => {
+            const res = await fetch('/api/radio/power_on', { method: 'POST' });
+            if (!res.ok) throw new Error('Failed to power on radio');
+          },
+          onStop: () => { fetch('/api/radio/power_off', { method: 'POST' }); },
+        },
+      );
+      createLoopbackTest(
+        document.getElementById('audio-loopback-wrap'),
+        () => wizardData.radio?.audio_device,
+      );
+    }
+
+    function saveAudioStep() {
+      return true;
     }
 
     // ── APRS settings step ───────────────────────────────────────────

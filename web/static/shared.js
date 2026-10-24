@@ -700,7 +700,8 @@ let _activeAudioLevelMeter = null;
 // collide with EBUSY. Checked by the meter's poll loop so it pauses instead of racing the test.
 let _loopbackTestInFlight = false;
 
-function createAudioLevelMeter(containerEl, getDeviceId) {
+function createAudioLevelMeter(containerEl, getDeviceId, hooks) {
+  const { onStart, onStop } = hooks || {};
   if (_activeAudioLevelMeter) _activeAudioLevelMeter.stop();
 
   containerEl.innerHTML = `
@@ -771,17 +772,33 @@ function createAudioLevelMeter(containerEl, getDeviceId) {
     pollTimer = setTimeout(poll, AUDIO_LEVEL_POLL_MS);
   }
 
-  function start() {
+  async function start() {
+    if (onStart) {
+      toggleBtn.disabled = true;
+      meterWrap.classList.remove('hidden');
+      valueEl.textContent = '–';
+      statusEl.textContent = 'Powering on radio...';
+      try {
+        await onStart();
+      } catch (e) {
+        statusEl.textContent = 'Could not power on radio -- ' + e.message;
+        toggleBtn.disabled = false;
+        return;
+      }
+      toggleBtn.disabled = false;
+    }
     meterWrap.classList.remove('hidden');
     toggleBtn.textContent = 'Stop monitoring';
     stopAt = Date.now() + AUDIO_LEVEL_MAX_DURATION_MS;
     poll();
   }
   function stop() {
+    const wasRunning = !!pollTimer;
     clearTimeout(pollTimer);
     pollTimer = null;
     meterWrap.classList.add('hidden');
     toggleBtn.textContent = 'Start monitoring';
+    if (onStop && wasRunning) onStop();
   }
 
   toggleBtn.addEventListener('click', () => { if (pollTimer) stop(); else start(); });
