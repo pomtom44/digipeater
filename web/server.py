@@ -693,7 +693,10 @@ def create_app(
             "# Its existence is what marks first-boot setup as complete.\n"
             + yaml.safe_dump(config, sort_keys=False)
         )
-        FIRST_NORMAL_BOOT_PATH.touch()
+        # The one-boot autostart deferral (and its dashboard notice) only makes sense if autostart
+        # would otherwise fire on that boot -- if the user chose autostart off, there's nothing to defer.
+        if config["startup"].get("autostart", True):
+            FIRST_NORMAL_BOOT_PATH.touch()
         # Reboot fires in the background with a short delay so the response reaches the client first.
         async def _delayed_reboot():
             # No RotationManager exists yet during first boot (it's only created on a normal boot),

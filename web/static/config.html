@@ -955,6 +955,10 @@
                 <div class="field-suffix"><input type="number" id="radio-duplex-offset" step="1" value="0"><span>kHz</span></div>
               </div>
               <div class="field" style="max-width: 160px;">
+                <label for="radio-txdelay">TX delay ${helpIcon("How long Direwolf waits after keying PTT before sending data, giving the radio time to actually start transmitting. VOX needs more than hardware PTT (GPIO/CM108/serial) since the radio has to sense the audio first. Leave blank to use a method-aware default. Raise it if transmissions sound clipped at the start.")}</label>
+                <div class="field-suffix"><input type="number" id="radio-txdelay" min="0" step="10" placeholder="auto"><span>ms</span></div>
+              </div>
+              <div class="field" style="max-width: 160px;">
                 <label for="radio-tot">Time-out timer ${helpIcon("Caps how long the radio can transmit continuously. Cheap insurance against a stuck PTT damaging the radio on unattended gear. 0 = off.")}</label>
                 <div class="field-suffix"><input type="number" id="radio-tot" min="0" step="1" value="0"><span>min</span></div>
               </div>
@@ -989,6 +993,7 @@
         adv.duplex_offset_hz ? Math.round(adv.duplex_offset_hz / 1000) * (adv.duplex_direction === '-' ? -1 : 1) : 0;
       document.getElementById('radio-tot').value = adv.time_out_timer_min ?? 0;
       document.getElementById('radio-busy-lockout').checked = !!adv.busy_lockout;
+      document.getElementById('radio-txdelay').value = adv.txdelay_ms ?? '';
 
       function updateProgrammerSectionVisibility() {
         const hasModel = !!modelSelect.value;
@@ -1157,6 +1162,7 @@
           duplex_direction: (parseInt(document.getElementById('radio-duplex-offset').value, 10) || 0) < 0 ? '-' : '+',
           time_out_timer_min: parseInt(document.getElementById('radio-tot').value, 10) || 0,
           busy_lockout: document.getElementById('radio-busy-lockout').checked,
+          txdelay_ms: parseIntOrDefault(document.getElementById('radio-txdelay').value, null),
         },
       };
       if (pttMethod === 'gpio') {

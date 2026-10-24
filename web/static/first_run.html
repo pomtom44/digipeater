@@ -929,6 +929,10 @@
                 <div class="field-suffix"><input type="number" id="radio-duplex-offset" step="1" value="0"><span>kHz</span></div>
               </div>
               <div class="field" style="max-width: 160px;">
+                <label for="radio-txdelay">TX delay ${helpIcon("How long Direwolf waits after keying PTT before sending data, giving the radio time to actually start transmitting. VOX needs more than hardware PTT (GPIO/CM108/serial) since the radio has to sense the audio first. Leave blank to use a method-aware default. Raise it if transmissions sound clipped at the start.")}</label>
+                <div class="field-suffix"><input type="number" id="radio-txdelay" min="0" step="10" placeholder="auto"><span>ms</span></div>
+              </div>
+              <div class="field" style="max-width: 160px;">
                 <label for="radio-tot">Time-out timer ${helpIcon("Caps how long the radio can transmit continuously. Cheap insurance against a stuck PTT damaging the radio on unattended gear. 0 = off.")}</label>
                 <div class="field-suffix"><input type="number" id="radio-tot" min="0" step="1" value="0"><span>min</span></div>
               </div>
@@ -966,6 +970,7 @@
           adv.duplex_offset_hz ? Math.round(adv.duplex_offset_hz / 1000) * (adv.duplex_direction === '-' ? -1 : 1) : 0;
         document.getElementById('radio-tot').value = adv.time_out_timer_min ?? 0;
         document.getElementById('radio-busy-lockout').checked = !!adv.busy_lockout;
+        document.getElementById('radio-txdelay').value = adv.txdelay_ms ?? '';
       }
       // GPIO is the recommended default PTT method unless something else was already picked
       document.getElementById('radio-ptt').value = wizardData.radio?.ptt_method ?? 'gpio';
@@ -1099,6 +1104,7 @@
           duplex_direction: (parseInt(document.getElementById('radio-duplex-offset').value, 10) || 0) < 0 ? '-' : '+',
           time_out_timer_min: parseInt(document.getElementById('radio-tot').value, 10) || 0,
           busy_lockout: document.getElementById('radio-busy-lockout').checked,
+          txdelay_ms: parseIntOrDefault(document.getElementById('radio-txdelay').value, null),
         },
       };
       // Fixed wiring. See RADIO_DEFAULT_PTT_GPIO_PIN.
@@ -1869,7 +1875,14 @@
         }
       }
 
+      // Matches a serial port description against common GPS dongle/chipset names, to pre-select
+      // it without needing a live fix check (gpsd isn't configured against anything yet at this point).
+      const GPS_DESCRIPTION_PATTERN = /gps|gnss|u-?blox|holux|garmin|navilock/i;
+
       async function loadGpsDevices() {
+        // Fresh wizard run (nothing saved for this step yet): safe to apply smart defaults below.
+        // A revisit (g.device/position_source/time_sync already set) always keeps what was chosen.
+        const isFresh = g.device === undefined && g.position_source === undefined && g.time_sync === undefined;
         try {
           const res = await fetch('/api/hardware/serial-devices');
           const data = await res.json();
@@ -1880,11 +1893,22 @@
             wizardData.radio?.programmer_port,
             pttMethod.startsWith('serial:') ? pttMethod.slice('serial:'.length) : null,
           ].filter(Boolean));
-          (data.devices || []).filter(d => !radioPorts.has(d.device)).forEach(d => {
+          const devices = (data.devices || []).filter(d => !radioPorts.has(d.device));
+          let detected = devices.find(d => GPS_DESCRIPTION_PATTERN.test(d.description));
+          if (!detected && devices.length === 1) detected = devices[0];
+          devices.forEach(d => {
             const label = d.description ? `${d.device}: ${d.description}` : d.device;
             addOption(deviceSelect, `serial:${d.device}`, label);
           });
-          if (g.device) deviceSelect.value = g.device;
+          if (g.device) {
+            deviceSelect.value = g.device;
+          } else if (detected) {
+            deviceSelect.value = `serial:${detected.device}`;
+          }
+          if (isFresh && deviceSelect.value !== 'none') {
+            sourceSelect.value = 'gps';
+            timeSyncCheckbox.checked = true;
+          }
         } catch (e) {
           // "No GPS" still works
         } finally {

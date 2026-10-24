@@ -12,6 +12,22 @@ def _mycall(aprs: dict) -> str:
     return f"{callsign}-{ssid}" if ssid else callsign
 
 
+# Direwolf's TXDELAY is in 10ms units. VOX needs much longer than hardware PTT (GPIO/CM108/serial):
+# the radio has to sense the audio and trip its own VOX circuit before it's actually transmitting,
+# and 300ms often isn't enough -- the first part of the packet goes out before the radio's keyed up.
+_TXDELAY_DEFAULT_MS = {"vox": 600}
+_TXDELAY_FALLBACK_MS = 300
+
+
+def _txdelay_line(radio: dict, can_transmit: bool) -> str | None:
+    if not can_transmit:
+        return None
+    ms = (radio.get("advanced") or {}).get("txdelay_ms")
+    if not ms:
+        ms = _TXDELAY_DEFAULT_MS.get(radio.get("ptt_method", "vox"), _TXDELAY_FALLBACK_MS)
+    return f"TXDELAY {round(ms / 10)}"
+
+
 def _ptt_lines(radio: dict, can_transmit: bool) -> list[str]:
     if not can_transmit:
         return []
@@ -187,6 +203,9 @@ def generate(config: dict, *, test_only: bool = False) -> str:
     lines.append("CHANNEL 0")
     lines.append(f"MYCALL {_mycall(aprs)}")
     lines.append("MODEM 1200")
+    txdelay_line = _txdelay_line(radio, can_transmit)
+    if txdelay_line:
+        lines.append(txdelay_line)
     # KISS port for packet_log.py to decode heard packets; always on regardless of mode.
     lines.append("KISSPORT 8001")
     lines.append("")
