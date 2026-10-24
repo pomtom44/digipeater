@@ -67,9 +67,11 @@ async def read_level(device: str) -> dict:
     data = data[_WARMUP_BYTES:]
     if len(data) < 4:
         reason = stderr_data.decode(errors="replace").strip() if stderr_data else ""
-        # Direwolf (or anything else) holding the device open is the most likely real-world cause.
+        # Direwolf holding the device open is the most common real-world cause, but this app's own
+        # audio-level meter and loopback test (below) also share this device and can collide with
+        # each other if run concurrently -- don't name Direwolf specifically, it may not be it.
         if "busy" in reason.lower() or "resource" in reason.lower():
-            reason = f"Audio device is busy -- stop Direwolf first ({reason})"
+            reason = f"Audio device is busy -- stop Direwolf first, or wait if another audio test is running ({reason})"
         return {"ok": False, "reason": reason or "No audio captured"}
 
     sample_count = len(data) // 2
@@ -86,7 +88,9 @@ async def read_level(device: str) -> dict:
 # absolute level; clipping flattens the waveform's peaks, which pulls crest factor down -- that's a
 # scale-invariant way to detect real distortion without needing to know the "right" absolute level,
 # and it correctly ignores pure gain/attenuation in the loop (verified against synthetic clipped vs.
-# merely-attenuated signals in TESTING/check_audio_output.py's --loopback, which this mirrors).
+# merely-attenuated signals during development). Shares its device with read_level() above --
+# web/static/shared.js's createLoopbackTest()/createAudioLevelMeter() coordinate so they don't run
+# concurrently, but the busy-device message below stays generic since that's JS-side, not guaranteed.
 _LOOPBACK_SAMPLE_RATE = 8000
 _LOOPBACK_TONE_HZ = 1000.0
 _LOOPBACK_DURATION_S = 1.0
@@ -161,7 +165,7 @@ async def test_loopback(play_device: str, capture_device: str) -> dict:
     if len(data) < 4:
         reason = stderr_data.decode(errors="replace").strip() if stderr_data else ""
         if "busy" in reason.lower() or "resource" in reason.lower():
-            reason = f"Audio device is busy -- stop Direwolf first ({reason})"
+            reason = f"Audio device is busy -- stop Direwolf first, or wait if another audio test is running ({reason})"
         return {"ok": False, "reason": reason or "No audio captured"}
 
     sample_count = len(data) // 2

@@ -712,6 +712,9 @@
         currentRegionMap.remove();
         currentRegionMap = null;
       }
+      // Stop the Radio step's audio level meter too -- its poll loop otherwise keeps running against
+      // DOM nodes this step change just detached, spawning arecord every 400ms for up to 5 minutes.
+      if (_activeAudioLevelMeter) _activeAudioLevelMeter.stop();
       // Reset before render() so a step's own render can re-disable it for validation
       document.getElementById('btn-next').disabled = false;
       const step = steps[currentStep];
@@ -1386,7 +1389,7 @@
 
       // Restore anything entered earlier this session before wiring events
       if (d.callsign) document.getElementById('aprs-callsign').value = d.callsign;
-      if (d.ssid) document.getElementById('aprs-ssid').value = d.ssid;
+      if (d.ssid !== undefined && d.ssid !== '') document.getElementById('aprs-ssid').value = d.ssid;
       document.getElementById('aprs-digipeat-mode').value = d.digipeat_mode || 'rxonly';
       if (d.digipeat) {
         document.getElementById('aprs-digipeat-dedupe').value = d.digipeat.dedupe || APRS_DEFAULT_DEDUPE;
@@ -2180,7 +2183,13 @@
       cancelBtn.addEventListener('click', async () => {
         cancelBtn.disabled = true;
         try {
-          await fetch('/api/map/cache/cancel', { method: 'POST' });
+          const res = await fetch('/api/map/cache/cancel', { method: 'POST' });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            progressMsg.textContent = err.detail || 'Failed to cancel download.';
+          }
+        } catch (e) {
+          progressMsg.textContent = 'Could not reach the server.';
         } finally {
           cancelBtn.disabled = false;
         }

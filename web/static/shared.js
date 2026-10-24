@@ -382,6 +382,15 @@ function addOption(select, value, label) {
   return opt;
 }
 
+// parseInt(...) || fallback silently discards a legitimately-entered 0, since 0 is falsy -- GPIO
+// pin fields are a real case of this (BCM0/1 are reserved so nobody would pick them in practice,
+// but the collect/restore round-trip should still be correct). Use this instead of the `||` pattern
+// for any numeric field where 0 is a value, not an empty-input sentinel.
+function parseIntOrDefault(value, fallback) {
+  const n = parseInt(value, 10);
+  return Number.isNaN(n) ? fallback : n;
+}
+
 // Escape quotes/ampersands so the attribute doesn't break
 // Returns a "?" button carrying its help text in a data attribute
 function helpIcon(text) {
@@ -686,6 +695,11 @@ const AUDIO_LEVEL_MAX_DURATION_MS = 5 * 60 * 1000;
 // capturing audio against a container that's already been replaced.
 let _activeAudioLevelMeter = null;
 
+// Set by createLoopbackTest (below) while its one-shot capture is in flight -- the meter and the
+// loopback test both hit the same ALSA device, and two concurrent arecord opens on one device
+// collide with EBUSY. Checked by the meter's poll loop so it pauses instead of racing the test.
+let _loopbackTestInFlight = false;
+
 function createAudioLevelMeter(containerEl, getDeviceId) {
   if (_activeAudioLevelMeter) _activeAudioLevelMeter.stop();
 
@@ -715,6 +729,12 @@ function createAudioLevelMeter(containerEl, getDeviceId) {
 
   async function poll() {
     if (Date.now() > stopAt) { stop(); return; }
+    if (_loopbackTestInFlight) {
+      valueEl.textContent = '–';
+      statusEl.textContent = 'Paused (loopback test running)';
+      pollTimer = setTimeout(poll, AUDIO_LEVEL_POLL_MS);
+      return;
+    }
     const device = getDeviceId();
     if (!device) {
       valueEl.textContent = '–';
@@ -790,6 +810,10 @@ function createLoopbackTest(containerEl, getDeviceId) {
       resultEl.style.color = 'var(--status-warning)';
       return;
     }
+    // Stop the level meter first -- it and this test both hit the same ALSA device, and leaving the
+    // meter's poll loop running would fight this capture for the device (see _loopbackTestInFlight).
+    if (_activeAudioLevelMeter) _activeAudioLevelMeter.stop();
+    _loopbackTestInFlight = true;
     btn.disabled = true;
     resultEl.textContent = 'Testing...';
     resultEl.style.color = '';
@@ -814,6 +838,7 @@ function createLoopbackTest(containerEl, getDeviceId) {
       resultEl.textContent = 'Error running loopback test';
       resultEl.style.color = 'var(--status-warning)';
     } finally {
+      _loopbackTestInFlight = false;
       btn.disabled = false;
     }
   });

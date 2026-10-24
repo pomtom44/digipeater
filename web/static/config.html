@@ -1162,7 +1162,7 @@
       if (pttMethod === 'gpio') {
         // Read live from the GPIO tab, the editable home for this value
         const pinEl = document.getElementById('gpio-ptt-gpio-pin');
-        radio.ptt_gpio_pin = pinEl ? (parseInt(pinEl.value, 10) || RADIO_DEFAULT_PTT_GPIO_PIN) : RADIO_DEFAULT_PTT_GPIO_PIN;
+        radio.ptt_gpio_pin = pinEl ? parseIntOrDefault(pinEl.value, RADIO_DEFAULT_PTT_GPIO_PIN) : RADIO_DEFAULT_PTT_GPIO_PIN;
       }
       if (pttMethod.startsWith('serial:')) {
         radio.ptt_serial_line = document.getElementById('radio-ptt-serial-line').value;
@@ -1369,7 +1369,7 @@
       const stationIconField = document.getElementById('station-icon-field');
 
       if (d.callsign) document.getElementById('aprs-callsign').value = d.callsign;
-      if (d.ssid) document.getElementById('aprs-ssid').value = d.ssid;
+      if (d.ssid !== undefined && d.ssid !== '') document.getElementById('aprs-ssid').value = d.ssid;
       document.getElementById('aprs-digipeat-mode').value = d.digipeat_mode || 'rxonly';
       if (d.digipeat) {
         document.getElementById('aprs-digipeat-dedupe').value = d.digipeat.dedupe || APRS_DEFAULT_DEDUPE;
@@ -2129,7 +2129,13 @@
       cancelBtn.addEventListener('click', async () => {
         cancelBtn.disabled = true;
         try {
-          await fetch('/api/map/cache/cancel', { method: 'POST' });
+          const res = await fetch('/api/map/cache/cancel', { method: 'POST' });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            progressMsg.textContent = err.detail || 'Failed to cancel download.';
+          }
+        } catch (e) {
+          progressMsg.textContent = 'Could not reach the server.';
         } finally {
           cancelBtn.disabled = false;
         }
@@ -2630,11 +2636,11 @@
     // radio.ptt_gpio_pin is collected by collectRadioTab()
     function collectGpioTab() {
       const gpio = {
-        relay_pin: parseInt(document.getElementById('gpio-relay-pin').value, 10) || GPIO_DEFAULT_RELAY_PIN,
-        eink_rst: parseInt(document.getElementById('gpio-eink-rst').value, 10) || GPIO_DEFAULT_EINK_RST,
-        eink_dc: parseInt(document.getElementById('gpio-eink-dc').value, 10) || GPIO_DEFAULT_EINK_DC,
-        eink_cs: parseInt(document.getElementById('gpio-eink-cs').value, 10) || GPIO_DEFAULT_EINK_CS,
-        eink_busy: parseInt(document.getElementById('gpio-eink-busy').value, 10) || GPIO_DEFAULT_EINK_BUSY,
+        relay_pin: parseIntOrDefault(document.getElementById('gpio-relay-pin').value, GPIO_DEFAULT_RELAY_PIN),
+        eink_rst: parseIntOrDefault(document.getElementById('gpio-eink-rst').value, GPIO_DEFAULT_EINK_RST),
+        eink_dc: parseIntOrDefault(document.getElementById('gpio-eink-dc').value, GPIO_DEFAULT_EINK_DC),
+        eink_cs: parseIntOrDefault(document.getElementById('gpio-eink-cs').value, GPIO_DEFAULT_EINK_CS),
+        eink_busy: parseIntOrDefault(document.getElementById('gpio-eink-busy').value, GPIO_DEFAULT_EINK_BUSY),
       };
       state.gpio = gpio;
       return gpio;

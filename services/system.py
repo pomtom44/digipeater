@@ -39,6 +39,12 @@ _simulated_running = False
 _transition: str | None = None
 # Reason the last completed start/stop attempt failed, if any; cleared on next success.
 _last_error: str | None = None
+# Serializes set_direwolf_running() and write_radio() against each other -- both drive the relay and
+# the radio's serial/programming state, and the app's own boot sequence can have a start already in
+# flight (blocked for minutes inside _wait_for_gps_fix) while the web UI is already reachable and
+# able to fire a second one. Without this, two interleaved calls can power the relay off mid-program
+# or leave Direwolf running with the relay off -- see _set_direwolf_running_impl/_write_radio_impl.
+_RADIO_LOCK = asyncio.Lock()
 
 
 def _idle_status(simulated: bool) -> dict:
@@ -195,7 +201,8 @@ async def _run_systemctl(action: str) -> dict:
 
 async def set_direwolf_running(running: bool, config: dict | None = None) -> dict:
     """Starts or stops direwolf; logs the outcome (success or failure, whichever return path fired) once."""
-    result = await _set_direwolf_running_impl(running, config)
+    async with _RADIO_LOCK:
+        result = await _set_direwolf_running_impl(running, config)
     await _log_event(
         "INSERT INTO direwolf_events (at, action, ok, reason, simulated) VALUES (?, ?, ?, ?, ?)",
         (time.time(), "start" if running else "stop", int(result["ok"]), result.get("reason"),
@@ -288,7 +295,8 @@ def get_radio_write_status() -> dict:
 async def write_radio(radio_config: dict) -> dict:
     """Writes channel settings to the radio; logs the outcome (including validation failures that
     never touched hardware) once, whichever return path fired."""
-    result = await _write_radio_impl(radio_config)
+    async with _RADIO_LOCK:
+        result = await _write_radio_impl(radio_config)
     await _log_event(
         "INSERT INTO radio_write_events (at, model, ok, reason, was_running) VALUES (?, ?, ?, ?, ?)",
         (time.time(), radio_config.get("model"), int(result["ok"]), result.get("reason"),

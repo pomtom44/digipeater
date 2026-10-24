@@ -72,13 +72,21 @@ def _decode_path(raw: str | None) -> list[str]:
 
 
 def _my_callsign() -> str:
+    """Matches services/direwolf_config.py's _mycall(): the callsign Direwolf actually transmits
+    under, including the SSID when one's configured. Without this, a station with an SSID set never
+    matches its own on-air callsign, breaking own-transmission detection below."""
     if not CONFIG_PATH.exists():
         return ""
     try:
         config = yaml.safe_load(CONFIG_PATH.read_text()) or {}
     except Exception:
         return ""
-    return ((config.get("aprs", {}) or {}).get("callsign") or "").upper()
+    aprs = config.get("aprs", {}) or {}
+    callsign = (aprs.get("callsign") or "").upper()
+    if not callsign:
+        return ""
+    ssid = aprs.get("ssid")
+    return f"{callsign}-{ssid}" if ssid else callsign
 
 
 def _kiss_unescape(data: bytes) -> bytes:
@@ -454,15 +462,20 @@ class PacketLog:
             # through KISS more than once, each with its own audio level -- same callsign and content
             # within a couple seconds means a second decode of that one transmission, not a repeat
             # beacon, so skip it rather than double-counting the station and splitting the signal
-            # level across two rows.
+            # level across two rows. path is compared too: a direct hear followed seconds later by the
+            # same payload via a digipeater's retransmission has identical content but a different
+            # (longer) path -- that's a second, genuinely distinct reception, not a re-decode, and
+            # dropping it would silently lose the hop information path-tracing depends on.
             dup = await db.fetchone(
                 """
                 SELECT id FROM heard_packets
                 WHERE callsign = ? AND heard_at > ?
                     AND symbol_table IS ? AND symbol IS ? AND latitude IS ? AND longitude IS ? AND comment IS ?
+                    AND path IS ?
                 ORDER BY heard_at DESC LIMIT 1
                 """,
-                (callsign, heard_at - _DUPLICATE_DECODE_WINDOW_S, symbol_table, symbol, latitude, longitude, comment),
+                (callsign, heard_at - _DUPLICATE_DECODE_WINDOW_S, symbol_table, symbol, latitude, longitude, comment,
+                 path_json),
             )
             if dup:
                 return

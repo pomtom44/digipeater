@@ -6,12 +6,15 @@ set -e
 # Full uninstall, reverses everything install.sh sets up, back to a clean state.
 # ─────────────────────────────────────────────
 
-RESET_SCRIPT_VERSION="2026-10-24.2"
+RESET_SCRIPT_VERSION="2026-10-24.3"
 
 INSTALL_DIR="/opt/digipeater"
+VENV_DIR="$INSTALL_DIR/venv"
 SERVICE_NAME="digipeater"
-VAR_DIR="/var/digipeater"
+DIREWOLF_UNIT="direwolf"
+TILE_UPDATE_UNIT="digipeater-tile-update"
 DIREWOLF_BIN="/usr/local/bin/direwolf"
+CHRONY_GPS_CONF="/etc/chrony/conf.d/digipeater-gps.conf"
 
 # ── Colours ──────────────────────────────────
 GREEN='\033[0;32m'
@@ -37,9 +40,12 @@ fi
 
 echo -e "${YELLOW}This will permanently remove:${NC}"
 echo "    - the digipeater systemd service"
-echo "    - $INSTALL_DIR (application, venv, config.yaml, saved WiFi credentials, Direwolf source build)"
-echo "    - $VAR_DIR (tile cache, packet history)"
+echo "    - the direwolf systemd service (stopped first if it's running -- it keys PTT)"
+echo "    - the digipeater-tile-update systemd service/timer"
+echo "    - $INSTALL_DIR (application, venv, config.yaml, saved WiFi credentials, Direwolf source"
+echo "      build, tile cache, packet history database -- all of it lives under here)"
 echo "    - $DIREWOLF_BIN (Direwolf, built from source by install.sh)"
+echo "    - $CHRONY_GPS_CONF (GPS time-sync config dropped into chrony's conf.d)"
 echo "    - /etc/sudoers.d/digipeater-* (all sudo permissions this app granted)"
 echo "    - the digipeater-hotspot NetworkManager connection profile"
 echo "    - the SPI interface (disabled again)"
@@ -72,6 +78,32 @@ else
     info "No systemd service found, skipping"
 fi
 
+# ── Stop and remove the direwolf service ─────
+# Separate unit from digipeater.service -- main.py starts/stops it at runtime, so it's never
+# "enabled" by install.sh, but it can still be actively running (and keying PTT) right now.
+if systemctl list-unit-files 2>/dev/null | grep -q "^${DIREWOLF_UNIT}.service"; then
+    info "Stopping and removing the direwolf service..."
+    sudo systemctl stop "${DIREWOLF_UNIT}" 2>/dev/null || true
+    sudo systemctl disable "${DIREWOLF_UNIT}" --quiet 2>/dev/null || true
+    sudo rm -f "/etc/systemd/system/${DIREWOLF_UNIT}.service"
+    sudo systemctl daemon-reload
+    ok "direwolf service removed"
+else
+    info "No direwolf service found, skipping"
+fi
+
+# ── Stop and remove the tile-update timer ────
+if systemctl list-unit-files 2>/dev/null | grep -q "^${TILE_UPDATE_UNIT}.timer"; then
+    info "Stopping and removing the tile-update timer..."
+    sudo systemctl stop "${TILE_UPDATE_UNIT}.timer" 2>/dev/null || true
+    sudo systemctl disable "${TILE_UPDATE_UNIT}.timer" --quiet 2>/dev/null || true
+    sudo rm -f "/etc/systemd/system/${TILE_UPDATE_UNIT}.timer" "/etc/systemd/system/${TILE_UPDATE_UNIT}.service"
+    sudo systemctl daemon-reload
+    ok "tile-update timer removed"
+else
+    info "No tile-update timer found, skipping"
+fi
+
 # ── Turn off GPIO outputs (radio power relay, e-ink) ─
 # Must run before python3-rpi.gpio is purged and before $INSTALL_DIR (holds config.yaml) is removed.
 # Without this, a relay left HIGH keeps the radio powered after reset.
@@ -101,7 +133,12 @@ if config_path:
         dc_pin = gpio_cfg.get("eink_dc", dc_pin)
         cs_pin = gpio_cfg.get("eink_cs", cs_pin)
         busy_pin = gpio_cfg.get("eink_busy", busy_pin)
-    except FileNotFoundError:
+    except (FileNotFoundError, ImportError):
+        # FileNotFoundError: config.yaml doesn't exist, defaults above are fine.
+        # ImportError: PyYAML isn't installed for whichever interpreter is running this (true for
+        # bare system python3 -- PyYAML is only pip-installed into the venv, see requirements.txt).
+        # Must not let this escape: an uncaught ImportError here would kill the script before it
+        # ever reaches GPIO.setmode() below, long before this function runs out of things to try.
         pass
 
 GPIO.setmode(GPIO.BCM)
@@ -142,14 +179,6 @@ if [ -d "$INSTALL_DIR" ]; then
     ok "Removed $INSTALL_DIR"
 else
     info "$INSTALL_DIR not present, skipping"
-fi
-
-# ── Remove runtime data directory ────────────
-if [ -d "$VAR_DIR" ]; then
-    sudo rm -rf "$VAR_DIR"
-    ok "Removed $VAR_DIR"
-else
-    info "$VAR_DIR not present, skipping"
 fi
 
 # ── Remove Direwolf binary (built from source by install.sh) ─
@@ -195,6 +224,16 @@ sudo systemctl disable --now chrony --quiet 2>/dev/null || true
 sudo systemctl enable --now systemd-timesyncd --quiet 2>/dev/null || true
 ok "systemd-timesyncd restored"
 
+# ── Remove chrony's GPS config ───────────────
+# Dropped in by scripts/apply-gps-config.sh; apt purge below won't remove it since it's not a
+# package-managed conffile.
+if [ -f "$CHRONY_GPS_CONF" ]; then
+    sudo rm -f "$CHRONY_GPS_CONF"
+    ok "Removed $CHRONY_GPS_CONF"
+else
+    info "$CHRONY_GPS_CONF not present, skipping"
+fi
+
 # ── Remove system packages ───────────────────
 # python3, network-manager, and curl are deliberately excluded, curl is needed to re-run install.sh itself.
 info "Removing system packages..."
@@ -209,7 +248,7 @@ sudo apt-get purge -y -qq \
     python3-venv \
     git \
     2>/dev/null || true
-sudo apt-get autoremove -y -qq
+sudo apt-get autoremove -y -qq 2>/dev/null || true
 ok "System packages removed"
 
 echo ""

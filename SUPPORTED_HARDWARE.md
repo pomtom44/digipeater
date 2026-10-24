@@ -44,7 +44,11 @@ Not a fixed list: any USB audio device the Pi sees shows up automatically during
 
 ## Radio
 
-The "Radio model" dropdown during setup is empty for now: no radio picker or programming protocol has been chosen yet. "TX power" is a placeholder list (Low/Medium/High) with no radio-specific configuration or CAT control behind it.
+| Make / Model | Status | Notes |
+|---|---|---|
+| Alinco DR-138 MKII | ✅ Confirmed | Full clone-mode programming over a serial cable: frequency, name, TX power, duplex offset, CTCSS encode/decode, busy lockout, and timeout timer are all written directly to the radio from the dashboard. |
+
+Any other radio works too, just without the one-click programming above: pick "None (not installed yet)" in the setup wizard, program the radio by hand (frequency, CTCSS, etc.), and wire PTT/audio as normal -- Direwolf doesn't care which radio is on the other end of the audio/PTT lines. The "Radio model" dropdown only lists models with a working programming driver; more may be added later.
 
 ---
 

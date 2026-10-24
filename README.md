@@ -44,7 +44,6 @@ For the full walkthrough, see [`SETUP.md`](SETUP.md). For how it all works under
 ## Project Structure
 
 - **`main.py`**, **`services/`**, **`display/`**, **`web/`**: the application itself.
-- **`ORIGINAL/`**: an earlier prototype, kept for reference only, not actively developed.
 
 ## License
 
