@@ -1739,6 +1739,81 @@
       const statusField = document.getElementById('gps-status-field');
       const formatSelect = document.getElementById('gps-loc-format');
       const locMsg = document.getElementById('gps-loc-msg');
+      const tzSelect = document.getElementById('gps-timezone');
+
+      // Only auto-fill the timezone from position while the user hasn't touched it themselves --
+      // a fresh wizard run starts allowed; picking a saved value, or editing it by hand, turns it off.
+      let timezoneAutoFillAllowed = g.timezone === undefined;
+      tzSelect.addEventListener('change', () => { timezoneAutoFillAllowed = false; });
+
+      // No new geo library just for this -- bucket longitude into a UTC-offset estimate, then match
+      // against a short list of well-known zones (same list as services/system.py's
+      // _TIMEZONE_FALLBACK) via the browser's own tzdata through Intl, falling back to the full
+      // list only if nothing well-known is close. Matching against obscure same-offset zones from
+      // the full list directly tends to pick the wrong continent entirely (e.g. Asia/Anadyr for a
+      // New Zealand position) since tzdata has many obscure zones sharing any given offset.
+      const TIMEZONE_PRIORITY = [
+        'UTC', 'Pacific/Auckland', 'Australia/Sydney', 'Asia/Tokyo',
+        'Asia/Shanghai', 'Asia/Kolkata', 'Asia/Dubai', 'Europe/Moscow',
+        'Europe/Berlin', 'Europe/London', 'Africa/Johannesburg',
+        'America/Sao_Paulo', 'America/New_York', 'America/Chicago',
+        'America/Denver', 'America/Los_Angeles', 'Pacific/Honolulu',
+      ];
+
+      function rawTzOffsetHours(tz, date) {
+        const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' }).formatToParts(date);
+        const offsetPart = parts.find(p => p.type === 'timeZoneName');
+        if (!offsetPart) return null;
+        if (offsetPart.value === 'GMT') return 0;
+        const m = offsetPart.value.match(/GMT([+-]\d+)(?::(\d+))?/);
+        if (!m) return null;
+        const hours = parseInt(m[1], 10);
+        return hours + (m[2] ? Math.sign(hours || 1) * parseInt(m[2], 10) / 60 : 0);
+      }
+
+      // DST always shifts clocks forward (in either hemisphere's local summer), so the smaller of
+      // two readings 6 months apart is always the zone's standard offset -- matching against that,
+      // rather than today's possibly-DST-shifted offset, keeps the estimate stable year-round and
+      // avoids skew from the two hemispheres being in different DST states at any given moment.
+      function standardTzOffsetHours(tz) {
+        const year = new Date().getUTCFullYear();
+        try {
+          const jan = rawTzOffsetHours(tz, new Date(Date.UTC(year, 0, 15)));
+          const jul = rawTzOffsetHours(tz, new Date(Date.UTC(year, 6, 15)));
+          if (jan === null || jul === null) return jan ?? jul;
+          return Math.min(jan, jul);
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function nearestTzByOffset(targetOffsetHours, candidates) {
+        let best = null, bestDiff = Infinity;
+        for (const tz of candidates) {
+          const offsetHours = standardTzOffsetHours(tz);
+          if (offsetHours === null) continue;
+          const diff = Math.abs(offsetHours - targetOffsetHours);
+          if (diff < bestDiff) { bestDiff = diff; best = tz; }
+        }
+        return { best, bestDiff };
+      }
+
+      function estimateTimezoneFromOffset(targetOffsetHours) {
+        const listed = new Set(Array.from(tzSelect.options, opt => opt.value).filter(Boolean));
+        const priorityCandidates = TIMEZONE_PRIORITY.filter(tz => listed.has(tz));
+        const { best, bestDiff } = nearestTzByOffset(targetOffsetHours, priorityCandidates);
+        if (best !== null && bestDiff <= 1) return best;
+        // Nothing well-known close enough -- fall back to the full list's nearest match.
+        const { best: fallback } = nearestTzByOffset(targetOffsetHours, listed);
+        return fallback ?? best;
+      }
+
+      function maybeEstimateTimezone(lat, lon) {
+        if (!timezoneAutoFillAllowed || lon === undefined || lon === null || Number.isNaN(lon)) return;
+        const targetOffset = Math.max(-12, Math.min(14, Math.round(lon / 15)));
+        const best = estimateTimezoneFromOffset(targetOffset);
+        if (best) tzSelect.value = best;
+      }
 
       function setManualFields(format, latLon) {
         if (!latLon) return;
@@ -1833,6 +1908,7 @@
           if (data.available) {
             setManualFields(formatSelect.value, { lat: data.latitude, lon: data.longitude });
             updateLocPreview();
+            maybeEstimateTimezone(data.latitude, data.longitude);
             msg.textContent = 'Position filled in from GPS.';
             msg.className = 'msg success';
           } else {
@@ -1860,6 +1936,7 @@
             box.textContent = data.reason || 'GPS not available.';
             return;
           }
+          if (data.has_fix) maybeEstimateTimezone(data.latitude, data.longitude);
           const sats = `${data.satellites_used ?? '?'} used / ${data.satellites_visible ?? '?'} visible`;
           const pos = data.has_fix ? `${data.latitude.toFixed(6)}, ${data.longitude.toFixed(6)}` : 'N/A';
           box.innerHTML = '';
@@ -1918,7 +1995,6 @@
       }
 
       async function loadTimezones() {
-        const tzSelect = document.getElementById('gps-timezone');
         try {
           const res = await fetch('/api/system/timezones');
           const data = await res.json();
@@ -1926,7 +2002,13 @@
         } catch (e) {
           addOption(tzSelect, 'UTC', 'UTC');
         }
-        if (g.timezone) tzSelect.value = g.timezone;
+        if (g.timezone) {
+          tzSelect.value = g.timezone;
+        } else {
+          const lat = parseFloat(document.getElementById('gps-lat').value);
+          const lon = parseFloat(document.getElementById('gps-lon').value);
+          if (!Number.isNaN(lat) && !Number.isNaN(lon)) maybeEstimateTimezone(lat, lon);
+        }
       }
 
       // Restore anything entered earlier, re-deriving the display fields from stored decimal degrees

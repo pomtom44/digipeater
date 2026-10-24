@@ -2558,13 +2558,13 @@
           </div>
 
           <div class="field">
-            <label>Result</label>
+            <label>Status</label>
             <div class="status-box" id="signaltest-status">Idle.</div>
           </div>
 
           <div class="field">
-            <label for="signaltest-reply">Reply details</label>
-            <textarea id="signaltest-reply" rows="6" readonly placeholder="Round-trip time, reply text and timestamp will appear here once a confirmation comes back."></textarea>
+            <label for="signaltest-result">Result</label>
+            <textarea id="signaltest-result" rows="6" readonly placeholder="Pass/fail summary, round-trip time and reply text will appear here once the test finishes."></textarea>
           </div>
 
           <p class="hint">
@@ -2584,8 +2584,45 @@
 
       const pushBtn = document.getElementById('btn-signaltest-push');
       const statusBox = document.getElementById('signaltest-status');
-      const replyBox = document.getElementById('signaltest-reply');
+      const resultBox = document.getElementById('signaltest-result');
       const callInput = document.getElementById('signaltest-callsign');
+
+      // Direwolf's own state (from the signal test's own transient start, when autostart was off)
+      // doubles as live status text -- "Status" tracks what's happening right now, "Result" is only
+      // filled in once the whole test has finished, pass or fail.
+      const DIREWOLF_RUNNING_STATES = ['starting', 'waiting_gps', 'running', 'stopping'];
+
+      async function pollDirewolfStatusDuring(promise, labelForState) {
+        let polling = true;
+        (async () => {
+          while (polling) {
+            try {
+              const res = await fetch('/api/system/direwolf/status');
+              const data = await res.json();
+              const label = labelForState(data);
+              if (label) statusBox.textContent = label;
+            } catch (e) { /* transient poll failure, keep trying */ }
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        })();
+        try {
+          return await promise;
+        } finally {
+          polling = false;
+        }
+      }
+
+      async function waitForDirewolfIdle() {
+        const deadline = Date.now() + 30000;
+        while (Date.now() < deadline) {
+          try {
+            const res = await fetch('/api/system/direwolf/status');
+            const data = await res.json();
+            if (!DIREWOLF_RUNNING_STATES.includes(data.state)) return;
+          } catch (e) { /* transient poll failure, keep trying until deadline */ }
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
 
       pushBtn.addEventListener('click', async () => {
         const callsign = callInput.value.trim().toUpperCase();
@@ -2594,30 +2631,41 @@
           return;
         }
         pushBtn.disabled = true;
-        statusBox.textContent = 'Transmitting test packet...';
-        replyBox.value = '';
+        statusBox.textContent = 'Starting...';
+        resultBox.value = '';
         const sentAt = Date.now();
         try {
-          const res = await fetch('/api/aprs/signal_test', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ callsign }),
-          });
+          const res = await pollDirewolfStatusDuring(
+            fetch('/api/aprs/signal_test', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ callsign }),
+            }),
+            (d) => {
+              if (d.state === 'waiting_gps') return 'Waiting for GPS fix...';
+              if (d.state === 'starting') return 'Powering on radio, starting Direwolf...';
+              return null;
+            },
+          );
           const data = await res.json();
           if (!res.ok || !data.ok) {
-            statusBox.textContent = data.detail || 'Could not send test message.';
+            statusBox.textContent = 'Done';
+            resultBox.value = data.detail || 'Could not send test message.';
+            pushBtn.disabled = false;
             return;
           }
-          statusBox.textContent = `Waiting for reply from ${callsign}...`;
-          pollSignalTestReply(data.test_id, callsign, sentAt);
+          statusBox.textContent = 'Packet sent, waiting for reply...';
+          await pollSignalTestReply(data.test_id, callsign, sentAt, !!data.ephemeral);
         } catch (e) {
-          statusBox.textContent = 'Could not reach the server.';
+          statusBox.textContent = 'Done';
+          resultBox.value = 'Could not reach the server.';
           pushBtn.disabled = false;
         }
       });
 
-      async function pollSignalTestReply(testId, callsign, sentAt) {
+      async function pollSignalTestReply(testId, callsign, sentAt, ephemeral) {
         const deadline = Date.now() + 120000;
+        let outcome = null;
         while (Date.now() < deadline) {
           await new Promise(r => setTimeout(r, 3000));
           try {
@@ -2625,16 +2673,23 @@
             const data = await res.json();
             if (data.received) {
               const rtt = ((Date.now() - sentAt) / 1000).toFixed(1);
-              statusBox.textContent = `Confirmed: reply received from ${callsign}.`;
-              replyBox.value = `Round-trip: ${rtt}s\nReceived: ${new Date().toLocaleString()}\nReply text: ${data.reply_text || '(none)'}`;
-              pushBtn.disabled = false;
-              return;
+              outcome = `Confirmed: reply received from ${callsign}.\n`
+                + `Round-trip: ${rtt}s\nReceived: ${new Date().toLocaleString()}\nReply text: ${data.reply_text || '(none)'}`;
+              break;
             }
           } catch (e) {
             // transient poll failure, keep trying until deadline
           }
         }
-        statusBox.textContent = `No reply from ${callsign} within 2 minutes.`;
+        if (!outcome) {
+          outcome = `No reply from ${callsign} within 2 minutes. Check digiping.zl4st.com to see if your ping was heard.`;
+        }
+        if (ephemeral) {
+          statusBox.textContent = 'Shutting down radio...';
+          await waitForDirewolfIdle();
+        }
+        statusBox.textContent = 'Done';
+        resultBox.value = outcome;
         pushBtn.disabled = false;
       }
     }

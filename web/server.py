@@ -394,7 +394,7 @@ def create_app(
 
         if started_for_test:
             asyncio.create_task(_stop_ephemeral_signal_test_direwolf(test_id, full_config))
-        return {"ok": True, "test_id": test_id}
+        return {"ok": True, "test_id": test_id, "ephemeral": started_for_test}
 
     @app.get("/api/aprs/signal_test/{test_id}")
     async def aprs_signal_test_status(test_id: str):
