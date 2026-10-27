@@ -212,6 +212,19 @@ async def set_direwolf_running(running: bool, config: dict | None = None) -> dic
     return result
 
 
+async def _log_radio_start_event(ok: bool, reason: str | None, model: str | None) -> None:
+    """Separate from direwolf_events: this is specifically the radio power-on/programming phase of
+    an autostart attempt, surfaced in the same "Radio programming history" log as the manual
+    Write-to-radio button (services/system.py's write_radio) -- so a radio-side failure and a
+    Direwolf-service-side failure show up as distinct history entries instead of one conflated
+    "start failed" reason string."""
+    await _log_event(
+        "INSERT INTO radio_write_events (at, model, ok, reason, was_running) VALUES (?, ?, ?, ?, ?)",
+        (time.time(), model, int(ok), reason, 0),
+        what="radio start event", log_type="radio_write_events",
+    )
+
+
 async def _set_direwolf_running_impl(running: bool, config: dict | None = None) -> dict:
     """Sequences GPS fix wait, radio power, channel programming, and settle time around the systemctl call."""
     global _transition, _last_error
@@ -221,13 +234,16 @@ async def _set_direwolf_running_impl(running: bool, config: dict | None = None) 
     try:
         if running:
             radio_config = config.get("radio", {})
-            if not radio_config.get("model"):
+            model = radio_config.get("model")
+            if not model:
                 _last_error = "Cannot start Direwolf: radio not configured (Settings > Radio)"
                 logger.error(_last_error)
+                await _log_radio_start_event(False, _last_error, model)
                 return {"ok": False, "reason": _last_error}
             if not radio_config.get("audio_device"):
                 _last_error = "Cannot start Direwolf: audio device not configured (Settings > Radio)"
                 logger.error(_last_error)
+                await _log_radio_start_event(False, _last_error, model)
                 return {"ok": False, "reason": _last_error}
 
             gps_ok, gps_reason = await _wait_for_gps_fix(config.get("gps", {}))
@@ -235,6 +251,7 @@ async def _set_direwolf_running_impl(running: bool, config: dict | None = None) 
             if not gps_ok:
                 logger.error("Direwolf start blocked: %s", gps_reason)
                 _last_error = f"Cannot start Direwolf: {gps_reason}"
+                await _log_radio_start_event(False, _last_error, model)
                 return {"ok": False, "reason": _last_error}
 
             await relay.power_on()
@@ -246,9 +263,11 @@ async def _set_direwolf_running_impl(running: bool, config: dict | None = None) 
                 await relay.power_off()
                 _last_error = f"Radio programming failed: {prog_result['reason']}"
                 logger.error(_last_error)
+                await _log_radio_start_event(False, _last_error, model)
                 return {"ok": False, "reason": _last_error}
             if not prog_result.get("skipped"):
                 await asyncio.sleep(radio_programmer.PROGRAM_SETTLE_DELAY_S)
+            await _log_radio_start_event(True, None, model)
 
         result = await _run_systemctl(action)
         if running and result["ok"] and not result.get("simulated"):
