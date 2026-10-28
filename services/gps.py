@@ -3,8 +3,14 @@
 import asyncio
 import json
 import logging
+import math
 
 logger = logging.getLogger(__name__)
+
+# WGS84 ellipsoid, used only for the ECEF fallback below.
+_WGS84_A = 6378137.0
+_WGS84_F = 1 / 298.257223563
+_WGS84_E2 = _WGS84_F * (2 - _WGS84_F)
 
 _GPSD_HOST = "127.0.0.1"
 _GPSD_PORT = 2947
@@ -13,6 +19,18 @@ _READ_TIMEOUT_S = 2.0
 
 # gpsd_json(5): TPV.mode (0=unknown, 1=no fix, 2=2D, 3=3D)
 _FIX_MODES = {0: "unknown", 1: "no fix", 2: "2D fix", 3: "3D fix"}
+
+
+def _ecef_to_latlon(x: float, y: float, z: float) -> tuple[float, float]:
+    """Bowring's method, iterated to convergence; +-1mm accuracy in a few iterations."""
+    lon = math.atan2(y, x)
+    p = math.hypot(x, y)
+    lat = math.atan2(z, p * (1 - _WGS84_E2))
+    for _ in range(5):
+        sin_lat = math.sin(lat)
+        n = _WGS84_A / math.sqrt(1 - _WGS84_E2 * sin_lat * sin_lat)
+        lat = math.atan2(z + _WGS84_E2 * n * sin_lat, p)
+    return math.degrees(lat), math.degrees(lon)
 
 
 async def get_status() -> dict:
@@ -62,12 +80,20 @@ async def get_status() -> dict:
         return {"available": False, "reason": "gpsd is running, but no GPS data received; check the device is connected"}
 
     mode = tpv.get("mode", 0)
+    lat, lon = tpv.get("lat"), tpv.get("lon")
+    # Some gpsd/u-blox combos report a valid ECEF fix but leave lat/lon at 0.0
+    # (geodetic conversion not populated); fall back to converting it ourselves.
+    if lat == 0.0 and lon == 0.0:
+        ecefx, ecefy, ecefz = tpv.get("ecefx"), tpv.get("ecefy"), tpv.get("ecefz")
+        if ecefx is not None and ecefy is not None and ecefz is not None and math.hypot(ecefx, ecefy, ecefz) > 1000:
+            lat, lon = _ecef_to_latlon(ecefx, ecefy, ecefz)
+
     return {
         "available": True,
         "fix": _FIX_MODES.get(mode, "unknown"),
         "has_fix": mode >= 2,
-        "latitude": tpv.get("lat"),
-        "longitude": tpv.get("lon"),
+        "latitude": lat,
+        "longitude": lon,
         "satellites_used": sky.get("uSat") if sky else None,
         "satellites_visible": sky.get("nSat") if sky else None,
     }
