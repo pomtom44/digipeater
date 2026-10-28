@@ -48,6 +48,7 @@ if [ "$DEVICE" != "none" ]; then
         echo 'GPSD_OPTIONS="-n"' >> "$GPSD_DEFAULT"
     fi
     systemctl disable --now gpsd.socket --quiet 2>/dev/null || true
+    sleep 1
     systemctl enable gpsd.service --quiet
     systemctl restart gpsd.service
 else

@@ -181,6 +181,25 @@ fi
 run_with_spinner "Enabling SPI interface..." sudo raspi-config nonint do_spi 0
 ok "SPI enabled (reboot required the first time this is enabled)"
 
+# ── Work around a dwc_otg USB controller hang (Pi 3/Zero only) ──
+# On these boards, onboard Ethernet and USB-serial devices (GPS, TNC) share
+# one dwc_otg USB controller. Certain device open/close events can wedge the
+# whole controller, taking Ethernet down with it. lpm_enable=0 is the
+# standard kernel workaround; harmless no-op on boards without dwc_otg.
+if dmesg | grep -q "dwc_otg:"; then
+    if [ -f /boot/firmware/cmdline.txt ]; then
+        CMDLINE_FILE=/boot/firmware/cmdline.txt
+    else
+        CMDLINE_FILE=/boot/cmdline.txt
+    fi
+    if grep -q "dwc_otg.lpm_enable=0" "$CMDLINE_FILE" 2>/dev/null; then
+        ok "dwc_otg USB workaround already applied"
+    else
+        sudo sed -i -E 's/$/ dwc_otg.lpm_enable=0/' "$CMDLINE_FILE"
+        ok "dwc_otg USB workaround applied (takes effect after reboot)"
+    fi
+fi
+
 # ── Ensure NetworkManager is running (required for the WiFi hotspot) ──
 run_with_spinner "Configuring NetworkManager..." bash -c "
     sudo systemctl enable NetworkManager --quiet &&
