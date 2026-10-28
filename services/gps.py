@@ -31,7 +31,10 @@ async def get_status() -> dict:
         await writer.drain()
         loop = asyncio.get_event_loop()
         deadline = loop.time() + _READ_TIMEOUT_S
-        while (tpv is None or sky is None):
+        while True:
+            have_good_tpv = tpv is not None and tpv.get("lat") is not None and tpv.get("lon") is not None
+            if have_good_tpv and sky is not None:
+                break
             remaining = deadline - loop.time()
             if remaining <= 0:
                 break
