@@ -125,10 +125,10 @@ def _symbol_tokens(aprs: dict) -> tuple[str, str]:
 
 
 def _beacon_position(gps: dict) -> str:
-    """Returns LAT=/LONG= tokens: a fixed position for manual, or LAT=GPSD LONG=GPSD to pull
-    the live fix from the GPSD line added elsewhere -- direwolf doesn't do that on its own."""
+    """Returns LAT=/LONG= tokens for a fixed position, or a bare GPSD token to pull the live
+    fix from the GPSD line added elsewhere -- direwolf doesn't do that on its own."""
     if gps.get("position_source") != "manual":
-        return "LAT=GPSD LONG=GPSD "
+        return "GPSD "
     lat = gps.get("latitude")
     lon = gps.get("longitude")
     if lat in (None, "") or lon in (None, ""):
