@@ -1978,6 +1978,10 @@
             addOption(deviceSelect, `serial:${d.device}`, label);
           });
           if (g.device) {
+            // Device may not be enumerated yet (USB settling after boot) -- keep the saved
+            // value selectable so it doesn't silently fall back to "none" and reset the tab.
+            const known = Array.from(deviceSelect.options).some(o => o.value === g.device);
+            if (!known) addOption(deviceSelect, g.device, `${g.device} (not detected)`);
             deviceSelect.value = g.device;
           } else if (detected) {
             deviceSelect.value = `serial:${detected.device}`;
