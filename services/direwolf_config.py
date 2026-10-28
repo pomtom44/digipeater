@@ -125,8 +125,8 @@ def _symbol_tokens(aprs: dict) -> tuple[str, str]:
 
 
 def _beacon_position(gps: dict) -> str:
-    """Returns LAT=/LONG= tokens for a fixed position, or '' to use the live fix from the
-    GPSD line added elsewhere -- direwolf does this automatically, no per-beacon token needed."""
+    """Returns LAT=/LONG= tokens for a fixed position, or '' for TBEACON (gps mode), which
+    reads its own live fix from the GPSD line added elsewhere -- no per-beacon token needed."""
     if gps.get("position_source") != "manual":
         return ""
     lat = gps.get("latitude")
@@ -138,8 +138,13 @@ def _beacon_position(gps: dict) -> str:
 
 def _pbeacon_line(beacon: dict, aprs: dict, gps: dict, *, send_to_igate: bool) -> str:
     overlay_token, symbol_token = _symbol_tokens(aprs)
+    # PBEACON requires LAT/LONG at config-parse time and permanently disables itself if gpsd
+    # doesn't already have a fix at that exact instant -- a race that's lost on every restart.
+    # TBEACON re-reads gpsd at each send instead, so GPS mode always uses it; manual position
+    # has no live fix to race against, so PBEACON (with its static LAT=/LONG=) is fine there.
+    beacon_type = "PBEACON" if gps.get("position_source") == "manual" else "TBEACON"
     tokens = [
-        "PBEACON",
+        beacon_type,
         "SENDTO=IG" if send_to_igate else None,
         f"DELAY={beacon.get('delay', 1)}",
         f"EVERY={beacon.get('interval', 30)}",
