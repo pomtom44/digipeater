@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 
-from services import db, gps, log_settings, radio_programmer, relay, restart_policy
+from services import db, direwolf_config, gps, log_settings, radio_programmer, relay, restart_policy
 
 logger = logging.getLogger(__name__)
 
@@ -199,10 +199,10 @@ async def _run_systemctl(action: str) -> dict:
     return {"ok": True, "reason": None, "simulated": False}
 
 
-async def set_direwolf_running(running: bool, config: dict | None = None) -> dict:
+async def set_direwolf_running(running: bool, config: dict | None = None, *, test_only: bool = False) -> dict:
     """Starts or stops direwolf; logs the outcome (success or failure, whichever return path fired) once."""
     async with _RADIO_LOCK:
-        result = await _set_direwolf_running_impl(running, config)
+        result = await _set_direwolf_running_impl(running, config, test_only=test_only)
     await _log_event(
         "INSERT INTO direwolf_events (at, action, ok, reason, simulated) VALUES (?, ?, ?, ?, ?)",
         (time.time(), "start" if running else "stop", int(result["ok"]), result.get("reason"),
@@ -225,7 +225,7 @@ async def _log_radio_start_event(ok: bool, reason: str | None, model: str | None
     )
 
 
-async def _set_direwolf_running_impl(running: bool, config: dict | None = None) -> dict:
+async def _set_direwolf_running_impl(running: bool, config: dict | None = None, *, test_only: bool = False) -> dict:
     """Sequences GPS fix wait, radio power, channel programming, and settle time around the systemctl call."""
     global _transition, _last_error
     config = config or {}
@@ -253,6 +253,15 @@ async def _set_direwolf_running_impl(running: bool, config: dict | None = None) 
                 _last_error = f"Cannot start Direwolf: {gps_reason}"
                 await _log_radio_start_event(False, _last_error, model)
                 return {"ok": False, "reason": _last_error}
+
+            # Snapshot the now-confirmed fix into direwolf.conf's static LAT=/LONG= right before
+            # start -- the earlier write at boot/config-save time can predate GPS having a fix.
+            # test_only is forwarded so an ephemeral signal-test start doesn't get its
+            # beaconing-disabled config clobbered back to the real one here.
+            try:
+                await direwolf_config.write_live(config, test_only=test_only)
+            except OSError as e:
+                logger.error("Failed to write direwolf.conf before starting: %s", e)
 
             await relay.power_on()
 

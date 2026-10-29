@@ -203,8 +203,10 @@ async def main() -> None:
                 await restart_policy.apply(config.get("startup", {}))
 
                 # Regenerated fresh on every boot so a manually edited config.yaml still takes effect.
+                # (GPS may not have a fix this early; set_direwolf_running's own write right before
+                # actually starting direwolf is the one that matters for a live-position beacon.)
                 try:
-                    direwolf_config.write(config)
+                    await direwolf_config.write_live(config)
                 except OSError as e:
                     logger.error("Failed to write direwolf.conf: %s", e)
                 want_running = (config.get("startup", {}) or {}).get("autostart", True) and not autostart_skipped_notice

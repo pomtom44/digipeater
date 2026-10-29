@@ -1843,9 +1843,12 @@
       }
       timeSyncCheckbox.checked = !!g.time_sync;
 
+      // loadGpsDevices() calls updateGpsVisibility() itself once the device list actually
+      // arrives -- calling it again here, synchronously, would see the still-empty device
+      // list and wrongly flip a saved "gps" position_source back to "manual" before the
+      // real device list ever loads.
       loadGpsDevices();
       loadTimezones();
-      updateGpsVisibility();
       updateFormatVisibility();
       updateLocPreview();
     }

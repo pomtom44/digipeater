@@ -325,7 +325,7 @@ def create_app(
             await asyncio.sleep(_SIGNAL_TEST_POLL_INTERVAL_S)
         await system.set_direwolf_running(False, config)
         try:
-            direwolf_config.write(config)
+            await direwolf_config.write_live(config)
         except OSError as e:
             logger.error("Failed to restore direwolf.conf after signal test: %s", e)
 
@@ -366,10 +366,9 @@ def create_app(
         status = await system.get_direwolf_status()
         started_for_test = False
         if not status.get("running"):
-            direwolf_config.write(full_config, test_only=True)
-            start_result = await system.set_direwolf_running(True, full_config)
+            start_result = await system.set_direwolf_running(True, full_config, test_only=True)
             if not start_result["ok"]:
-                direwolf_config.write(full_config)
+                await direwolf_config.write_live(full_config)
                 raise HTTPException(
                     status_code=502, detail=f"Could not start Direwolf for the test: {start_result['reason']}",
                 )
@@ -382,14 +381,14 @@ def create_app(
             logger.error("Failed to start signal test: %s", e)
             if started_for_test:
                 await system.set_direwolf_running(False, full_config)
-                direwolf_config.write(full_config)
+                await direwolf_config.write_live(full_config)
             raise HTTPException(status_code=500, detail="Could not record the signal test; nothing was sent")
         try:
             await signal_test.send_ping(my_call, target, path, test_id)
         except RuntimeError as e:
             if started_for_test:
                 await system.set_direwolf_running(False, full_config)
-                direwolf_config.write(full_config)
+                await direwolf_config.write_live(full_config)
             raise HTTPException(status_code=502, detail=str(e))
 
         if started_for_test:
@@ -865,7 +864,7 @@ def create_app(
         radio_write_pending = False
         if radio_changed or aprs_changed:
             try:
-                direwolf_config.write(config)
+                await direwolf_config.write_live(config)
             except OSError as e:
                 logger.error("Failed to write direwolf.conf: %s", e)
             radio_needs_programming = radio_changed and radio_programmer.can_program(config.get("radio", {}).get("model"))
