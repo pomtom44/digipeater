@@ -28,12 +28,8 @@ _EXPECTED_ID = "DJ-138"
 _CHANNEL0 = 0x2000  # channel 0's record start; this radio only ever targets channel 0
 _TIME_OUT_TIMER_OFFSET = 0x022c
 
-# Two separate settings, easy to conflate: VFO/MR selects the tuning source (VFO dial vs a memory
-# channel) -- that's the real "memory mode", and setting it to MR with channel 0 always boots the
-# radio into channel 0 regardless of the VFO dial's position. Display Mode controls only what the
-# screen *shows* (00=Frequency, 01=Channel number e.g. "CH-00", 02=Channel name); it's set to Name
-# here, and _encode_name() falls back to the frequency as text when no name is given, so the screen
-# always shows something meaningful.
+# VFO/MR selects the tuning source (set to MR so channel 0 always boots regardless of the VFO
+# dial); Display Mode controls only what the screen shows (set to Name, see _encode_name()).
 _DISPLAY_MODE_OFFSET = 0x0220
 _VFO_MR_OFFSET = 0x0221
 _MR_CHANNEL_OFFSET = 0x0222
@@ -57,28 +53,23 @@ _CTCSS_TABLE = {
 }
 
 
+def _bcd(n: int) -> int:
+    tens, ones = divmod(n, 10)
+    return (tens << 4) | ones
+
+
 def _encode_frequency(freq_hz: int) -> bytes:
     """4-byte RX/TX frequency: leading digit raw, then 3 BCD-pair bytes, units of 100Hz."""
     units = round(freq_hz / 100)
     digits = f"{units:07d}"
-
-    def bcd(n: int) -> int:
-        tens, ones = divmod(n, 10)
-        return (tens << 4) | ones
-
-    return bytes([int(digits[0]), bcd(int(digits[1:3])), bcd(int(digits[3:5])), bcd(int(digits[5:7]))])
+    return bytes([int(digits[0]), _bcd(int(digits[1:3])), _bcd(int(digits[3:5])), _bcd(int(digits[5:7]))])
 
 
 def _encode_offset_magnitude(offset_hz: int) -> bytes:
     """3-byte duplex offset magnitude: BCD-pair bytes, units of 100Hz, no leading raw digit."""
     units = round(abs(offset_hz) / 100)
     digits = f"{units:06d}"
-
-    def bcd(n: int) -> int:
-        tens, ones = divmod(n, 10)
-        return (tens << 4) | ones
-
-    return bytes([bcd(int(digits[0:2])), bcd(int(digits[2:4])), bcd(int(digits[4:6]))])
+    return bytes([_bcd(int(digits[0:2])), _bcd(int(digits[2:4])), _bcd(int(digits[4:6]))])
 
 
 def _encode_name(name: str) -> bytes:
@@ -89,7 +80,8 @@ def _build_overrides(radio_config: dict) -> dict:
     """Maps the user's radio config onto {offset: bytes} patches over the factory image."""
     freq_hz = round(float(radio_config["frequency_mhz"]) * 1_000_000)
     name = radio_config.get("name") or f"{freq_hz / 1_000_000:.3f}"
-    power = {"MEDIUM": "MID"}.get((radio_config.get("power_level") or "HIGH").upper(), (radio_config.get("power_level") or "HIGH").upper())
+    power_level = (radio_config.get("power_level") or "HIGH").upper()
+    power = {"MEDIUM": "MID"}.get(power_level, power_level)
     advanced = radio_config.get("advanced") or {}
 
     overrides = {
@@ -180,9 +172,7 @@ def _handshake(ser: serial.Serial) -> str:
     ser.write(bytes([0x02]))
     ser.flush()
     id_reply = _read_exact(ser, 9, "ID reply")
-    # Version reply is 8 bytes: `05` + "V100" + 2 variable bytes + a trailing 06 ack (see the protocol
-    # doc). Leaving that ack unread shifts every subsequent read by one byte, corrupting the next echo
-    # check.
+    # Version reply is 8 bytes incl. a trailing 06 ack -- leaving it unread shifts every later read.
     version_reply = _read_exact(ser, 8, "version reply")
     if version_reply[-1] != _ACK:
         raise IOError(f"version reply missing trailing ack: {version_reply!r}")

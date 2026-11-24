@@ -162,31 +162,10 @@
     <p class="msg" id="msg"></p>
   </div>
 
+  <script src="/static/shared.js"></script>
   <script>
     // ── UI theme toggle ──────────────────────────────────────────────
-    const UI_THEME_KEY = 'ui-theme';
-    const THEME_CYCLE = [null, 'light', 'dark']; // null = follow system
-    const THEME_LABELS = { null: 'Theme: System', light: 'Theme: Light', dark: 'Theme: Dark' };
-
-    function applyUiTheme(theme) {
-      if (theme === 'light' || theme === 'dark') {
-        document.documentElement.setAttribute('data-theme', theme);
-      } else {
-        document.documentElement.removeAttribute('data-theme');
-      }
-      document.getElementById('theme-toggle').textContent = THEME_LABELS[theme];
-    }
-
-    let uiTheme = localStorage.getItem(UI_THEME_KEY);
-    if (!THEME_CYCLE.includes(uiTheme)) uiTheme = null;
-    applyUiTheme(uiTheme);
-
-    document.getElementById('theme-toggle').addEventListener('click', () => {
-      uiTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(uiTheme) + 1) % THEME_CYCLE.length];
-      if (uiTheme) localStorage.setItem(UI_THEME_KEY, uiTheme);
-      else localStorage.removeItem(UI_THEME_KEY);
-      applyUiTheme(uiTheme);
-    });
+    initThemeToggle();
 
     // Backend redirects here with ?error=... on a failed login attempt.
     const params = new URLSearchParams(location.search);

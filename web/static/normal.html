@@ -449,12 +449,12 @@
       </div>
     </main>
 
-    <div id="confirm-modal" class="modal-overlay hidden">
+    <div id="confirm-overlay" class="modal-overlay hidden">
       <div class="card modal-box">
-        <p id="confirm-modal-text"></p>
+        <p id="confirm-box-text"></p>
         <div class="modal-actions">
-          <button type="button" class="btn" id="confirm-modal-cancel">Cancel</button>
-          <button type="button" class="btn" id="confirm-modal-ok">Confirm</button>
+          <button type="button" class="btn" id="confirm-box-no">Cancel</button>
+          <button type="button" class="btn" id="confirm-box-yes">Confirm</button>
         </div>
       </div>
     </div>
@@ -473,30 +473,8 @@
 
   <script src="/static/maplibre/maplibre-gl.js"></script>
   <script src="/static/maplibre/pmtiles.js"></script>
+  <script src="/static/shared.js"></script>
   <script>
-    // ── APRS symbol glyph rendering, from the shared sprite sheet (web/static/aprs-symbols/) ──
-    const SPRITE_CELL_W = 64;
-    const SPRITE_CELL_H = 64;
-    const SPRITE_SHEET_W = 1024;
-    const SPRITE_SHEET_H = 384;
-    const SPRITE_BASE = '/static/aprs-symbols/';
-
-    function symbolGlyphHTML(sym, displayW) {
-      const sheet = sym.table === '\\' ? 'sheet1.png' : 'sheet0.png';
-      const code = sym.symbol.charCodeAt(0) - 0x21;
-      const col = code % 16;
-      const row = Math.floor(code / 16);
-      const scale = displayW / SPRITE_CELL_W;
-      const displayH = Math.round(SPRITE_CELL_H * scale);
-      const bgW = Math.round(SPRITE_SHEET_W * scale);
-      const bgH = Math.round(SPRITE_SHEET_H * scale);
-      const bgX = -Math.round(col * SPRITE_CELL_W * scale);
-      const bgY = -Math.round(row * SPRITE_CELL_H * scale);
-      // display:inline-block + flex-shrink:0 keeps the icon sized correctly in both flex and block parents.
-      const style = `display:inline-block;flex-shrink:0;width:${displayW}px;height:${displayH}px;background-image:url('${SPRITE_BASE}${sheet}');background-repeat:no-repeat;background-size:${bgW}px ${bgH}px;background-position:${bgX}px ${bgY}px;`;
-      return `<span style="${style}"></span>`;
-    }
-
     // ── Sidebar toggle (narrow viewports) ────────────────────────────
     const sidebar = document.getElementById('sidebar');
     document.getElementById('sidebar-toggle').addEventListener('click', () => {
@@ -742,14 +720,6 @@
       return `${Math.round(m / 60)}h ago`;
     }
 
-    function timeUntilLabel(seconds) {
-      const s = Math.max(0, Math.round(seconds));
-      if (s < 60) return `in ${s}s`;
-      const m = Math.round(s / 60);
-      if (m < 60) return `in ${m}m`;
-      return `in ${Math.round(m / 60)}h`;
-    }
-
     function renderGpsBody(gpsCfg, status) {
       const title = document.getElementById('gps-title');
       const body = document.getElementById('gps-body');
@@ -781,29 +751,7 @@
     }
 
     // ── UI theme toggle (page chrome only; the map has its own separate toggle) ──
-    const UI_THEME_KEY = 'ui-theme';
-    const THEME_CYCLE = [null, 'light', 'dark']; // null = follow system
-    const THEME_LABELS = { null: 'Theme: System', light: 'Theme: Light', dark: 'Theme: Dark' };
-
-    function applyUiTheme(theme) {
-      if (theme === 'light' || theme === 'dark') {
-        document.documentElement.setAttribute('data-theme', theme);
-      } else {
-        document.documentElement.removeAttribute('data-theme');
-      }
-      document.getElementById('theme-toggle').textContent = THEME_LABELS[theme];
-    }
-
-    let uiTheme = localStorage.getItem(UI_THEME_KEY);
-    if (!THEME_CYCLE.includes(uiTheme)) uiTheme = null;
-    applyUiTheme(uiTheme);
-
-    document.getElementById('theme-toggle').addEventListener('click', () => {
-      uiTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(uiTheme) + 1) % THEME_CYCLE.length];
-      if (uiTheme) localStorage.setItem(UI_THEME_KEY, uiTheme);
-      else localStorage.removeItem(UI_THEME_KEY);
-      applyUiTheme(uiTheme);
-    });
+    initThemeToggle();
 
     // ── Auth (login/config/logout buttons, gates Direwolf control), populated at boot ──
     let authState = { mode: 'none', logged_in: false };
@@ -830,31 +778,6 @@
         location.reload();
       }
     });
-
-    // ── Confirm modal, reused for plain confirmations and the login-required prompt ──
-    function confirmModal(text, { okLabel = 'Confirm', cancelLabel = 'Cancel', hideCancel = false } = {}) {
-      return new Promise((resolve) => {
-        const overlay = document.getElementById('confirm-modal');
-        const okBtn = document.getElementById('confirm-modal-ok');
-        const cancelBtn = document.getElementById('confirm-modal-cancel');
-        document.getElementById('confirm-modal-text').textContent = text;
-        okBtn.textContent = okLabel;
-        cancelBtn.textContent = cancelLabel;
-        cancelBtn.classList.toggle('hidden', hideCancel);
-        overlay.classList.remove('hidden');
-        function cleanup(result) {
-          overlay.classList.add('hidden');
-          cancelBtn.classList.remove('hidden');
-          okBtn.removeEventListener('click', onOk);
-          cancelBtn.removeEventListener('click', onCancel);
-          resolve(result);
-        }
-        function onOk() { cleanup(true); }
-        function onCancel() { cleanup(false); }
-        okBtn.addEventListener('click', onOk);
-        cancelBtn.addEventListener('click', onCancel);
-      });
-    }
 
     // ── Direwolf status/control badge, reflects services/system.py's real or simulated state ──
     const DIREWOLF_STATE_LABELS = {
@@ -911,7 +834,7 @@
           return;
         }
         if (!canControl) {
-          const ok = await confirmModal('Log in to change state', { okLabel: 'Log in', cancelLabel: 'Cancel' });
+          const ok = await confirmModal('Log in to change state', 'Log in', 'Cancel');
           if (ok) location.href = '/login';
           return;
         }
@@ -1217,7 +1140,7 @@
         if (status.autostart_skipped_notice) {
           confirmModal(
             'First boot autostart disabled to allow for advanced config, subsequent boots will have autostart enabled',
-            { okLabel: 'OK', hideCancel: true },
+            'OK', undefined, { hideCancel: true },
           );
         }
       } catch (e) {}

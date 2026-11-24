@@ -6,6 +6,7 @@ from pathlib import Path
 import uvicorn
 import yaml
 
+from display.base import render_page
 from display.driver_none import NullDriver
 from display.rotation import RotationManager, load_pages
 from services import db, direwolf_config, gpsconfig, log_settings, network, packet_log, relay, restart_policy, system
@@ -60,16 +61,7 @@ def _load_display_driver(name: str, model: str):
 
 async def _render(driver, draw_fn, *args) -> None:
     """Render via draw_fn in a worker thread and show it as a full refresh."""
-    try:
-        from PIL import Image, ImageDraw, ImageFont  # noqa: F401 (import check before threading)
-    except ImportError:
-        logger.warning("Pillow not installed, skipping display render")
-        return
-    try:
-        image = await asyncio.to_thread(draw_fn, driver, *args)
-        await asyncio.to_thread(driver.show, image)
-    except Exception as e:
-        logger.error("Display render failed: %s", e)
+    await render_page(driver, draw_fn, *args, warn_missing_pillow=True)
 
 
 async def _wait_for_existing_connection():
@@ -193,18 +185,14 @@ async def main() -> None:
         )
         rotation.start()
 
-        # Runs in the background: this can take anywhere from seconds (radio programming, relay boot
-        # delay) to minutes (a slow GPS fix), and none of it needs to finish before the web server
-        # starts -- the dashboard's own Direwolf-status polling already shows "waiting_gps"/"starting"
-        # live, which needs the page to be reachable while that's happening.
+        # Runs in the background: can take seconds to minutes (a slow GPS fix), and none of it needs
+        # to finish before the web server starts -- the dashboard polls Direwolf's own status live.
         async def _start_services() -> None:
             try:
                 await gpsconfig.apply(config.get("gps", {}))
                 await restart_policy.apply(config.get("startup", {}))
 
                 # Regenerated fresh on every boot so a manually edited config.yaml still takes effect.
-                # (GPS may not have a fix this early; set_direwolf_running's own write right before
-                # actually starting direwolf is the one that matters for a live-position beacon.)
                 try:
                     await direwolf_config.write_live(config)
                 except OSError as e:

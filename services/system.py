@@ -39,11 +39,8 @@ _simulated_running = False
 _transition: str | None = None
 # Reason the last completed start/stop attempt failed, if any; cleared on next success.
 _last_error: str | None = None
-# Serializes set_direwolf_running() and write_radio() against each other -- both drive the relay and
-# the radio's serial/programming state, and the app's own boot sequence can have a start already in
-# flight (blocked for minutes inside _wait_for_gps_fix) while the web UI is already reachable and
-# able to fire a second one. Without this, two interleaved calls can power the relay off mid-program
-# or leave Direwolf running with the relay off -- see _set_direwolf_running_impl/_write_radio_impl.
+# Serializes set_direwolf_running() and write_radio() -- both drive the relay and radio serial
+# state, and an interleaved pair could power the relay off mid-program or leave it off while running.
 _RADIO_LOCK = asyncio.Lock()
 
 
@@ -141,11 +138,18 @@ async def _wait_for_gps_fix_impl(gps_config: dict) -> tuple[bool, str | None]:
 # Consecutive polls of a steady "active" state needed to confirm Direwolf has fully settled after forking.
 DIREWOLF_STARTUP_CONFIRM_S = 8
 DIREWOLF_STARTUP_POLL_INTERVAL_S = 1
+# Slack added to the attempts*delay_s restart budget, so the deadline doesn't trip right as systemd's
+# own last restart is still settling.
+_SUPERVISE_PER_ATTEMPT_MARGIN_S = 15
+_SUPERVISE_FLAT_MARGIN_S = 30
 
 
 async def _supervise_direwolf_startup(attempts: int, delay_s: int) -> dict:
     """Watches Direwolf's state after start, until it settles active or systemd exhausts its restart attempts."""
-    deadline = asyncio.get_event_loop().time() + attempts * (delay_s + 15) + 30
+    deadline = (
+        asyncio.get_event_loop().time()
+        + attempts * (delay_s + _SUPERVISE_PER_ATTEMPT_MARGIN_S) + _SUPERVISE_FLAT_MARGIN_S
+    )
     consecutive_active = 0
     while asyncio.get_event_loop().time() < deadline:
         await asyncio.sleep(DIREWOLF_STARTUP_POLL_INTERVAL_S)
@@ -213,11 +217,8 @@ async def set_direwolf_running(running: bool, config: dict | None = None, *, tes
 
 
 async def _log_radio_start_event(ok: bool, reason: str | None, model: str | None) -> None:
-    """Separate from direwolf_events: this is specifically the radio power-on/programming phase of
-    an autostart attempt, surfaced in the same "Radio programming history" log as the manual
-    Write-to-radio button (services/system.py's write_radio) -- so a radio-side failure and a
-    Direwolf-service-side failure show up as distinct history entries instead of one conflated
-    "start failed" reason string."""
+    """Logs the radio power-on/programming phase of an autostart attempt to "Radio programming
+    history" -- kept separate from direwolf_events so a radio failure isn't conflated with Direwolf's."""
     await _log_event(
         "INSERT INTO radio_write_events (at, model, ok, reason, was_running) VALUES (?, ?, ?, ?, ?)",
         (time.time(), model, int(ok), reason, 0),
@@ -254,10 +255,8 @@ async def _set_direwolf_running_impl(running: bool, config: dict | None = None, 
                 await _log_radio_start_event(False, _last_error, model)
                 return {"ok": False, "reason": _last_error}
 
-            # Snapshot the now-confirmed fix into direwolf.conf's static LAT=/LONG= right before
-            # start -- the earlier write at boot/config-save time can predate GPS having a fix.
-            # test_only is forwarded so an ephemeral signal-test start doesn't get its
-            # beaconing-disabled config clobbered back to the real one here.
+            # Snapshot the now-confirmed GPS fix into LAT=/LONG= right before start -- the earlier
+            # write at boot/config-save time can predate a fix.
             try:
                 await direwolf_config.write_live(config, test_only=test_only)
             except OSError as e:
@@ -310,9 +309,8 @@ _radio_write_progress: tuple[int, int] | None = None
 
 
 def get_radio_write_status() -> dict:
-    """Read-only progress snapshot for the frontend to poll during write_radio(); includes the fixed
-    boot delay it knows about up front so a determinate bar can be drawn for that phase, and the
-    real blocks-written count for the programming phase."""
+    """Read-only progress snapshot polled by the frontend during write_radio(): the fixed boot
+    delay for that phase, and the real blocks-written count for the programming phase."""
     return {
         "phase": _radio_write_phase,
         "boot_delay_s": relay.BOOT_DELAY_S,
@@ -335,9 +333,8 @@ async def write_radio(radio_config: dict) -> dict:
 
 
 async def _write_radio_impl(radio_config: dict) -> dict:
-    """Powers the relay on if the radio is off, or stops Direwolf first (leaving the radio powered) if
-    it's already running, then programs and settles. Returns was_running so the caller can offer to
-    restart Direwolf or power the radio back off."""
+    """Powers the radio on (or stops Direwolf first, leaving it powered) then programs and settles.
+    Returns was_running so the caller can offer to restart Direwolf or power the radio off."""
     global _radio_write_phase, _radio_write_progress
     if not radio_config.get("model"):
         return {"ok": False, "reason": "Pick a radio model first.", "was_running": False}

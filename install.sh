@@ -182,10 +182,8 @@ run_with_spinner "Enabling SPI interface..." sudo raspi-config nonint do_spi 0
 ok "SPI enabled (reboot required the first time this is enabled)"
 
 # ── Work around a dwc_otg USB controller hang (Pi 3/Zero only) ──
-# On these boards, onboard Ethernet and USB-serial devices (GPS, TNC) share
-# one dwc_otg USB controller. Certain device open/close events can wedge the
-# whole controller, taking Ethernet down with it. lpm_enable=0 is the
-# standard kernel workaround; harmless no-op on boards without dwc_otg.
+# Onboard Ethernet and USB-serial (GPS/TNC) share one controller on these boards, and certain
+# device open/close events can wedge it; lpm_enable=0 is the standard kernel workaround.
 if dmesg | grep -q "dwc_otg:"; then
     if [ -f /boot/firmware/cmdline.txt ]; then
         CMDLINE_FILE=/boot/firmware/cmdline.txt
@@ -207,85 +205,53 @@ run_with_spinner "Configuring NetworkManager..." bash -c "
 "
 ok "NetworkManager configured"
 
+# ── Grant a scoped sudo rule, validated before install ────────
+# Shared by all the digipeater-* sudoers rules below: writes rule_text to a temp file, validates
+# it with visudo, installs it to dest (0440, root:root), then cleans up the temp file either way.
+grant_sudo_rule() {
+    local rule_text="$1" dest="$2"
+    local sudoers_tmp="$(mktemp)"
+    echo "$rule_text" > "$sudoers_tmp"
+    if sudo visudo -c -f "$sudoers_tmp" > /dev/null 2>&1; then
+        sudo install -o root -g root -m 0440 "$sudoers_tmp" "$dest"
+        rm -f "$sudoers_tmp"
+    else
+        rm -f "$sudoers_tmp"
+        fail "Generated sudoers rule failed validation, aborting for safety"
+    fi
+}
+
 # ── Grant nmcli access for the app's hotspot management ──────
 # nmcli needs root for hotspot management; the sudoers rule is scoped to just this command.
 NMCLI_PATH="$(command -v nmcli)"
-SUDOERS_TMP="$(mktemp)"
-echo "$USER ALL=(root) NOPASSWD: $NMCLI_PATH" > "$SUDOERS_TMP"
-if sudo visudo -c -f "$SUDOERS_TMP" > /dev/null 2>&1; then
-    sudo install -o root -g root -m 0440 "$SUDOERS_TMP" /etc/sudoers.d/digipeater-nmcli
-    rm -f "$SUDOERS_TMP"
-else
-    rm -f "$SUDOERS_TMP"
-    fail "Generated sudoers rule failed validation, aborting for safety"
-fi
+grant_sudo_rule "$USER ALL=(root) NOPASSWD: $NMCLI_PATH" /etc/sudoers.d/digipeater-nmcli
 
 # ── Grant reboot access for the setup wizard's "Finish & Reboot" step ──
 # Separate sudoers rule per binary, scoped narrowly like nmcli's above.
 REBOOT_PATH="$(command -v reboot)"
-SUDOERS_TMP2="$(mktemp)"
-echo "$USER ALL=(root) NOPASSWD: $REBOOT_PATH" > "$SUDOERS_TMP2"
-if sudo visudo -c -f "$SUDOERS_TMP2" > /dev/null 2>&1; then
-    sudo install -o root -g root -m 0440 "$SUDOERS_TMP2" /etc/sudoers.d/digipeater-reboot
-    rm -f "$SUDOERS_TMP2"
-else
-    rm -f "$SUDOERS_TMP2"
-    fail "Generated sudoers rule failed validation, aborting for safety"
-fi
+grant_sudo_rule "$USER ALL=(root) NOPASSWD: $REBOOT_PATH" /etc/sudoers.d/digipeater-reboot
 
 # ── Grant access to the GPS config helper for the GPS setup step ──
 # Root-only GPS/chrony/timezone actions live in this one script, scoped like nmcli/reboot above.
 chmod +x "$APP_DIR/scripts/apply-gps-config.sh"
 GPSCONFIG_PATH="$APP_DIR/scripts/apply-gps-config.sh"
-SUDOERS_TMP3="$(mktemp)"
-echo "$USER ALL=(root) NOPASSWD: $GPSCONFIG_PATH" > "$SUDOERS_TMP3"
-if sudo visudo -c -f "$SUDOERS_TMP3" > /dev/null 2>&1; then
-    sudo install -o root -g root -m 0440 "$SUDOERS_TMP3" /etc/sudoers.d/digipeater-gpsconfig
-    rm -f "$SUDOERS_TMP3"
-else
-    rm -f "$SUDOERS_TMP3"
-    fail "Generated sudoers rule failed validation, aborting for safety"
-fi
+grant_sudo_rule "$USER ALL=(root) NOPASSWD: $GPSCONFIG_PATH" /etc/sudoers.d/digipeater-gpsconfig
 
 # ── Grant systemctl start/stop access for the dashboard's Direwolf control ──
 # Scoped to just start/stop direwolf; used by the dashboard toggle and main.py's boot sequence (services/system.py).
 SYSTEMCTL_PATH="$(command -v systemctl)"
-SUDOERS_TMP4="$(mktemp)"
-echo "$USER ALL=(root) NOPASSWD: $SYSTEMCTL_PATH start direwolf, $SYSTEMCTL_PATH stop direwolf" > "$SUDOERS_TMP4"
-if sudo visudo -c -f "$SUDOERS_TMP4" > /dev/null 2>&1; then
-    sudo install -o root -g root -m 0440 "$SUDOERS_TMP4" /etc/sudoers.d/digipeater-direwolf-control
-    rm -f "$SUDOERS_TMP4"
-else
-    rm -f "$SUDOERS_TMP4"
-    fail "Generated sudoers rule failed validation, aborting for safety"
-fi
+grant_sudo_rule "$USER ALL=(root) NOPASSWD: $SYSTEMCTL_PATH start direwolf, $SYSTEMCTL_PATH stop direwolf" /etc/sudoers.d/digipeater-direwolf-control
 
 # ── Grant access to the restart-policy helper for the Startup tab ──
 # Scoped script for writing direwolf's restart-policy drop-in (services/restart_policy.py).
 chmod +x "$APP_DIR/scripts/apply-direwolf-restart-policy.sh"
 RESTARTPOLICY_PATH="$APP_DIR/scripts/apply-direwolf-restart-policy.sh"
-SUDOERS_TMP5="$(mktemp)"
-echo "$USER ALL=(root) NOPASSWD: $RESTARTPOLICY_PATH" > "$SUDOERS_TMP5"
-if sudo visudo -c -f "$SUDOERS_TMP5" > /dev/null 2>&1; then
-    sudo install -o root -g root -m 0440 "$SUDOERS_TMP5" /etc/sudoers.d/digipeater-restart-policy
-    rm -f "$SUDOERS_TMP5"
-else
-    rm -f "$SUDOERS_TMP5"
-    fail "Generated sudoers rule failed validation, aborting for safety"
-fi
+grant_sudo_rule "$USER ALL=(root) NOPASSWD: $RESTARTPOLICY_PATH" /etc/sudoers.d/digipeater-restart-policy
 
 # ── Grant access to read Direwolf's journal (error-log modal + live packet tailing) ──
 # Scoped to reading only the direwolf unit's journal, covering both the error-log modal (services/system.py) and packet_log.py's tail.
 JOURNALCTL_PATH="$(command -v journalctl)"
-SUDOERS_TMP6="$(mktemp)"
-echo "$USER ALL=(root) NOPASSWD: $JOURNALCTL_PATH -u direwolf *" > "$SUDOERS_TMP6"
-if sudo visudo -c -f "$SUDOERS_TMP6" > /dev/null 2>&1; then
-    sudo install -o root -g root -m 0440 "$SUDOERS_TMP6" /etc/sudoers.d/digipeater-journalctl
-    rm -f "$SUDOERS_TMP6"
-else
-    rm -f "$SUDOERS_TMP6"
-    fail "Generated sudoers rule failed validation, aborting for safety"
-fi
+grant_sudo_rule "$USER ALL=(root) NOPASSWD: $JOURNALCTL_PATH -u direwolf *" /etc/sudoers.d/digipeater-journalctl
 ok "Permissions configured"
 
 # ── Python virtual environment ────────────────
@@ -482,11 +448,8 @@ for k, v in MODELS.items():
 fi
 
 # ── Tune USB audio capture gain ───────────────
-# Cheap USB audio adapters (the CM108/CM119-family ones this project already targets for PTT) commonly
-# ship with capture gain far too hot for a radio's speaker/line output -- a sliver of the radio's own
-# volume knob already drives the input to full scale. 10% plus AGC off is a reasonable starting point;
-# the config page's Radio tab has a live level meter to fine-tune from there. Best-effort throughout:
-# a card without these exact controls (not every USB audio device has them) just skips, doesn't fail.
+# Cheap USB audio adapters commonly ship with capture gain far too hot for a radio's line output;
+# 10% plus AGC off is a starting point, best-effort since not every card has these exact controls.
 USB_CARD=$(arecord -l 2>/dev/null | grep -m1 "USB" | sed -E 's/^card ([0-9]+).*/\1/')
 if [ -z "$USB_CARD" ]; then
     info "No USB audio capture device detected yet, skipping gain tuning (re-run this script once one's connected)."

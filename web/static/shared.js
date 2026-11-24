@@ -1,8 +1,8 @@
-// Shared between config.html and first_run.html: logic identical in both pages, loaded as a
-// plain classic <script src> before each page's own inline <script> block. Some functions here
-// own their DOM element handles (declared as consts alongside them, right here), since a
-// top-level const/let in one <script> tag isn't visible to a separately-loaded one — anything
-// that instead reads a *page-specific* render function's local variables has to stay page-local.
+// Shared across config.html, first_run.html, normal.html, history.html, stats.html and login.html:
+// logic identical in multiple pages, loaded as a plain classic <script src> before each page's own
+// inline <script> block. Some functions here own their DOM element handles (declared as consts
+// alongside them, right here) — those only resolve on pages that actually have the element; a
+// *page-specific* render function's local variables have to stay page-local instead.
 
 const MAIDENHEAD_LETTERS = 'ABCDEFGHIJKLMNOPQR';
 
@@ -404,6 +404,8 @@ function updatePttSerialLineVisibility() {
   document.getElementById('radio-ptt-serial-line-wrap').classList.toggle('hidden', !isSerial);
 }
 
+const UI_THEME_KEY = 'ui-theme';
+const THEME_CYCLE = [null, 'light', 'dark']; // null = follow system
 const THEME_LABELS = { null: 'Theme: System', light: 'Theme: Light', dark: 'Theme: Dark' };
 
 function applyUiTheme(theme) {
@@ -413,6 +415,21 @@ function applyUiTheme(theme) {
     document.documentElement.removeAttribute('data-theme');
   }
   document.getElementById('theme-toggle').textContent = THEME_LABELS[theme];
+}
+
+// Reads the saved theme, applies it, and wires #theme-toggle's click to cycle + persist it.
+// onChange(theme), if given, runs after each click's applyUiTheme (e.g. to redraw theme-dependent colors).
+function initThemeToggle(onChange) {
+  let uiTheme = localStorage.getItem(UI_THEME_KEY);
+  if (!THEME_CYCLE.includes(uiTheme)) uiTheme = null;
+  applyUiTheme(uiTheme);
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    uiTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(uiTheme) + 1) % THEME_CYCLE.length];
+    if (uiTheme) localStorage.setItem(UI_THEME_KEY, uiTheme);
+    else localStorage.removeItem(UI_THEME_KEY);
+    applyUiTheme(uiTheme);
+    if (onChange) onChange(uiTheme);
+  });
 }
 
 const helpOverlay = document.getElementById('help-overlay');
@@ -433,14 +450,17 @@ const confirmBoxText = document.getElementById('confirm-box-text');
 const confirmBoxYes = document.getElementById('confirm-box-yes');
 const confirmBoxNo = document.getElementById('confirm-box-no');
 
-function confirmModal(text, yesLabel, noLabel) {
+// hideCancel (in an optional 4th options arg) hides the No button for an OK-only notice, restored on cleanup.
+function confirmModal(text, yesLabel = 'Confirm', noLabel = 'Cancel', { hideCancel = false } = {}) {
   return new Promise((resolve) => {
     confirmBoxText.textContent = text;
     confirmBoxYes.textContent = yesLabel;
     confirmBoxNo.textContent = noLabel;
+    confirmBoxNo.classList.toggle('hidden', hideCancel);
     confirmOverlay.classList.remove('hidden');
     function cleanup(result) {
       confirmOverlay.classList.add('hidden');
+      confirmBoxNo.classList.remove('hidden');
       confirmBoxYes.removeEventListener('click', onYes);
       confirmBoxNo.removeEventListener('click', onNo);
       resolve(result);

@@ -25,7 +25,7 @@ async def apply(startup_config: dict) -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        out, err = await proc.communicate()
+        _, err = await proc.communicate()
     except OSError as e:
         logger.error("Failed to run restart-policy helper: %s", e)
         return

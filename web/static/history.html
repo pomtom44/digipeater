@@ -202,17 +202,7 @@
   <script src="/static/shared.js"></script>
   <script>
     // ── UI theme toggle (same pattern as normal.html/config.html) ──────
-    const UI_THEME_KEY = 'ui-theme';
-    const THEME_CYCLE = [null, 'light', 'dark'];
-    let uiTheme = localStorage.getItem(UI_THEME_KEY);
-    if (!THEME_CYCLE.includes(uiTheme)) uiTheme = null;
-    applyUiTheme(uiTheme);
-    document.getElementById('theme-toggle').addEventListener('click', () => {
-      uiTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(uiTheme) + 1) % THEME_CYCLE.length];
-      if (uiTheme) localStorage.setItem(UI_THEME_KEY, uiTheme);
-      else localStorage.removeItem(UI_THEME_KEY);
-      applyUiTheme(uiTheme);
-    });
+    initThemeToggle();
     document.getElementById('btn-config').addEventListener('click', () => { location.href = '/config'; });
     document.getElementById('btn-stats').addEventListener('click', () => { location.href = '/stats'; });
     document.getElementById('btn-back-dashboard').addEventListener('click', () => { location.href = '/'; });

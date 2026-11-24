@@ -61,6 +61,8 @@ Since only steps 1 and 5 happen on this station, the test works even with no int
 
 **No reply?** Check [digiping.zl4st.com](https://digiping.zl4st.com) to see if your ping was heard at all. If it shows up there, steps 1-3 worked, this digipeater is reaching that station and getting into APRS-IS fine, and the fault is on the return leg (step 4 or 5: their igate not relaying back, or you're out of RF range for the reply). If it never shows up, your signal isn't reaching that station in the first place.
 
+The same tab's **power calibration** mode runs this test as a ladder instead of once: it writes Low power to the radio, runs the test, and if there's no direct reply it asks you to check the test site before deciding whether to step up to Medium then High (a radio physically reprogrammed and Direwolf restarted between each attempt) or stop and save the current level as confirmed working. Reaching the top of the range with nothing heard means checking your frequencies or moving to a better location, not a higher power setting.
+
 ---
 
 ## Web dashboard and wizard

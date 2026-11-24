@@ -1,6 +1,5 @@
-"""Decodes heard stations and transmitted frames from Direwolf's KISS port and journald log, logging
-them to the database (services/db.py) -- the only copy of this state, live reads included, not a
-separate in-memory cache kept alongside it."""
+"""Decodes heard stations and transmitted frames from Direwolf's KISS port and journald log,
+logging them to the database (services/db.py) -- the only copy of this state."""
 
 import asyncio
 import json
@@ -30,14 +29,8 @@ _DIREWOLF_UNIT = "direwolf"
 _RE_RF_XMIT = re.compile(r"^\[\d[HL][^\]]*\]\s*([^>\s]+>.*)$")
 _RE_IG_XMIT = re.compile(r"^\[ig\]\s*([^>\s]+>.*)$")
 
-# Direwolf's own per-packet "heard" summary line (src/direwolf.c), printed right after a decoded
-# packet unless started with "-q h". e.g. "N8VIM audio level = 27   [NONE]" or, when repeated through
-# a WIDEn-0 alias, "WIDE2-1 (probably N3LEE-4) audio level = 28(10/6)   [NONE]   __|||||||". Only the
-# callsign and the leading number matter here -- the rest (DCD state, retry/spectrum display) isn't
-# used. When digipeated through a *named* repeater (distinct from a generic WIDEn alias), "heard"
-# reports the repeater's own callsign; the original source is already logged separately via the KISS
-# path. Correlation below won't find a row to match in that case, which is correct (attaching the
-# repeater's signal level to the original station's row would misattribute it).
+# Direwolf's own per-packet "heard" summary line, e.g. "N8VIM audio level = 27   [NONE]". A named
+# (non-WIDEn) repeater reports its own callsign here, so correlation below won't match -- correct.
 _RE_HEARD_LEVEL = re.compile(r"^(?:Digipeater )?(\S+)(?: \(probably (\S+)\))? audio level = (\d+)")
 # How recent a heard_packets row must be to still accept a correlated signal level.
 _HEARD_LEVEL_CORRELATION_WINDOW_S = 5
@@ -72,9 +65,8 @@ def _decode_path(raw: str | None) -> list[str]:
 
 
 def _my_callsign() -> str:
-    """Matches services/direwolf_config.py's _mycall(): the callsign Direwolf actually transmits
-    under, including the SSID when one's configured. Without this, a station with an SSID set never
-    matches its own on-air callsign, breaking own-transmission detection below."""
+    """Matches services/direwolf_config.py's _mycall(): the callsign+SSID Direwolf transmits under.
+    Needed so a station with an SSID set still matches its own on-air callsign below."""
     if not CONFIG_PATH.exists():
         return ""
     try:
@@ -87,6 +79,11 @@ def _my_callsign() -> str:
         return ""
     ssid = aprs.get("ssid")
     return f"{callsign}-{ssid}" if ssid else callsign
+
+
+def _is_own_transmission(source: str, my_call: str) -> bool:
+    """Exact match including SSID: a different SSID on the same callsign root is a distinct station."""
+    return bool(my_call) and source.upper() == my_call.upper()
 
 
 def _kiss_unescape(data: bytes) -> bytes:
@@ -219,22 +216,26 @@ class PacketLog:
             "seconds_ago": round(time.time() - row["heard_at"]),
         }
 
-    async def start_signal_test(self, test_id: str, my_call: str, target_callsign: str) -> None:
-        """Registers a pending RF-reach test in the database -- its only state now, not just
-        incidental logging, so a failure here is raised rather than swallowed: the caller needs to
-        know the test wasn't actually recorded, since nothing else is tracking it."""
+    async def start_signal_test(
+        self, test_id: str, my_call: str, target_callsign: str, power_level: str | None = None,
+    ) -> None:
+        """Registers a pending RF-reach test; its only state now, so a failure here is raised
+        rather than swallowed. power_level is set only for a power-calibration attempt."""
         await db.execute(
-            "INSERT INTO signal_test_results (test_id, started_at, my_call, target_callsign) VALUES (?, ?, ?, ?)",
-            (test_id, time.time(), my_call, target_callsign),
+            "INSERT INTO signal_test_results (test_id, started_at, my_call, target_callsign, power_level) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (test_id, time.time(), my_call, target_callsign, power_level),
         )
 
     async def signal_test_status(self, test_id: str) -> dict | None:
         row = await db.fetchone(
-            "SELECT received, reply_text FROM signal_test_results WHERE test_id = ?", (test_id,),
+            "SELECT received, reply_text, power_level FROM signal_test_results WHERE test_id = ?", (test_id,),
         )
         if row is None:
             return None
-        return {"received": bool(row["received"]), "reply_text": row["reply_text"]}
+        return {
+            "received": bool(row["received"]), "reply_text": row["reply_text"], "power_level": row["power_level"],
+        }
 
     async def _check_signal_test_reply(self, parsed: dict) -> None:
         # A far igate relaying a reply to RF may wrap it in third-party format; unwrap if so.
@@ -360,10 +361,9 @@ class PacketLog:
                 pass
         return "rf_beacon"
 
-    async def _correlate_heard_level(self, match: "re.Match") -> None:
-        """Attaches Direwolf's own audio-level number to the heard_packets row the KISS path already
-        logged for the same packet, matched by callsign within a short recency window. No match (a
-        named-digipeater repeat, or the KISS decode never landing) just leaves signal_level NULL."""
+    async def _correlate_heard_level(self, match: re.Match) -> None:
+        """Attaches Direwolf's audio-level number to the matching heard_packets row (by callsign,
+        within a short recency window). No match just leaves signal_level NULL."""
         if not log_settings.is_enabled("heard_stations"):
             return
         heard_call = match.group(2) or match.group(1)
@@ -384,10 +384,8 @@ class PacketLog:
             logger.error("Failed to correlate signal level for %s: %s", heard_call, e)
 
     async def _handle_log_line(self, line: str, my_call: str) -> None:
-        """journalctl path: matches Direwolf's own TX log line for any frame it transmits -- a beacon,
-        a DIGIPEAT repeat of someone else's packet, an RF packet gated to APRS-IS, or anything else
-        handed to it, e.g. over KISS -- not just ones Direwolf happens to send under our own callsign.
-        Also matches Direwolf's per-packet "heard" summary line, which carries its own audio level."""
+        """journalctl path: matches Direwolf's own TX log line for any frame it transmits, and
+        also its per-packet "heard" summary line (which carries its own audio level)."""
         heard_match = _RE_HEARD_LEVEL.match(line)
         if heard_match:
             await self._correlate_heard_level(heard_match)
@@ -406,10 +404,7 @@ class PacketLog:
 
         packet_text = m.group(1)
         source = packet_text.split(">", 1)[0]
-        # Exact match including SSID: a different SSID on the same callsign root (e.g. a personal
-        # tracker sharing the digipeater owner's callsign) is a distinct station being digipeated,
-        # not a frame we originated.
-        is_own = source.upper() == my_call.upper()
+        is_own = _is_own_transmission(source, my_call)
 
         if not log_settings.is_enabled("sent_packets"):
             # Not just history: beacon_stats() now reads "last beacon sent" straight from this table,
@@ -440,9 +435,7 @@ class PacketLog:
         callsign = parsed.get("from", "")
         if not callsign:
             return
-        # Exact match including SSID: a different SSID on the same callsign root (e.g. a personal
-        # tracker sharing the digipeater owner's callsign) is a distinct station, not our own echo.
-        if my_call and callsign.upper() == my_call.upper():
+        if _is_own_transmission(callsign, my_call):
             return  # our own transmission, not a heard station
         if not log_settings.is_enabled("heard_stations"):
             # heard_stations()/last_heard() read straight from this table, so skipping the write here
@@ -458,14 +451,8 @@ class PacketLog:
         path_json = json.dumps(parsed.get("path") or [])
 
         try:
-            # Direwolf's multi-decoder ("A+" channel mode) can pass the same over-the-air packet up
-            # through KISS more than once, each with its own audio level -- same callsign and content
-            # within a couple seconds means a second decode of that one transmission, not a repeat
-            # beacon, so skip it rather than double-counting the station and splitting the signal
-            # level across two rows. path is compared too: a direct hear followed seconds later by the
-            # same payload via a digipeater's retransmission has identical content but a different
-            # (longer) path -- that's a second, genuinely distinct reception, not a re-decode, and
-            # dropping it would silently lose the hop information path-tracing depends on.
+            # Direwolf's multi-decoder can re-report one transmission via KISS; same callsign/content/
+            # path within a couple seconds means a re-decode, not a repeat beacon -- skip it.
             dup = await db.fetchone(
                 """
                 SELECT id FROM heard_packets

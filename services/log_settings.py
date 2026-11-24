@@ -1,7 +1,5 @@
-"""Which database log types are enabled, cached in memory and refreshed whenever config.yaml's
-"logging" section changes (applied the same way as services/gpsconfig.py, restart_policy.py, etc).
-Lets someone who just wants a digipeater, no history, turn off the log types they don't want -- the
-capture itself is skipped along with the DB write, so a disabled type's live features go with it."""
+"""Which database log types are enabled, cached in memory and refreshed on config.yaml changes.
+Disabling a type skips its capture entirely, not just its DB write -- live features go with it."""
 
 # key -> (default enabled, whether a live feature reads the live-tracked state itself, so the
 # frontend/API can report "disabled because logging is off" as a distinct state from "empty").
@@ -41,9 +39,7 @@ LOG_TYPES: dict[str, dict] = {
 }
 
 _enabled: dict[str, bool] = {key: True for key in LOG_TYPES}
-# 0 = no limit, for either. Age defaults to a real limit (90 days) rather than "keep everything
-# forever" -- a size limit almost never ends up mattering (even a busy station's 30-day traffic is
-# only a rough 5-10 MB), so that one defaults off.
+# 0 = no limit, for either. Age defaults to a real limit; size defaults off since it rarely matters.
 DEFAULT_RETENTION_DAYS = 90
 DEFAULT_RETENTION_SIZE_MB = 0
 _retention_days: float = DEFAULT_RETENTION_DAYS

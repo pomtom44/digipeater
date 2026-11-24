@@ -2,6 +2,7 @@
 
 from ._shared import fit_font, FONT_BOLD, FONT_REGULAR
 # Reuse default.py's generic column-table, icon+text, and station-card layouts rather than duplicating them.
+from . import default
 from .default import draw_table_page, draw_symbol_page, draw_station_page  # noqa: F401
 
 MARGIN = 10
@@ -9,28 +10,14 @@ LABEL_VALUE_GAP = 8
 
 
 def draw_loading_page(driver, title: str = "Digipeater", subtitle: str = "Loading"):
-    """Full-screen bordered splash, title and subtitle stacked and centered as a block."""
-    from PIL import Image, ImageDraw
-    w, h = driver.width, driver.height
-    image = Image.new("1", (w, h), 255)
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, w - 1, h - 1), outline=0)
-
-    title_font = fit_font(draw, title, FONT_BOLD, w - 2 * MARGIN, 26)
-    subtitle_font = fit_font(draw, subtitle, FONT_REGULAR, w - 2 * MARGIN, 18)
-    tbbox = draw.textbbox((0, 0), title, font=title_font)
-    tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
-    sbbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
-    sw, sh = sbbox[2] - sbbox[0], sbbox[3] - sbbox[1]
-
-    gap = 8
-    top = (h - (th + gap + sh)) / 2
-    draw.text(((w - tw) / 2, top - tbbox[1]), title, font=title_font, fill=0)
-    draw.text(((w - sw) / 2, top + th + gap - sbbox[1]), subtitle, font=subtitle_font, fill=0)
-    return image
+    """Same splash as default.py, bigger fonts matched to this panel."""
+    return default.draw_loading_page(
+        driver, title, subtitle, margin=MARGIN, title_size=26, subtitle_size=18, gap=8,
+    )
 
 
 def draw_status_page(driver, title: str, rows: list[tuple[str, str]]):
+    """Title bar over a simple key/value row list, sized for this panel."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)

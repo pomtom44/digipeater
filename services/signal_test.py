@@ -1,8 +1,5 @@
-"""RF-reach test: transmits an APRS message over RF via Direwolf, addressed to a nearby igate-enabled
-station, to confirm this (RF-only) digipeater's signal actually reaches far enough to be gated onto
-APRS-IS. The reply, if the far station's igate relays one back, is caught by packet_log.py's existing
-KISS tail -- this module only builds and sends the outbound frame.
-"""
+"""RF-reach test: transmits an APRS message over RF, addressed to a nearby igate-enabled station.
+Only builds and sends the outbound frame -- a reply is caught by packet_log.py's own KISS tail."""
 
 import asyncio
 

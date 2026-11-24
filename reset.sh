@@ -120,6 +120,9 @@ except ImportError as e:
     print(f"RPi.GPIO not importable: {e}", file=sys.stderr)
     sys.exit(1)
 
+# Keep these in sync with services/relay.py's DEFAULT_RELAY_PIN and display/waveshare/epdconfig.py's
+# DEFAULT_RST_PIN/DEFAULT_DC_PIN/DEFAULT_CS_PIN/DEFAULT_BUSY_PIN -- hardcoded rather than imported
+# since this script must still work if the app/venv is broken.
 relay_pin, rst_pin, dc_pin, cs_pin, busy_pin = 27, 17, 25, 8, 24
 config_path = sys.argv[1] if len(sys.argv) > 1 else None
 if config_path:
@@ -134,18 +137,14 @@ if config_path:
         cs_pin = gpio_cfg.get("eink_cs", cs_pin)
         busy_pin = gpio_cfg.get("eink_busy", busy_pin)
     except (FileNotFoundError, ImportError):
-        # FileNotFoundError: config.yaml doesn't exist, defaults above are fine.
-        # ImportError: PyYAML isn't installed for whichever interpreter is running this (true for
-        # bare system python3 -- PyYAML is only pip-installed into the venv, see requirements.txt).
-        # Must not let this escape: an uncaught ImportError here would kill the script before it
-        # ever reaches GPIO.setmode() below, long before this function runs out of things to try.
+        # FileNotFoundError (no config.yaml) or ImportError (no PyYAML on bare system python3):
+        # defaults above are fine -- must not let this escape and kill the script before GPIO.setmode().
         pass
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
-# Relay pin: drive LOW and leave it driven, do NOT cleanup() it -- cleanup() floats the pin to an
-# input, and a floating trigger input re-energizes some relay boards. Register state stays latched
-# after this process exits even without cleanup(), same reasoning as services/relay.py's own pattern.
+# Relay pin: drive LOW and leave it driven, do NOT cleanup() it -- that floats the pin to an input,
+# and a floating trigger input re-energizes some relay boards. State stays latched after exit regardless.
 GPIO.setup(relay_pin, GPIO.OUT, initial=GPIO.LOW)
 GPIO.output(relay_pin, GPIO.LOW)
 GPIO.cleanup([rst_pin, dc_pin, cs_pin, busy_pin])
@@ -156,9 +155,8 @@ PYEOF
     elif GPIO_OUT="$(sudo "$GPIO_PY" "$GPIO_SCRIPT" "$INSTALL_DIR/config.yaml" 2>&1)"; then
         ok "GPIO outputs turned off, needed sudo ($GPIO_OUT)"
     elif command -v raspi-gpio >/dev/null 2>&1; then
-        # RPi.GPIO missing entirely (e.g. python3-rpi.gpio already purged by an earlier reset run) --
-        # raspi-gpio talks to the GPIO registers directly, no Python module needed. Can't read a
-        # custom relay_pin override from config.yaml this way, so this only covers the default pin.
+        # RPi.GPIO missing entirely -- raspi-gpio talks to GPIO registers directly, no Python module
+        # needed, but can't read a custom relay_pin override from config.yaml this way.
         info "RPi.GPIO unavailable ($GPIO_OUT), falling back to raspi-gpio for the default relay pin (27)"
         if sudo raspi-gpio set 27 op dl; then
             ok "Relay pin 27 driven low via raspi-gpio"
@@ -218,10 +216,8 @@ sudo rfkill block wifi
 ok "WiFi radio re-blocked"
 
 # ── Restore systemd-timesyncd as the time-sync service ─
-# Reverses install.sh's switch to chrony (needed for GPS time sync). systemd-timesyncd isn't
-# guaranteed to still be present -- on some images/setups it's been removed entirely (confirmed on
-# real hardware: "Unit systemd-timesyncd.service not found"), in which case blindly `enable --now`ing
-# it fails silently and leaves the Pi with NO time-sync daemon at all once chrony is purged below.
+# Reverses install.sh's switch to chrony. systemd-timesyncd may have been removed entirely on some
+# images -- blindly `enable --now`ing it then would fail silently and leave no time-sync daemon at all.
 info "Restoring systemd-timesyncd..."
 sudo systemctl disable --now chrony --quiet 2>/dev/null || true
 if ! systemctl list-unit-files 2>/dev/null | grep -q "^systemd-timesyncd.service"; then

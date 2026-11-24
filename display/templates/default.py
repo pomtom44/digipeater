@@ -3,6 +3,19 @@
 from ._shared import load_font, fit_font, wrap_text, FONT_BOLD, FONT_REGULAR
 
 
+def draw_title_and_divider(draw, w: int, title: str, title_size: int, margin: int, divider_gap: int):
+    """Fits the title to content width, center-draws it at the top margin, and draws the divider
+    line below it. Returns (content_width, divider_y) for the caller to lay out the rest of the page."""
+    content_width = w - 2 * margin
+    title_font = fit_font(draw, title, FONT_BOLD, content_width, title_size)
+    tbbox = draw.textbbox((0, 0), title, font=title_font)
+    tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
+    draw.text(((w - tw) / 2, margin), title, font=title_font, fill=0)
+    divider_y = margin + th + divider_gap / 2
+    draw.line((margin, divider_y, w - margin, divider_y), fill=0, width=1)
+    return content_width, divider_y
+
+
 def draw_symbol_page(
     driver, title: str, symbol_image, comment: str,
     *, title_size: int = 16, comment_size: int = 12, margin: int = 8, divider_gap: int = 8,
@@ -13,13 +26,7 @@ def draw_symbol_page(
     image = Image.new("1", (w, h), 255)
     draw = ImageDraw.Draw(image)
 
-    content_width = w - 2 * margin
-    title_font = fit_font(draw, title, FONT_BOLD, content_width, title_size)
-    tbbox = draw.textbbox((0, 0), title, font=title_font)
-    tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
-    draw.text(((w - tw) / 2, margin), title, font=title_font, fill=0)
-    divider_y = margin + th + divider_gap / 2
-    draw.line((margin, divider_y, w - margin, divider_y), fill=0, width=1)
+    content_width, divider_y = draw_title_and_divider(draw, w, title, title_size, margin, divider_gap)
 
     icon_top = divider_y + divider_gap
     icon_x = (w - symbol_image.width) / 2
@@ -50,13 +57,7 @@ def draw_station_page(
     image = Image.new("1", (w, h), 255)
     draw = ImageDraw.Draw(image)
 
-    content_width = w - 2 * margin
-    title_font = fit_font(draw, title, FONT_BOLD, content_width, title_size)
-    tbbox = draw.textbbox((0, 0), title, font=title_font)
-    tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
-    draw.text(((w - tw) / 2, margin), title, font=title_font, fill=0)
-    divider_y = margin + th + divider_gap / 2
-    draw.line((margin, divider_y, w - margin, divider_y), fill=0, width=1)
+    content_width, divider_y = draw_title_and_divider(draw, w, title, title_size, margin, divider_gap)
 
     row_top = divider_y + divider_gap
     icon_w = icon_h = 0
@@ -86,31 +87,32 @@ def draw_station_page(
     for line in lines:
         if y + line_height > h - margin:
             break
-        lbbox2 = draw.textbbox((0, 0), line, font=comment_font)
-        lw2 = lbbox2[2] - lbbox2[0]
-        draw.text(((w - lw2) / 2, y), line, font=comment_font, fill=0)
+        lbbox = draw.textbbox((0, 0), line, font=comment_font)
+        lw = lbbox[2] - lbbox[0]
+        draw.text(((w - lw) / 2, y), line, font=comment_font, fill=0)
         y += line_height
 
     return image
 
 
-def draw_loading_page(driver, title: str = "Digipeater", subtitle: str = "Loading"):
+def draw_loading_page(
+    driver, title: str = "Digipeater", subtitle: str = "Loading",
+    *, margin: int = 8, border_inset: int = 0, title_size: int = 22, subtitle_size: int = 16, gap: int = 6,
+):
     """Full-screen bordered splash, title and subtitle stacked and centered as a block."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)
     draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, w - 1, h - 1), outline=0)
+    draw.rectangle((border_inset, border_inset, w - 1 - border_inset, h - 1 - border_inset), outline=0)
 
-    margin = 8
-    title_font = fit_font(draw, title, FONT_BOLD, w - 2 * margin, 22)
-    subtitle_font = fit_font(draw, subtitle, FONT_REGULAR, w - 2 * margin, 16)
+    title_font = fit_font(draw, title, FONT_BOLD, w - 2 * margin, title_size)
+    subtitle_font = fit_font(draw, subtitle, FONT_REGULAR, w - 2 * margin, subtitle_size)
     tbbox = draw.textbbox((0, 0), title, font=title_font)
     tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
     sbbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
     sw, sh = sbbox[2] - sbbox[0], sbbox[3] - sbbox[1]
 
-    gap = 6
     top = (h - (th + gap + sh)) / 2
     draw.text(((w - tw) / 2, top - tbbox[1]), title, font=title_font, fill=0)
     draw.text(((w - sw) / 2, top + th + gap - sbbox[1]), subtitle, font=subtitle_font, fill=0)
@@ -128,10 +130,8 @@ def draw_table_page(
     image = Image.new("1", (w, h), 255)
     draw = ImageDraw.Draw(image)
 
-    content_width = w - 2 * margin
-    title_font = fit_font(draw, title, FONT_BOLD, content_width, title_size)
-    tbbox = draw.textbbox((0, 0), title, font=title_font)
-    tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
+    # Title/divider always at the same fixed position, so it doesn't jump between pages with different row counts.
+    content_width, divider_y = draw_title_and_divider(draw, w, title, title_size, margin, divider_gap)
 
     label_font = load_font(FONT_BOLD, value_size)
     header_font = load_font(FONT_BOLD, header_size)
@@ -144,11 +144,6 @@ def draw_table_page(
     col_count = max(len(headers), 1)
     col_w = (content_width - label_col_w) / col_count
     col_x = [margin + label_col_w + col_w * (i + 0.5) for i in range(col_count)]
-
-    # Title/divider always at the same fixed position, so it doesn't jump between pages with different row counts.
-    draw.text(((w - tw) / 2, margin), title, font=title_font, fill=0)
-    divider_y = margin + th + divider_gap / 2
-    draw.line((margin, divider_y, w - margin, divider_y), fill=0, width=1)
 
     y = divider_y + divider_gap / 2 + 4
     for i, header_text in enumerate(headers):
@@ -172,6 +167,7 @@ def draw_table_page(
 
 
 def draw_status_page(driver, title: str, rows: list[tuple[str, str]]):
+    """Title bar over a simple key/value row list."""
     from PIL import Image, ImageDraw
     w, h = driver.width, driver.height
     image = Image.new("1", (w, h), 255)
@@ -181,15 +177,8 @@ def draw_status_page(driver, title: str, rows: list[tuple[str, str]]):
     row_height = 22
     divider_gap = 10
 
-    content_width = w - 2 * margin
-    title_font = fit_font(draw, title, FONT_BOLD, content_width, 16)
-    tbbox = draw.textbbox((0, 0), title, font=title_font)
-    tw, th = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
-
     # Title/divider always at the same fixed position, see draw_table_page above.
-    draw.text(((w - tw) / 2, margin), title, font=title_font, fill=0)
-    divider_y = margin + th + divider_gap / 2
-    draw.line((margin, divider_y, w - margin, divider_y), fill=0, width=1)
+    content_width, divider_y = draw_title_and_divider(draw, w, title, 16, margin, divider_gap)
 
     y = divider_y + divider_gap / 2 + 4
     label_font = load_font(FONT_BOLD, 13)

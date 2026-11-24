@@ -1,7 +1,7 @@
 """Low-level GPIO and SPI hardware layer shared by all Waveshare e-Paper drivers, simulated if RPi.GPIO/spidev are unavailable."""
 
-import time
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 

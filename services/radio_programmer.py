@@ -22,9 +22,8 @@ def can_program(model: str | None) -> bool:
 
 
 def _image_fingerprint(radio_config: dict) -> str | None:
-    """model:sha256(built image), or None if this model isn't programmable or the image can't be
-    built from the given config (e.g. a required field like frequency is missing) -- in both cases
-    the caller falls through to program_channel()'s own handling instead of fingerprinting."""
+    """model:sha256(built image), or None if not programmable or the image can't be built.
+    Either way the caller falls through to program_channel()'s own handling."""
     model = radio_config.get("model")
     driver = DRIVERS.get(model or "")
     if driver is None:
@@ -53,11 +52,8 @@ def _save_last_fingerprint(fingerprint: str) -> None:
 
 
 async def program_channel(radio_config: dict, on_progress=None) -> dict:
-    """Always writes when called -- used directly by the manual Write-to-radio button, which is a
-    forced rewrite regardless of whether anything changed. If given, on_progress(blocks_done,
-    blocks_total) is called from the driver's worker thread after each block write -- a plain
-    callback, not a coroutine, since it crosses from the executor thread back into this event-loop
-    code without its own async machinery."""
+    """Always writes when called (the manual Write-to-radio button's forced rewrite). on_progress,
+    if given, is a plain callback (not a coroutine) invoked from the driver's worker thread."""
     model = radio_config.get("model")
     driver = DRIVERS.get(model or "")
     if driver is None:
@@ -70,7 +66,7 @@ async def program_channel(radio_config: dict, on_progress=None) -> dict:
 
     try:
         image = driver.build_image(radio_config)
-        await asyncio.get_event_loop().run_in_executor(None, driver.program_sync, port, image, on_progress)
+        await asyncio.to_thread(driver.program_sync, port, image, on_progress)
     except (IOError, OSError) as e:
         logger.error("Radio programming failed: %s", e)
         return {"ok": False, "skipped": False, "reason": str(e)}
@@ -83,10 +79,8 @@ async def program_channel(radio_config: dict, on_progress=None) -> dict:
 
 
 async def program_channel_if_changed(radio_config: dict) -> dict:
-    """Used only by the auto-start path (services/system.py's set_direwolf_running): skips the write
-    entirely if this exact config was already successfully written last time. The manual Write-to-radio
-    button calls program_channel() directly instead, bypassing this check -- a forced rewrite regardless
-    of whether anything changed is its whole purpose."""
+    """Auto-start path only: skips the write if this exact config was already written last time.
+    The manual Write-to-radio button calls program_channel() directly, bypassing this check."""
     fingerprint = _image_fingerprint(radio_config)
     if fingerprint is not None and fingerprint == _load_last_fingerprint():
         logger.info("Radio config unchanged since last successful write, skipping auto-reprogram.")

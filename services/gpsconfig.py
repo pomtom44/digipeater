@@ -30,13 +30,13 @@ async def apply(gps_config: dict) -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        out, err = await proc.communicate()
+        _, err = await proc.communicate()
     except OSError as e:
         logger.error("Failed to run GPS config helper: %s", e)
         return
 
     if proc.returncode != 0:
-        logger.error("GPS config helper failed: %s", err.decode().strip())
+        logger.error("GPS config helper failed: %s", err.decode(errors="replace").strip())
     else:
         logger.info(
             "GPS config applied: device=%s time_sync=%s timezone=%s",

@@ -14,9 +14,8 @@ def _mycall(aprs: dict) -> str:
     return f"{callsign}-{ssid}" if ssid else callsign
 
 
-# Direwolf's TXDELAY is in 10ms units. VOX needs much longer than hardware PTT (GPIO/CM108/serial):
-# the radio has to sense the audio and trip its own VOX circuit before it's actually transmitting,
-# and 300ms often isn't enough -- the first part of the packet goes out before the radio's keyed up.
+# Direwolf's TXDELAY is in 10ms units. VOX needs much longer than hardware PTT: the radio has to
+# sense the audio and trip its own VOX circuit before it's actually transmitting.
 _TXDELAY_DEFAULT_MS = {"vox": 600}
 _TXDELAY_FALLBACK_MS = 300
 
@@ -127,11 +126,8 @@ def _symbol_tokens(aprs: dict) -> tuple[str, str]:
 
 
 def _beacon_position(gps: dict) -> str:
-    """Returns LAT=/LONG= tokens from whatever coordinates are on hand -- manually entered, or
-    resolved from a live GPS fix by resolve_gps_position() before this ever gets called. This
-    station doesn't move, so PBEACON with a static position is all it ever needs; direwolf's own
-    GPSD-sourced TBEACON was dropped because its gpsd client hits the same bugs as everyone
-    else's (startup race, and gpsd/u-blox combos that report a zeroed lat/lon despite a real fix)."""
+    """Returns LAT=/LONG= tokens from whatever coordinates are on hand (manual, or a GPS fix
+    already resolved by resolve_gps_position()). Static PBEACON, not Direwolf's own GPSD TBEACON."""
     lat = gps.get("latitude")
     lon = gps.get("longitude")
     if lat in (None, "") or lon in (None, ""):
@@ -168,11 +164,7 @@ def _pbeacon_line(beacon: dict, aprs: dict, gps: dict, *, send_to_igate: bool) -
 
 def generate(config: dict, *, test_only: bool = False) -> str:
     """Pure function: parsed config.yaml -> direwolf.conf text. No I/O.
-
-    test_only suppresses digipeating and beaconing (but keeps MYCALL/PTT/KISS as configured) --
-    used for the signal test's own transient Direwolf start, so it can TX/RX a single test packet
-    without also digipeating other stations' real traffic during the test window.
-    """
+    test_only suppresses digipeating and beaconing, keeping MYCALL/PTT/KISS as configured."""
     aprs = config.get("aprs") or {}
     radio = config.get("radio") or {}
     gps = config.get("gps") or {}
@@ -242,13 +234,8 @@ def write(config: dict, path: Path = CONFIG_PATH, *, test_only: bool = False) ->
 
 
 async def resolve_gps_position(config: dict) -> dict:
-    """Returns config with gps.latitude/longitude snapshotted from the current GPS fix, when
-    position_source is "gps". This station is stationary, so a fix taken once -- right before
-    direwolf.conf is (re)written -- is all PBEACON needs; it also sidesteps every gpsd-related
-    beacon bug (startup race, zeroed lat/lon on some receivers) since direwolf never has to talk
-    to gpsd itself for this. If there's no fix yet, config is returned unchanged -- generate()
-    then simply omits LAT=/LONG=, so direwolf reports the real "position missing" error rather
-    than silently beaconing a stale or wrong position."""
+    """Returns config with gps.latitude/longitude snapshotted from the current fix, when
+    position_source is "gps". Unchanged if there's no fix yet, so generate() omits LAT=/LONG=."""
     gps_cfg = config.get("gps") or {}
     if gps_cfg.get("position_source") != "gps":
         return config

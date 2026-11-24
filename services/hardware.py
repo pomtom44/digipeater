@@ -61,14 +61,14 @@ _CM108_IDS = {(0x0d8c, pid) for pid in range(0x0008, 0x0010)} | {
 }
 
 
-def _read_text(path: Path):
+def _read_text(path: Path) -> str | None:
     try:
         return path.read_text().strip()
     except OSError:
         return None
 
 
-def _read_hex(path: Path):
+def _read_hex(path: Path) -> int | None:
     text = _read_text(path)
     try:
         return int(text, 16) if text else None
@@ -76,7 +76,7 @@ def _read_hex(path: Path):
         return None
 
 
-def _find_usb_device_dir(start: Path, max_depth: int = 6):
+def _find_usb_device_dir(start: Path, max_depth: int = 6) -> Path | None:
     """Walks up from a hidraw sysfs entry to the enclosing USB device directory (with idVendor/idProduct)."""
     current = start.resolve()
     for _ in range(max_depth):

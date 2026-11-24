@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -15,22 +14,29 @@ HOTSPOT_IP = "10.42.0.1"
 
 async def _nmcli(*args) -> tuple[int, str, str]:
     """Runs an nmcli command via sudo and returns (returncode, stdout, stderr)."""
-    proc = await asyncio.create_subprocess_exec(
-        "sudo", "-n", "nmcli", *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "sudo", "-n", "nmcli", *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError as e:
+        return 1, "", str(e)
     out, err = await proc.communicate()
     return proc.returncode, out.decode().strip(), err.decode().strip()
 
 
 async def get_ip() -> dict:
     """Returns current IP addresses as {interface: ip}, using `ip addr` (no sudo needed)."""
-    proc = await asyncio.create_subprocess_exec(
-        "ip", "-4", "-o", "addr", "show",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ip", "-4", "-o", "addr", "show",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError as e:
+        logger.error("Failed to run `ip addr`: %s", e)
+        return {}
     out, _ = await proc.communicate()
     ips = {}
     for line in out.decode().splitlines():
@@ -43,7 +49,7 @@ async def get_ip() -> dict:
     return ips
 
 
-async def get_ethernet_ip() -> Optional[str]:
+async def get_ethernet_ip() -> str | None:
     """Return the IP of the first wired ethernet interface, or None if not connected."""
     ips = await get_ip()
     for iface, addr in ips.items():
@@ -55,7 +61,7 @@ async def get_ethernet_ip() -> Optional[str]:
     return None
 
 
-async def get_wifi_client_ip() -> Optional[str]:
+async def get_wifi_client_ip() -> str | None:
     """Returns wlan0's IP if connected as a client; only meaningful before our hotspot starts."""
     ips = await get_ip()
     return ips.get("wlan0")
@@ -65,7 +71,10 @@ async def scan_wifi() -> list[dict]:
     """Scans for nearby WiFi networks, returning list of {ssid, signal, security}."""
     await _nmcli("device", "wifi", "rescan")
     await asyncio.sleep(2)
-    code, out, _ = await _nmcli("-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list")
+    code, out, err = await _nmcli("-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list")
+    if code != 0:
+        logger.error("Failed to list WiFi networks: %s", err)
+        return []
     networks = []
     seen = set()
     for line in out.splitlines():
@@ -95,7 +104,7 @@ async def connect_wifi(ssid: str, password: str) -> bool:
     if password:
         args += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
 
-    code, out, err = await _nmcli(*args)
+    code, _, err = await _nmcli(*args)
     if code != 0:
         logger.error("Failed to create WiFi client connection: %s", err)
         return False
@@ -113,7 +122,7 @@ async def setup_hotspot(ssid: str, password: str) -> bool:
     """Create or reconfigure the WiFi hotspot."""
     await _nmcli("connection", "delete", _HOTSPOT_CON)
 
-    code, out, err = await _nmcli(
+    code, _, err = await _nmcli(
         "connection", "add",
         "type", "wifi",
         "ifname", "wlan0",

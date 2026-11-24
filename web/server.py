@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -90,7 +91,8 @@ def _history_summary(log_type: str, e: dict) -> str:
         return f"GPS fix: {status}"
     if log_type == "signal_test_results":
         status = "replied" if e.get("received") else "no reply (yet)"
-        return f"Signal test → {e['target_callsign']}: {status}"
+        power = f" ({e['power_level']} power)" if e.get("power_level") else ""
+        return f"Signal test → {e['target_callsign']}{power}: {status}"
     if log_type == "system_events":
         return f"System: {e['type']}"
     return log_type
@@ -160,35 +162,29 @@ def create_app(
             return RedirectResponse(url="/")
         return FileResponse(STATIC_DIR / "login.html")
 
+    def _gate_page(request: Request) -> FileResponse | None:
+        """Login gate shared by /config, /history, /stats: both readonly and full modes require it."""
+        if _read_security().get("mode", "none") != "none" and not _is_logged_in(request):
+            return FileResponse(STATIC_DIR / "login.html")
+        return None
+
     @app.get("/config")
     async def config_page(request: Request):
         if first_boot:
             return RedirectResponse(url="/")
-        # Config changes require login under both readonly and full modes.
-        mode = _read_security().get("mode", "none")
-        if mode != "none" and not _is_logged_in(request):
-            return FileResponse(STATIC_DIR / "login.html")
-        return FileResponse(STATIC_DIR / "config.html")
+        return _gate_page(request) or FileResponse(STATIC_DIR / "config.html")
 
     @app.get("/history")
     async def history_page(request: Request):
         if first_boot:
             return RedirectResponse(url="/")
-        # Same gate as /config: history is operational/diagnostic detail, gated the same way as the live dashboard.
-        mode = _read_security().get("mode", "none")
-        if mode != "none" and not _is_logged_in(request):
-            return FileResponse(STATIC_DIR / "login.html")
-        return FileResponse(STATIC_DIR / "history.html")
+        return _gate_page(request) or FileResponse(STATIC_DIR / "history.html")
 
     @app.get("/stats")
     async def stats_page(request: Request):
         if first_boot:
             return RedirectResponse(url="/")
-        # Same gate as /config and /history.
-        mode = _read_security().get("mode", "none")
-        if mode != "none" and not _is_logged_in(request):
-            return FileResponse(STATIC_DIR / "login.html")
-        return FileResponse(STATIC_DIR / "stats.html")
+        return _gate_page(request) or FileResponse(STATIC_DIR / "stats.html")
 
     @app.get("/api/auth/status")
     async def auth_status(request: Request):
@@ -255,15 +251,13 @@ def create_app(
     @app.get("/api/radio/audio_level")
     async def radio_audio_level(device: str):
         """The radio setup page's live level meter: one ~0.3s capture, scored on Direwolf's own
-        "audio level" convention, so the radio's volume can be tuned against background static
-        before a signal shows up."""
+        "audio level" convention."""
         return await audio_level.read_level(device)
 
     @app.post("/api/radio/audio_loopback_test")
     async def radio_audio_loopback_test(request: Request):
-        """The radio setup page's line-out clipping check, run right after the audio level meter above:
-        jumper headphone/line-out to mic-in, play a known tone and record it back, and flag clipping --
-        confirms the Pi's own audio output isn't already distorted before it's ever wired into the radio."""
+        """The radio setup page's line-out clipping check: jumper headphone/line-out to mic-in,
+        play a known tone and record it back, and flag clipping."""
         _require_login_for_action(request)
         body = await request.json()
         device = (body.get("device") or "").strip()
@@ -314,9 +308,8 @@ def create_app(
     _SIGNAL_TEST_POLL_INTERVAL_S = 5
 
     async def _stop_ephemeral_signal_test_direwolf(test_id: str, config: dict) -> None:
-        """Keeps a Direwolf instance that aprs_signal_test_start started just for this test alive
-        long enough to catch a reply, then stops it and restores the real direwolf.conf -- used when
-        autostart was off and the test had to start Direwolf itself rather than reuse one already running."""
+        """Keeps a test-started Direwolf alive long enough to catch a reply, then stops it and
+        restores the real direwolf.conf."""
         deadline = asyncio.get_event_loop().time() + _SIGNAL_TEST_LISTEN_WINDOW_S
         while asyncio.get_event_loop().time() < deadline:
             result = await packets.signal_test_status(test_id) if packets else None
@@ -329,22 +322,22 @@ def create_app(
         except OSError as e:
             logger.error("Failed to restore direwolf.conf after signal test: %s", e)
 
-    @app.post("/api/aprs/signal_test")
-    async def aprs_signal_test_start(request: Request):
-        _require_login_for_action(request)
-        if not log_settings.is_enabled("signal_test_results"):
-            raise HTTPException(
-                status_code=400, detail="Signal test history is turned off (Settings > Database); enable it first",
-            )
-        body = await request.json()
-        target = (body.get("callsign") or "").strip().upper()
+    # Lowest first; power calibration steps up this list one rung at a time.
+    _RADIO_POWER_LEVELS = ["Low", "Medium", "High"]
+
+    def _signal_test_preconditions(full_config: dict, target: str) -> tuple[str, list[str]]:
+        """Shared validation for the plain signal test and power calibration.
+        Returns (my_call, path) to send with."""
         if not target:
             raise HTTPException(status_code=400, detail="Callsign is required")
         if len(target) > 9:
             raise HTTPException(status_code=400, detail="Callsign is too long")
-        full_config = _read_config()
+        if not log_settings.is_enabled("signal_test_results"):
+            raise HTTPException(
+                status_code=400, detail="Signal test history is turned off (Settings > Database); enable it first",
+            )
         aprs_cfg = full_config.get("aprs", {}) or {}
-        # RF-reach test only: needs RF TX/RX, and only makes sense when there's no IGate uplink of our own.
+        # RF-reach test only: needs RF TX/RX, and no IGate uplink of our own.
         if aprs_cfg.get("digipeat_mode") != "digipeater":
             raise HTTPException(status_code=400, detail="Signal test needs digipeating set to RX & TX first")
         if aprs_cfg.get("igate_mode", "off") != "off":
@@ -358,25 +351,31 @@ def create_app(
         my_call = f"{my_callsign}-{ssid}" if ssid else my_callsign
         path_str = (aprs_cfg.get("rf_beacon", {}) or {}).get("path") or "WIDE1-1"
         path = [p.strip().upper() for p in path_str.split(",") if p.strip()]
+        return my_call, path
 
-        # Autostart is often left off between config changes; the test still needs a live Direwolf
-        # to send through and listen on. Spin one up with digipeating/beaconing disabled so it only
-        # handles this one test packet, not real traffic -- then tear it back down once the test's
-        # listen window (matching config.html's own 120s poll deadline) ends.
+    async def _run_signal_test(
+        full_config: dict, test_config: dict, my_call: str, target: str, path: list[str],
+        power_level: str | None, *, force_restart: bool,
+    ) -> tuple[str, bool]:
+        """Starts Direwolf against test_config (if needed), sends the ping, and schedules teardown
+        back to full_config. force_restart is for power calibration: a power change only takes
+        effect through a reprogram, so it stops an already-running Direwolf first.
+        Returns (test_id, started_for_test)."""
         status = await system.get_direwolf_status()
-        started_for_test = False
-        if not status.get("running"):
-            start_result = await system.set_direwolf_running(True, full_config, test_only=True)
+        if force_restart and status.get("running"):
+            await system.set_direwolf_running(False, full_config)
+        started_for_test = force_restart or not status.get("running")
+        if started_for_test:
+            start_result = await system.set_direwolf_running(True, test_config, test_only=True)
             if not start_result["ok"]:
                 await direwolf_config.write_live(full_config)
                 raise HTTPException(
                     status_code=502, detail=f"Could not start Direwolf for the test: {start_result['reason']}",
                 )
-            started_for_test = True
 
         test_id = secrets.token_hex(4)
         try:
-            await packets.start_signal_test(test_id, my_call, target)
+            await packets.start_signal_test(test_id, my_call, target, power_level=power_level)
         except Exception as e:
             logger.error("Failed to start signal test: %s", e)
             if started_for_test:
@@ -393,7 +392,68 @@ def create_app(
 
         if started_for_test:
             asyncio.create_task(_stop_ephemeral_signal_test_direwolf(test_id, full_config))
+        return test_id, started_for_test
+
+    @app.post("/api/aprs/signal_test")
+    async def aprs_signal_test_start(request: Request):
+        _require_login_for_action(request)
+        body = await request.json()
+        target = (body.get("callsign") or "").strip().upper()
+        full_config = _read_config()
+        my_call, path = _signal_test_preconditions(full_config, target)
+        test_id, started_for_test = await _run_signal_test(
+            full_config, full_config, my_call, target, path, None, force_restart=False,
+        )
         return {"ok": True, "test_id": test_id, "ephemeral": started_for_test}
+
+    @app.post("/api/aprs/power_cal/attempt")
+    async def aprs_power_cal_attempt(request: Request):
+        """One rung of the power calibration ladder: reprograms the radio at power_level and
+        re-runs the signal test."""
+        _require_login_for_action(request)
+        body = await request.json()
+        target = (body.get("callsign") or "").strip().upper()
+        power_level = body.get("power_level")
+        if power_level not in _RADIO_POWER_LEVELS:
+            raise HTTPException(status_code=400, detail="Invalid power level")
+        full_config = _read_config()
+        my_call, path = _signal_test_preconditions(full_config, target)
+
+        radio_cfg = full_config.get("radio", {}) or {}
+        if not radio_programmer.can_program(radio_cfg.get("model")) or not radio_cfg.get("programmer_port"):
+            raise HTTPException(
+                status_code=400,
+                detail="Power calibration needs a radio model this digipeater can program, with a "
+                       "programmer cable port set (Settings > Radio)",
+            )
+        test_config = copy.deepcopy(full_config)
+        test_config["radio"]["power_level"] = power_level
+
+        test_id, _ = await _run_signal_test(
+            full_config, test_config, my_call, target, path, power_level, force_restart=True,
+        )
+        return {"ok": True, "test_id": test_id, "power_level": power_level}
+
+    @app.post("/api/aprs/power_cal/commit")
+    async def aprs_power_cal_commit(request: Request):
+        """Saves power_level as the normal setting; the radio is already programmed to it from the
+        last calibration attempt."""
+        _require_login_for_action(request)
+        if not CONFIG_PATH.exists():
+            raise HTTPException(status_code=400, detail="Setup has not been completed yet")
+        body = await request.json()
+        power_level = body.get("power_level")
+        if power_level not in _RADIO_POWER_LEVELS:
+            raise HTTPException(status_code=400, detail="Invalid power level")
+        config = _read_config()
+        before_radio = config.get("radio", {})
+        config.setdefault("radio", {})["power_level"] = power_level
+        CONFIG_PATH.write_text(
+            "# Written by the config page. Manual edits here survive until the next save.\n"
+            + yaml.safe_dump(config, sort_keys=False)
+        )
+        await _log_config_change("radio", before_radio, config["radio"])
+        return {"ok": True}
 
     @app.get("/api/aprs/signal_test/{test_id}")
     async def aprs_signal_test_status(test_id: str):
@@ -480,9 +540,8 @@ def create_app(
 
     @app.post("/api/radio/power_on")
     async def radio_power_on(request: Request):
-        """Powers the radio on directly, for the setup wizard's Audio step -- write_radio() powers the
-        radio back off once programming finishes, so the level meter/loopback test need this to get a
-        live radio to read."""
+        """Powers the radio on directly, for the setup wizard's Audio step to have a live radio to
+        read -- write_radio() already powers it back off once programming finishes."""
         _require_login_for_action(request)
         await system.power_on_radio()
         return {"ok": True}
@@ -507,9 +566,7 @@ def create_app(
     @app.get("/api/history")
     async def api_history(request: Request, types: str = "", limit: int = 100, before: float | None = None):
         """The History page's table: merged, newest-first rows across the requested log types."""
-        # Same gate as the /history page itself.
-        if _read_security().get("mode", "none") != "none" and not _is_logged_in(request):
-            raise HTTPException(status_code=401, detail="Login required")
+        _require_login_for_action(request)
         requested = [t.strip() for t in types.split(",") if t.strip()] or list(log_settings.LOG_TYPES.keys())
         unknown = [t for t in requested if t not in log_settings.LOG_TYPES]
         if unknown:
@@ -531,8 +588,7 @@ def create_app(
     @app.get("/api/stats")
     async def api_stats(request: Request):
         """The Stats page: summary counts plus a 30-day daily activity series."""
-        if _read_security().get("mode", "none") != "none" and not _is_logged_in(request):
-            raise HTTPException(status_code=401, detail="Login required")
+        _require_login_for_action(request)
         return await db.get_stats()
 
     @app.post("/api/system/reboot")
@@ -723,13 +779,7 @@ def create_app(
     # Unauthenticated even under "full" mode: a callsign is public information.
     @app.get("/api/station-id")
     async def station_id():
-        if not CONFIG_PATH.exists():
-            return {"callsign": None, "ssid": None}
-        try:
-            config = yaml.safe_load(CONFIG_PATH.read_text()) or {}
-        except Exception:
-            return {"callsign": None, "ssid": None}
-        aprs_cfg = config.get("aprs", {}) or {}
+        aprs_cfg = _read_config().get("aprs", {}) or {}
         return {"callsign": aprs_cfg.get("callsign") or None, "ssid": aprs_cfg.get("ssid") or None}
 
     @app.get("/api/config")

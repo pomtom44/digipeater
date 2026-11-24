@@ -36,11 +36,8 @@ _MIGRATIONS: list[tuple[int, list[str]]] = [
         "CREATE INDEX idx_heard_packets_heard_at ON heard_packets (heard_at)",
     ]),
     (2, [
-        # One row per frame Direwolf actually transmits (services/packet_log.py's journald tail),
-        # whatever triggered it: our own PBEACON (rf_beacon/igate_beacon), a DIGIPEAT repeat of someone
-        # else's packet (digipeat), an RF packet gated to APRS-IS (igate_gate), or an outbound message
-        # we sent ourselves e.g. the signal test ping (message). callsign is the frame's AX.25 source:
-        # for digipeat/igate_gate, that's the *original* station that sent the packet before we repeated/gated it.
+        # One row per frame Direwolf actually transmits (services/packet_log.py's journald tail).
+        # callsign is the frame's AX.25 source, not necessarily our own (e.g. a DIGIPEAT repeat).
         """
         CREATE TABLE sent_packets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,9 +82,7 @@ _MIGRATIONS: list[tuple[int, list[str]]] = [
         "CREATE INDEX idx_radio_write_events_at ON radio_write_events (at)",
     ]),
     (5, [
-        # One row per changed top-level config section on each config page save (web/server.py's
-        # config_save), before/after as JSON, so "what changed right before behavior changed" is a
-        # query instead of a guess.
+        # One row per changed top-level config section on each config page save, before/after as JSON.
         """
         CREATE TABLE config_changes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,9 +109,7 @@ _MIGRATIONS: list[tuple[int, list[str]]] = [
         "CREATE INDEX idx_gps_fix_events_at ON gps_fix_events (at)",
     ]),
     (7, [
-        # One row per RF-reach signal test (services/signal_test.py, tracked live in
-        # packet_log.py's _signal_tests), inserted on send and updated in place once/if a reply
-        # arrives. test_id is already a unique token (secrets.token_hex) so it's the natural key.
+        # One row per RF-reach signal test; inserted on send, updated in place if/when a reply arrives.
         """
         CREATE TABLE signal_test_results (
             test_id TEXT PRIMARY KEY,
@@ -144,17 +137,19 @@ _MIGRATIONS: list[tuple[int, list[str]]] = [
         "CREATE INDEX idx_system_events_type ON system_events (type)",
     ]),
     (9, [
-        # Direwolf's own "audio level" for the packet, correlated in from its journald "heard" line
-        # (services/packet_log.py) after the fact -- not available from the KISS-decoded packet
-        # itself, which carries no signal-quality metadata. NULL when correlation didn't find a match
-        # (e.g. a packet heard via a named digipeater rather than directly from the source).
+        # Direwolf's own "audio level" for the packet, correlated in after the fact from journald.
+        # NULL when correlation finds no match (e.g. heard via a named digipeater, not directly).
         "ALTER TABLE heard_packets ADD COLUMN signal_level INTEGER",
     ]),
     (10, [
-        # The AX.25 path exactly as heard (JSON list, e.g. ["WIDE1-1", "ZL1AAF-3*", "WIDE2"]), so the
-        # dashboard map can trace which named digipeaters a packet passed through -- generic WIDEn-N
-        # aliases carry no station identity and are skipped client-side when drawing that trace.
+        # The AX.25 path exactly as heard (JSON list), so the dashboard map can trace which named
+        # digipeaters a packet passed through.
         "ALTER TABLE heard_packets ADD COLUMN path TEXT",
+    ]),
+    (11, [
+        # Which TX power rung (services/radio_programmer.py's Low/Medium/High) a signal test ran at;
+        # NULL for an ordinary signal test, set for one that's part of a power-calibration run.
+        "ALTER TABLE signal_test_results ADD COLUMN power_level TEXT",
     ]),
 ]
 
@@ -262,9 +257,8 @@ async def transaction(fn) -> None:
 
 # ── Retention: age and/or size limits, each independently optional (0 = no limit) ──────────────
 
-# Every table with a timestamp column, pruned by age. The first two are also the only ones pruned by
-# size -- they're the only ones with a per-packet write rate, so they're what actually drives growth;
-# the other five are rare one-row-per-event audit tables where a size limit wouldn't do much.
+# Every table with a timestamp column, pruned by age. The first two are also pruned by size --
+# they're the only ones with a per-packet write rate, so they're what drives growth.
 _HIGH_VOLUME_TABLES = [("heard_packets", "heard_at"), ("sent_packets", "sent_at")]
 _TABLES_WITH_TIMESTAMP = _HIGH_VOLUME_TABLES + [
     ("direwolf_events", "at"),
@@ -292,10 +286,8 @@ def _db_size_bytes(conn: sqlite3.Connection) -> int:
 
 
 def _prune_by_size_sync(conn: sqlite3.Connection, max_size_bytes: int) -> None:
-    """Deletes the oldest rows from whichever high-volume table has more, in one estimate-based pass
-    (not a delete-then-recheck loop: page_count doesn't shrink until VACUUM, which is too expensive to
-    run per batch). The estimate assumes uniform row size, so it can under- or overshoot a bit -- if
-    still over budget, the next sweep (_RETENTION_CHECK_INTERVAL_S later) deletes more."""
+    """Deletes the oldest rows from whichever high-volume table has more, in one estimate-based pass.
+    Assumes uniform row size, so it can under/overshoot a bit; the next sweep deletes more if so."""
     current_size = _db_size_bytes(conn)
     if current_size <= max_size_bytes:
         return
@@ -365,9 +357,8 @@ def _clear_table_sync(table: str) -> int:
 
 
 async def clear_log_type(log_type: str) -> int:
-    """Deletes every row from the table behind this log type manually (the config page's per-type
-    Clear button); returns how many rows were deleted. Raises ValueError for an unknown log_type --
-    table names come only from LOG_TYPE_TABLES, never built from raw caller input."""
+    """Deletes every row for this log type (the config page's per-type Clear button); returns the
+    count deleted. Raises ValueError for an unknown log_type."""
     table = LOG_TYPE_TABLES.get(log_type)
     if table is None:
         raise ValueError(f"Unknown log type: {log_type}")
@@ -415,10 +406,8 @@ def _fetch_history_sync(log_types: list[str], limit: int, before: float | None) 
 
 
 async def fetch_history(log_types: list[str], limit: int, before: float | None = None) -> list[dict]:
-    """Merged, newest-first rows across the given log types (services/log_settings.py's LOG_TYPES
-    keys), each row tagged with its log_type and a normalized "at" timestamp. Each type is queried
-    for up to `limit` rows independently, then merged and re-capped -- simple, at the cost of some
-    over-fetching for sparse types when several are selected; fine at this scale."""
+    """Merged, newest-first rows across the given log types, each tagged with its log_type.
+    Each type is queried for up to `limit` rows independently, then merged and re-capped."""
     async with _lock:
         return await asyncio.to_thread(_fetch_history_sync, log_types, limit, before)
 
@@ -521,9 +510,8 @@ def _get_stats_sync() -> dict:
 
 
 async def get_stats() -> dict:
-    """Summary counts (heard/sent totals by period, top callsigns, sent-by-type breakdown, Direwolf
-    restart/failure counts, signal-test success rate) plus a 30-day daily activity series, for the
-    Stats page. One thread hop for the whole bundle, not one per metric."""
+    """Summary counts plus a 30-day daily activity series, for the Stats page.
+    One thread hop for the whole bundle, not one per metric."""
     async with _lock:
         return await asyncio.to_thread(_get_stats_sync)
 

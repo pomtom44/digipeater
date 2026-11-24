@@ -1,11 +1,5 @@
-"""Measures a short burst of raw audio from an ALSA capture device and scores it on Direwolf's own
-"audio level" convention -- peak-to-peak amplitude, normalized the same way Direwolf's demodulator
-does (src/demod.c: `fsam = sample / 16384.0`, `alevel.rec = (peak - valley) * 50`) -- so the radio
-setup page's live meter lines up with Direwolf's documented "~50 is the target" guidance for tuning
-the radio's volume against background static. This is a standalone measurement (via `arecord`, not
-Direwolf's own smoothed envelope follower), so treat it as a close approximation, not an exact replay
-of what Direwolf itself would report once running.
-"""
+"""Measures a short burst from an ALSA capture device, scored on Direwolf's own "audio level"
+convention, so the radio setup page's meter lines up with its own ~50-is-the-target guidance."""
 
 import asyncio
 import logging
@@ -15,12 +9,8 @@ import struct
 logger = logging.getLogger(__name__)
 
 _SAMPLE_RATE = 8000
-# Each call opens a fresh ALSA stream (simplest implementation, and the only way that doesn't hold the
-# device open between polls, blocking Direwolf from ever starting). USB audio codecs commonly need a
-# short settle time right after a stream opens (DC-coupling/mute ramp-off), which shows up as a brief,
-# much-louder-than-real transient -- confirmed against this project's own hardware: `arecord -V mono`
-# run continuously on the same signal never shows it, only our open-capture-close-repeat approach does.
-# Capture a bit longer than we need and throw away the warm-up portion before measuring anything.
+# Fresh ALSA stream per call needs a short settle time before readings stabilize (USB codec
+# mute-ramp transient); captures a bit longer and discards this warm-up portion.
 _WARMUP_SECONDS = 0.15
 _MEASURE_SECONDS = 0.35
 _CAPTURE_SECONDS = _WARMUP_SECONDS + _MEASURE_SECONDS
@@ -28,9 +18,8 @@ _CAPTURE_BYTES = int(_SAMPLE_RATE * _CAPTURE_SECONDS) * 2  # 16-bit mono
 _WARMUP_BYTES = int(_SAMPLE_RATE * _WARMUP_SECONDS) * 2
 _CAPTURE_TIMEOUT_S = 3.0
 _FSAM_DIVISOR = 16384.0
-# Trims the most extreme ~1% of samples before taking peak/valley, so one stray sample (a USB
-# underrun blip, electrical noise, anything not actually the incoming audio) can't swing the whole
-# reading -- a true max()/min() is exactly one bad sample away from a false spike.
+# Trims the most extreme ~1% of samples before peak/valley, so one stray sample can't swing
+# the whole reading.
 _TRIM_FRACTION = 0.01
 
 
@@ -39,6 +28,19 @@ def _trimmed_peak_valley(samples: tuple) -> tuple[int, int]:
     n = len(ordered)
     trim = max(1, int(n * _TRIM_FRACTION))
     return ordered[n - 1 - trim], ordered[trim]
+
+
+def _unpack_s16le(data: bytes) -> tuple[int, ...]:
+    sample_count = len(data) // 2
+    return struct.unpack(f"<{sample_count}h", data[:sample_count * 2])
+
+
+def _describe_capture_failure(stderr_data: bytes) -> str:
+    """Busy-device message shared by read_level/test_loopback -- stopping Direwolf is the common fix."""
+    reason = stderr_data.decode(errors="replace").strip() if stderr_data else ""
+    if "busy" in reason.lower() or "resource" in reason.lower():
+        reason = f"Audio device is busy -- stop Direwolf first, or wait if another audio test is running ({reason})"
+    return reason or "No audio captured"
 
 
 async def read_level(device: str) -> dict:
@@ -66,32 +68,16 @@ async def read_level(device: str) -> dict:
 
     data = data[_WARMUP_BYTES:]
     if len(data) < 4:
-        reason = stderr_data.decode(errors="replace").strip() if stderr_data else ""
-        # Direwolf holding the device open is the most common real-world cause, but this app's own
-        # audio-level meter and loopback test (below) also share this device and can collide with
-        # each other if run concurrently -- don't name Direwolf specifically, it may not be it.
-        if "busy" in reason.lower() or "resource" in reason.lower():
-            reason = f"Audio device is busy -- stop Direwolf first, or wait if another audio test is running ({reason})"
-        return {"ok": False, "reason": reason or "No audio captured"}
+        return {"ok": False, "reason": _describe_capture_failure(stderr_data)}
 
-    sample_count = len(data) // 2
-    samples = struct.unpack(f"<{sample_count}h", data[:sample_count * 2])
+    samples = _unpack_s16le(data)
     peak, valley = _trimmed_peak_valley(samples)
     level = round((peak - valley) / _FSAM_DIVISOR * 50)
     return {"ok": True, "level": level}
 
 
-# ── Line-out -> mic-in loopback clipping check ──
-# Jumper the Pi's headphone/line-out to its mic-in temporarily: plays a known tone out one and
-# records it back on the other, to confirm the Pi's own audio output isn't already clipping before
-# it's ever wired into the radio. A clean sine's peak/RMS ("crest factor") is ~1.414 regardless of
-# absolute level; clipping flattens the waveform's peaks, which pulls crest factor down -- that's a
-# scale-invariant way to detect real distortion without needing to know the "right" absolute level,
-# and it correctly ignores pure gain/attenuation in the loop (verified against synthetic clipped vs.
-# merely-attenuated signals during development). Shares its device with read_level() above --
-# web/static/shared.js's createLoopbackTest()/createAudioLevelMeter() coordinate so they don't run
-# concurrently, but the busy-device message below stays generic since that's JS-side, not guaranteed.
-_LOOPBACK_SAMPLE_RATE = 8000
+# Line-out -> mic-in loopback clipping check: jumper headphone/line-out to mic-in, play a known
+# tone, and check crest factor (peak/RMS) for clipping -- scale-invariant, ignores pure gain.
 _LOOPBACK_TONE_HZ = 1000.0
 _LOOPBACK_DURATION_S = 1.0
 _LOOPBACK_WARMUP_S = 0.15  # same USB codec settle-time reasoning as read_level, see module docstring
@@ -115,13 +101,13 @@ async def test_loopback(play_device: str, capture_device: str) -> dict:
     if not play_device or not capture_device:
         return {"ok": False, "reason": "No audio device selected"}
 
-    tone_pcm = _build_tone_pcm(_LOOPBACK_DURATION_S, _LOOPBACK_SAMPLE_RATE, _LOOPBACK_TONE_HZ)
-    capture_bytes = int(_LOOPBACK_SAMPLE_RATE *
+    tone_pcm = _build_tone_pcm(_LOOPBACK_DURATION_S, _SAMPLE_RATE, _LOOPBACK_TONE_HZ)
+    capture_bytes = int(_SAMPLE_RATE *
                          (_LOOPBACK_DURATION_S + _LOOPBACK_WARMUP_S + _LOOPBACK_CAPTURE_MARGIN_S)) * 2
 
     try:
         recorder = await asyncio.create_subprocess_exec(
-            "arecord", "-D", capture_device, "-f", "S16_LE", "-r", str(_LOOPBACK_SAMPLE_RATE),
+            "arecord", "-D", capture_device, "-f", "S16_LE", "-r", str(_SAMPLE_RATE),
             "-c", "1", "-t", "raw", "-q", "-",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
@@ -131,7 +117,7 @@ async def test_loopback(play_device: str, capture_device: str) -> dict:
 
     try:
         player = await asyncio.create_subprocess_exec(
-            "aplay", "-D", play_device, "-f", "S16_LE", "-r", str(_LOOPBACK_SAMPLE_RATE), "-c", "1",
+            "aplay", "-D", play_device, "-f", "S16_LE", "-r", str(_SAMPLE_RATE), "-c", "1",
             "-t", "raw", "-q", "-",
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
         )
@@ -160,16 +146,12 @@ async def test_loopback(play_device: str, capture_device: str) -> dict:
         reason = player_stderr.decode(errors="replace").strip() if player_stderr else "aplay failed"
         return {"ok": False, "reason": f"Playback failed: {reason}"}
 
-    warmup_bytes = int(_LOOPBACK_SAMPLE_RATE * _LOOPBACK_WARMUP_S) * 2
+    warmup_bytes = int(_SAMPLE_RATE * _LOOPBACK_WARMUP_S) * 2
     data = data[warmup_bytes:]
     if len(data) < 4:
-        reason = stderr_data.decode(errors="replace").strip() if stderr_data else ""
-        if "busy" in reason.lower() or "resource" in reason.lower():
-            reason = f"Audio device is busy -- stop Direwolf first, or wait if another audio test is running ({reason})"
-        return {"ok": False, "reason": reason or "No audio captured"}
+        return {"ok": False, "reason": _describe_capture_failure(stderr_data)}
 
-    sample_count = len(data) // 2
-    samples = struct.unpack(f"<{sample_count}h", data[:sample_count * 2])
+    samples = _unpack_s16le(data)
     peak = max(abs(s) for s in samples)
     rms = math.sqrt(sum(s * s for s in samples) / len(samples))
     if rms < 1:

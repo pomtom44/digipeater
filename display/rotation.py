@@ -7,6 +7,7 @@ from pathlib import Path
 
 import yaml
 
+from display.base import render_page
 from services import gps, log_settings, system
 
 logger = logging.getLogger(__name__)
@@ -138,9 +139,8 @@ class RotationManager:
         self._index = 0
 
     async def show_message(self, title: str, rows: list[tuple[str, str]]) -> None:
-        """Stops rotation and renders a one-off status page -- e.g. a reboot notice -- that stays on
-        screen afterward since nothing will tick past it. Not meant to be resumed from; the process
-        is expected to exit/reboot shortly after this is called."""
+        """Stops rotation and renders a one-off status page (e.g. a reboot notice) that stays on
+        screen. Not meant to be resumed from -- the process is expected to exit/reboot shortly."""
         self.stop()
         await self._render(self._template.draw_status_page, title, rows)
 
@@ -184,15 +184,7 @@ class RotationManager:
 
     async def _render(self, draw_fn, *args) -> None:
         """Off-thread draw and full-refresh show so a hardware hang can't freeze this loop or the web server."""
-        try:
-            from PIL import Image, ImageDraw, ImageFont  # noqa: F401 (import check before threading)
-        except ImportError:
-            return
-        try:
-            image = await asyncio.to_thread(draw_fn, self._driver, *args)
-            await asyncio.to_thread(self._driver.show, image)
-        except Exception as e:
-            logger.error("Display render failed: %s", e)
+        await render_page(self._driver, draw_fn, *args)
 
     async def _build_page_content(self, page_id: str) -> tuple[str, list[tuple[str, str]]]:
         if page_id == "status":

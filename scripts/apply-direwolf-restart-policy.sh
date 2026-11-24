@@ -1,17 +1,6 @@
 #!/bin/bash
-# Applies the Startup tab's "restart automatically if it crashes" policy
-# (config.yaml's startup.autorestart/restart_attempts/restart_delay_s) to
-# direwolf.service via a systemd drop-in override, rather than the fixed
-# Restart=on-failure/RestartSec=10 install.sh bakes into the unit file at
-# install time: that never read these three settings at all, and had no
-# StartLimitBurst, so a crash loop just retried forever instead of stopping
-# after the configured number of attempts (systemd's own default burst
-# window is short enough that a ~15s+ gap between attempts never trips it).
-# A drop-in means a later change on the Startup tab (wizard or config.html,
-# post-setup) takes effect without re-running the installer.
-# Root-only (writing under /etc/systemd/system/, daemon-reload), invoked via
-# a sudoers NOPASSWD rule scoped to exactly this script path (see
-# install.sh), same pattern as apply-gps-config.sh.
+# Applies the Startup tab's restart-on-crash policy to direwolf.service via a systemd drop-in.
+# Root-only, invoked via a sudoers NOPASSWD rule scoped to this script path (see install.sh).
 set -e
 
 AUTORESTART="$1"   # "on" or "off"
@@ -35,22 +24,8 @@ DROPIN_DIR=/etc/systemd/system/direwolf.service.d
 mkdir -p "$DROPIN_DIR"
 
 if [ "$AUTORESTART" = "on" ]; then
-    # StartLimitBurst counts every start, the initial one plus each
-    # auto-restart, so this many total attempts matches "ATTEMPTS" the way
-    # the Startup tab describes it. StartLimitIntervalSec is a SLIDING
-    # window: systemd prunes start timestamps older than this before
-    # counting, so it has to comfortably outlast the
-    # time it actually takes to accumulate ATTEMPTS starts (each
-    # DELAY_S apart), or the oldest attempt ages back out of the window
-    # just as fast as new ones arrive and the burst count never climbs
-    # past ATTEMPTS at all, letting it retry forever regardless of the
-    # configured limit (confirmed happening in practice: ATTEMPTS*
-    # (DELAY_S+5) was tried first and was too tight, a real crash loop
-    # went 8+ restarts deep before finally hitting systemd's own
-    # "repeated too quickly" fallback instead of stopping at ATTEMPTS).
-    # +1 attempt and +10s per gap is deliberate slack, sized so normal
-    # timing jitter can't push it over the edge again the way the
-    # tighter formula did.
+    # StartLimitIntervalSec (sliding window) must outlast accumulating ATTEMPTS starts, or the burst
+    # count never climbs enough to stop retrying; +1 attempt/+10s is slack -- a tighter formula let a real crash loop run 8+ restarts deep before stopping.
     INTERVAL=$(( (ATTEMPTS + 1) * (DELAY_S + 10) ))
     cat > "$DROPIN_DIR/override.conf" <<EOF
 [Unit]
