@@ -309,7 +309,8 @@ def create_app(
 
     async def _stop_ephemeral_signal_test_direwolf(test_id: str, config: dict) -> None:
         """Keeps a test-started Direwolf alive long enough to catch a reply, then stops it and
-        restores the real direwolf.conf."""
+        restores the real direwolf.conf. Only reachable from the plain one-off signal test now --
+        power calibration stops synchronously itself (see /api/aprs/power_cal/stop)."""
         deadline = asyncio.get_event_loop().time() + _SIGNAL_TEST_LISTEN_WINDOW_S
         while asyncio.get_event_loop().time() < deadline:
             result = await packets.signal_test_status(test_id) if packets else None
@@ -324,6 +325,28 @@ def create_app(
 
     # Lowest first; power calibration steps up this list one rung at a time.
     _RADIO_POWER_LEVELS = ["Low", "Medium", "High"]
+
+    # Fallback only for an abandoned power-cal rung (browser tab closed, network dropped mid-test)
+    # -- a dict instead of a bare variable so the endpoints below can mutate it without `nonlocal`.
+    _power_cal_safety_task: dict = {"task": None}
+
+    def _cancel_power_cal_safety_task() -> None:
+        task = _power_cal_safety_task["task"]
+        if task and not task.done():
+            task.cancel()
+        _power_cal_safety_task["task"] = None
+
+    async def _power_cal_safety_stop(full_config: dict) -> None:
+        """Fires _SIGNAL_TEST_LISTEN_WINDOW_S after a rung starts, unless the frontend's own
+        explicit stop/commit call (or the next rung starting) cancels it first. Only restores
+        direwolf.conf and stops Direwolf -- resuming production is resume's job, not a timer's,
+        so this can't race a rung the user is still actively deciding on."""
+        await asyncio.sleep(_SIGNAL_TEST_LISTEN_WINDOW_S)
+        await system.set_direwolf_running(False, {})
+        try:
+            await direwolf_config.write_live(full_config)
+        except OSError as e:
+            logger.error("Failed to restore direwolf.conf after an abandoned power-cal rung: %s", e)
 
     def _signal_test_preconditions(full_config: dict, target: str) -> tuple[str, list[str]]:
         """Shared validation for the plain signal test and power calibration.
@@ -355,18 +378,22 @@ def create_app(
 
     async def _run_signal_test(
         full_config: dict, test_config: dict, my_call: str, target: str, path: list[str],
-        power_level: str | None, *, force_restart: bool,
+        power_level: str | None, *, force_restart: bool, schedule_teardown: bool = True,
     ) -> tuple[str, bool]:
-        """Starts Direwolf against test_config (if needed), sends the ping, and schedules teardown
-        back to full_config. force_restart is for power calibration: a power change only takes
-        effect through a reprogram, so it stops an already-running Direwolf first.
-        Returns (test_id, started_for_test)."""
+        """Starts Direwolf against test_config (if needed) and sends the ping. force_restart is
+        for power calibration: a power change only takes effect through a reprogram, so it stops
+        an already-running Direwolf first. schedule_teardown schedules a background stop back to
+        full_config after a listen window; power calibration instead stops synchronously itself
+        (see /api/aprs/power_cal/stop) so there's no backgrounded timer racing the user's own
+        rung-by-rung decisions. Returns (test_id, started_for_test)."""
         status = await system.get_direwolf_status()
-        if force_restart and status.get("running"):
-            await system.set_direwolf_running(False, full_config)
-        started_for_test = force_restart or not status.get("running")
+        was_running = bool(status.get("running"))
+        started_for_test = force_restart or not was_running
         if started_for_test:
-            start_result = await system.set_direwolf_running(True, test_config, test_only=True)
+            if force_restart and was_running:
+                start_result = await system.restart_direwolf_for_test(full_config, test_config, test_only=True)
+            else:
+                start_result = await system.set_direwolf_running(True, test_config, test_only=True)
             if not start_result["ok"]:
                 await direwolf_config.write_live(full_config)
                 raise HTTPException(
@@ -390,7 +417,7 @@ def create_app(
                 await direwolf_config.write_live(full_config)
             raise HTTPException(status_code=502, detail=str(e))
 
-        if started_for_test:
+        if started_for_test and schedule_teardown:
             asyncio.create_task(_stop_ephemeral_signal_test_direwolf(test_id, full_config))
         return test_id, started_for_test
 
@@ -430,29 +457,66 @@ def create_app(
         test_config["radio"]["power_level"] = power_level
 
         test_id, _ = await _run_signal_test(
-            full_config, test_config, my_call, target, path, power_level, force_restart=True,
+            full_config, test_config, my_call, target, path, power_level,
+            force_restart=True, schedule_teardown=False,
         )
+        _cancel_power_cal_safety_task()  # supersede any earlier rung's still-pending fallback
+        _power_cal_safety_task["task"] = asyncio.create_task(_power_cal_safety_stop(full_config))
         return {"ok": True, "test_id": test_id, "power_level": power_level}
+
+    @app.post("/api/aprs/power_cal/stop")
+    async def aprs_power_cal_stop(request: Request):
+        """Synchronously stops the test Direwolf instance, powers off the radio, and restores
+        direwolf.conf -- called by the frontend right after a no-reply rung, before it prompts the
+        user for what to do next, so there's no backgrounded timer racing that decision."""
+        _require_login_for_action(request)
+        _cancel_power_cal_safety_task()
+        full_config = _read_config()
+        await system.set_direwolf_running(False, {})
+        try:
+            await direwolf_config.write_live(full_config)
+        except OSError as e:
+            logger.error("Failed to restore direwolf.conf after a power-cal stop: %s", e)
+        return {"ok": True}
 
     @app.post("/api/aprs/power_cal/commit")
     async def aprs_power_cal_commit(request: Request):
-        """Saves power_level as the normal setting; the radio is already programmed to it from the
-        last calibration attempt."""
+        """Resumes the real (non-test) Direwolf on the current config -- optionally first saving
+        power_level as the new setting. Used both to accept a calibrated power level and to
+        restore things after a cancelled/exhausted calibration run (power_level omitted). resume
+        reflects whether the digipeater was running before calibration started, so cancelling
+        never force-starts a digipeater the user had manually stopped beforehand."""
         _require_login_for_action(request)
+        _cancel_power_cal_safety_task()
         if not CONFIG_PATH.exists():
             raise HTTPException(status_code=400, detail="Setup has not been completed yet")
         body = await request.json()
         power_level = body.get("power_level")
-        if power_level not in _RADIO_POWER_LEVELS:
-            raise HTTPException(status_code=400, detail="Invalid power level")
+        resume = bool(body.get("resume"))
         config = _read_config()
-        before_radio = config.get("radio", {})
-        config.setdefault("radio", {})["power_level"] = power_level
-        CONFIG_PATH.write_text(
-            "# Written by the config page. Manual edits here survive until the next save.\n"
-            + yaml.safe_dump(config, sort_keys=False)
-        )
-        await _log_config_change("radio", before_radio, config["radio"])
+        if power_level is not None:
+            if power_level not in _RADIO_POWER_LEVELS:
+                raise HTTPException(status_code=400, detail="Invalid power level")
+            before_radio = config.get("radio", {})
+            config.setdefault("radio", {})["power_level"] = power_level
+            CONFIG_PATH.write_text(
+                "# Written by the config page. Manual edits here survive until the next save.\n"
+                + yaml.safe_dump(config, sort_keys=False)
+            )
+            await _log_config_change("radio", before_radio, config["radio"])
+
+        status = await system.get_direwolf_status()
+        if resume:
+            if status.get("running"):
+                result = await system.restart_direwolf_for_test(config, config, test_only=False)
+            else:
+                result = await system.set_direwolf_running(True, config)
+        elif status.get("running"):
+            result = await system.set_direwolf_running(False, config)
+        else:
+            result = {"ok": True, "reason": None}
+        if not result["ok"]:
+            raise HTTPException(status_code=502, detail=f"Could not restart Direwolf: {result['reason']}")
         return {"ok": True}
 
     @app.get("/api/aprs/signal_test/{test_id}")

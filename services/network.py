@@ -21,6 +21,7 @@ async def _nmcli(*args) -> tuple[int, str, str]:
             stderr=asyncio.subprocess.PIPE,
         )
     except FileNotFoundError as e:
+        logger.error("Failed to run `nmcli`: %s", e)
         return 1, "", str(e)
     out, err = await proc.communicate()
     return proc.returncode, out.decode().strip(), err.decode().strip()

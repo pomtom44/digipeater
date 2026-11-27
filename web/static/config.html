@@ -2003,6 +2003,7 @@
           pmtilesProtocolRegistered = true;
         }
 
+        const uiTheme = document.documentElement.getAttribute('data-theme');
         const uiIsDark = uiTheme === 'dark' || (uiTheme !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
         const styleUrl = `/static/maplibre/style-${uiIsDark ? 'dark' : 'light'}.json`;
         const style = await (await fetch(styleUrl)).json();
@@ -2834,8 +2835,10 @@
       }
 
       // No reply doesn't mean it failed -- the test site may have seen the ping anyway. Only a
-      // human checking that site can tell the two apart, so this asks instead of guessing.
-      function askDidItShow(callsign) {
+      // human checking that site can tell the two apart, so this asks instead of guessing. By the
+      // time this shows, the radio has already been synchronously stopped (stopPowerCalTest) --
+      // there's no backgrounded timer racing whatever the user picks here.
+      function askNoReplyChoice(callsign, canGoHigher) {
         const isDefaultServer = callsign === 'ZL4ST-16';
         const checkHtml = isDefaultServer
           ? `
@@ -2843,29 +2846,41 @@
             <div style="text-align: center; margin: 12px 0;">${digipingQrSvg(160)}</div>
           `
           : `<p>No reply heard. Check your own ping service (${callsign}) to see if your ping was heard and just didn't get a reply back.</p>`;
-        return powerCalModal(checkHtml + '<p>Did it show up?</p>', [
-          { label: "Doesn't show", value: 'no-show' },
-          { label: 'Shows on the site', value: 'shows' },
-        ]);
+        const topNote = canGoHigher ? '' : `<p>This is the highest power setting on this radio -- there's nowhere higher to try.</p>`;
+        const actions = [{ label: 'Shows on the site -- accept this power', value: 'accept' }];
+        if (canGoHigher) actions.push({ label: 'Try higher power', value: 'try-higher' });
+        actions.push({ label: 'Cancel, keep current setting', value: 'cancel' });
+        return powerCalModal(checkHtml + topNote + '<p>Did it show up?</p>', actions);
       }
 
-      async function commitPowerLevel(level) {
+      async function stopPowerCalTest() {
+        try {
+          await fetch('/api/aprs/power_cal/stop', { method: 'POST' });
+        } catch (e) {
+          // best-effort -- commitPowerLevel's own status-aware restart recovers regardless
+        }
+      }
+
+      async function commitPowerLevel(level, resume) {
         try {
           const res = await fetch('/api/aprs/power_cal/commit', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ power_level: level }),
+            body: JSON.stringify({ power_level: level, resume }),
           });
           if (!res.ok) {
             const data = await res.json().catch(() => ({}));
             throw new Error(data.detail || res.statusText);
           }
-          state.radio.power_level = level;
-          // Reflects on the Radio tab's select too, so it's not stale until the next page load.
-          const radioPowerSelect = document.getElementById('radio-power');
-          if (radioPowerSelect) radioPowerSelect.value = level;
+          if (level) {
+            state.radio.power_level = level;
+            // Reflects on the Radio tab's select too, so it's not stale until the next page load.
+            const radioPowerSelect = document.getElementById('radio-power');
+            if (radioPowerSelect) radioPowerSelect.value = level;
+          }
+          return { ok: true };
         } catch (e) {
-          calResultBox.value += `\n(Could not save ${level} power as the new setting: ${e.message})`;
+          return { ok: false, error: e.message };
         }
       }
 
@@ -2878,67 +2893,88 @@
         calBtn.disabled = true;
         pushBtn.disabled = true;
         calResultBox.value = '';
+        // Calibration must never leave the digipeater running when it wasn't before -- captured
+        // once, up front, and reused for every commit/cancel in this run.
+        let wasRunningBeforeCal = false;
         try {
-          for (let i = 0; i < RADIO_POWER_LEVELS.length; i++) {
-            const level = RADIO_POWER_LEVELS[i];
-            calStatusBox.textContent = `Writing ${level} power to the radio...`;
-            const sentAt = Date.now();
-            let res;
-            try {
-              res = await pollDirewolfStatusDuring(
-                fetch('/api/aprs/power_cal/attempt', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ callsign, power_level: level }),
-                }),
-                (d) => {
-                  if (d.state === 'waiting_gps') return 'Waiting for GPS fix...';
-                  if (d.state === 'starting') return `Writing ${level} power to the radio, starting Direwolf...`;
-                  return null;
-                },
-                calStatusBox,
-              );
-            } catch (e) {
-              calStatusBox.textContent = 'Done';
-              calResultBox.value = 'Could not reach the server.';
-              return;
-            }
-            const data = await res.json();
-            if (!res.ok || !data.ok) {
-              calStatusBox.textContent = 'Done';
-              calResultBox.value = data.detail || `Could not run the test at ${level} power.`;
-              return;
-            }
-            calStatusBox.textContent = `Packet sent at ${level} power, waiting for reply...`;
-            const outcome = await pollPowerCalReply(data.test_id, sentAt);
-            calStatusBox.textContent = 'Shutting down radio...';
-            await waitForDirewolfIdle();
+          const statusRes = await fetch('/api/system/direwolf/status');
+          wasRunningBeforeCal = !!(await statusRes.json()).running;
+        } catch (e) {
+          // assume not running; commitPowerLevel's resume flag just stays conservative
+        }
 
-            if (outcome.received) {
-              calStatusBox.textContent = 'Done';
-              calResultBox.value = `Confirmed at ${level} power: reply received from ${callsign}.\n`
-                + `Round-trip: ${outcome.rtt}s\nReply text: ${outcome.replyText || '(none)'}`;
-              await commitPowerLevel(level);
-              return;
-            }
+        async function runRung(i) {
+          const level = RADIO_POWER_LEVELS[i];
+          calStatusBox.textContent = `Writing ${level} power to the radio...`;
+          const sentAt = Date.now();
+          let res;
+          try {
+            res = await pollDirewolfStatusDuring(
+              fetch('/api/aprs/power_cal/attempt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ callsign, power_level: level }),
+              }),
+              (d) => {
+                if (d.state === 'waiting_gps') return 'Waiting for GPS fix...';
+                if (d.state === 'starting') return `Writing ${level} power to the radio, starting Direwolf...`;
+                return null;
+              },
+              calStatusBox,
+            );
+          } catch (e) {
+            calStatusBox.textContent = 'Done';
+            calResultBox.value = 'Could not reach the server.';
+            return;
+          }
+          const data = await res.json();
+          if (!res.ok || !data.ok) {
+            calStatusBox.textContent = 'Done';
+            calResultBox.value = data.detail || `Could not run the test at ${level} power.`;
+            return;
+          }
+          calStatusBox.textContent = `Packet sent at ${level} power, waiting for reply...`;
+          const outcome = await pollPowerCalReply(data.test_id, sentAt);
 
-            const choice = await askDidItShow(callsign);
-            if (choice === 'shows') {
-              calStatusBox.textContent = 'Done';
-              calResultBox.value = `Confirmed at ${level} power: seen at ${callsign}'s site (no direct reply -- `
-                + `its igate may be RX-only, or you're out of RF range for the reply).`;
-              await commitPowerLevel(level);
-              return;
-            }
-            // "Doesn't show" -- step up to the next power level and try again.
+          if (outcome.received) {
+            calStatusBox.textContent = 'Saving and restarting...';
+            const commitResult = await commitPowerLevel(level, wasRunningBeforeCal);
+            calStatusBox.textContent = 'Done';
+            calResultBox.value = `Confirmed at ${level} power: reply received from ${callsign}.\n`
+              + `Round-trip: ${outcome.rtt}s\nReply text: ${outcome.replyText || '(none)'}`
+              + (commitResult.ok ? '' : `\n\nWarning: could not save ${level} power as the new setting: ${commitResult.error}`);
+            return;
           }
 
+          calStatusBox.textContent = 'Shutting down radio...';
+          await stopPowerCalTest();
+
+          const canGoHigher = i < RADIO_POWER_LEVELS.length - 1;
+          const choice = await askNoReplyChoice(callsign, canGoHigher);
+
+          if (choice === 'accept') {
+            calStatusBox.textContent = 'Saving and restarting...';
+            const commitResult = await commitPowerLevel(level, wasRunningBeforeCal);
+            calStatusBox.textContent = 'Done';
+            calResultBox.value = `Confirmed at ${level} power: seen at ${callsign}'s site (no direct reply -- `
+              + `its igate may be RX-only, or you're out of RF range for the reply).`
+              + (commitResult.ok ? '' : `\n\nWarning: could not save ${level} power as the new setting: ${commitResult.error}`);
+            return;
+          }
+          if (choice === 'try-higher') {
+            return runRung(i + 1);
+          }
+          // 'cancel'
+          calStatusBox.textContent = 'Restoring previous settings...';
+          const commitResult = await commitPowerLevel(null, wasRunningBeforeCal);
           calStatusBox.textContent = 'Done';
-          calResultBox.value = 'No reply or sighting at any power level, up to the top of this radio\'s range.';
-          await powerCalModal(
-            `<p>No more power settings to try.</p><p>Check your frequencies, or move to a better location.</p>`,
-            [{ label: 'OK', value: true }],
-          );
+          calResultBox.value = commitResult.ok
+            ? 'Calibration cancelled; previous power setting restored.'
+            : `Calibration cancelled, but could not restart the digipeater: ${commitResult.error}`;
+        }
+
+        try {
+          await runRung(0);
         } finally {
           calBtn.disabled = !calEligible;
           pushBtn.disabled = false;

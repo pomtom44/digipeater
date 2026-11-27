@@ -2190,6 +2190,7 @@
         }
 
         // Follows the page's own UI theme toggle rather than a separate map control
+        const uiTheme = document.documentElement.getAttribute('data-theme');
         const uiIsDark = uiTheme === 'dark' || (uiTheme !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
         const styleUrl = `/static/maplibre/style-${uiIsDark ? 'dark' : 'light'}.json`;
         const style = await (await fetch(styleUrl)).json();

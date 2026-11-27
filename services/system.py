@@ -216,6 +216,34 @@ async def set_direwolf_running(running: bool, config: dict | None = None, *, tes
     return result
 
 
+async def restart_direwolf_for_test(stop_config: dict, start_config: dict, *, test_only: bool) -> dict:
+    """Stops Direwolf (on stop_config) and starts it again (on start_config) without releasing
+    _RADIO_LOCK in between -- used by power calibration, where a power change needs a reprogram
+    and letting another caller (write_radio, another signal test) interleave in the gap could
+    power the relay off mid-program or leave Direwolf running with the relay off. If the stop
+    fails, the start is skipped and the stop's failure is returned."""
+    async with _RADIO_LOCK:
+        stop_result = await _set_direwolf_running_impl(False, stop_config)
+        if stop_result["ok"]:
+            result = await _set_direwolf_running_impl(True, start_config, test_only=test_only)
+        else:
+            result = stop_result
+    await _log_event(
+        "INSERT INTO direwolf_events (at, action, ok, reason, simulated) VALUES (?, ?, ?, ?, ?)",
+        (time.time(), "stop", int(stop_result["ok"]), stop_result.get("reason"),
+         int(bool(stop_result.get("simulated")))),
+        what="direwolf event", log_type="direwolf_events",
+    )
+    if stop_result["ok"]:
+        await _log_event(
+            "INSERT INTO direwolf_events (at, action, ok, reason, simulated) VALUES (?, ?, ?, ?, ?)",
+            (time.time(), "start", int(result["ok"]), result.get("reason"),
+             int(bool(result.get("simulated")))),
+            what="direwolf event", log_type="direwolf_events",
+        )
+    return result
+
+
 async def _log_radio_start_event(ok: bool, reason: str | None, model: str | None) -> None:
     """Logs the radio power-on/programming phase of an autostart attempt to "Radio programming
     history" -- kept separate from direwolf_events so a radio failure isn't conflated with Direwolf's."""
